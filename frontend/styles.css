@@ -1,0 +1,270 @@
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+:root{
+  --bg:#12100d; --panel:#181511; --panel-2:#1b1813; --bg3:#0c0a07;
+  --line:#2e2820; --line-2:#3a3328;
+  --grid:rgba(255,255,255,.02); --grid-major:rgba(255,255,255,.04);
+  --ink:#f0ebe4; --muted:#9c9286; --faint:#665e50;
+  --accent:#ff8a3d; --accent-bright:#ffa15c; --accent-dim:rgba(255,138,61,.15);
+  --accent-ink:#1a120a; --err:#ff6b6b; --ok:#46c993; --tool:#e6b65c;
+  --sans:"Unbounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","SFMono-Regular",Consolas,Menlo,monospace;
+  --r:10px; --r-sm:6px;
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0; min-height:100vh;
+  font:15px/1.55 var(--sans); color:var(--ink);
+  background-color:var(--bg);
+  background-image:
+    radial-gradient(120% 80% at 50% -8%, rgba(255,138,61,.06), transparent 60%),
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size:100% 100%, 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+
+::selection{background:var(--accent-dim);color:#fff}
+*{scrollbar-width:thin;scrollbar-color:#2e2820 transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#2e2820;border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#3a3328;background-clip:padding-box}
+
+.hidden{display:none!important}
+.muted{color:var(--muted);font-size:.85em}
+.err{color:var(--err)}
+
+/* ---------- login ---------- */
+.card{
+  position:relative;
+  max-width:380px;margin:15vh auto;padding:2.2rem 2rem 2rem;
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 28px 70px -28px rgba(0,0,0,.75);
+}
+.card::before{
+  content:"// AUTHENTICATION REQUIRED";
+  display:block;font:500 11px/1 var(--mono);letter-spacing:.16em;
+  color:var(--accent);text-transform:uppercase;margin-bottom:1.15rem;
+}
+.card h1{margin:0 0 .4rem;font-size:1.5rem;font-weight:600;letter-spacing:-.01em}
+.card .muted{display:block;line-height:1.5}
+#loginForm{display:flex;flex-direction:column;gap:.7rem;margin-top:1.3rem}
+#loginErr{margin-top:.3rem;min-height:1.1em;font:.85em/1.4 var(--sans)}
+
+/* ---------- app shell ---------- */
+header{
+  display:flex;align-items:center;gap:.85rem;
+  padding:.7rem 1.15rem;
+  border-bottom:1px solid var(--line);
+  background:rgba(18,16,13,.8);backdrop-filter:blur(10px) saturate(120%);
+  position:sticky;top:0;z-index:20;
+}
+header strong{display:inline-flex;align-items:center;gap:.6rem;font-weight:600;letter-spacing:.02em;font-size:.98rem}
+header strong::before{content:"";width:9px;height:9px;border-radius:2px;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+#who{font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:.02em}
+.spacer{flex:1}
+.badge{
+  font:500 11px/1 var(--mono);color:var(--muted);letter-spacing:.04em;
+  border:1px solid var(--line);background:rgba(255,255,255,.02);
+  padding:.34rem .55rem;border-radius:6px;
+}
+.badge:empty{display:none}
+
+main{max-width:940px;margin:1.6rem auto 3rem;padding:0 1.15rem;display:flex;flex-direction:column;gap:.8rem}
+main::before{
+  content:"// DESIGN INPUT";display:block;
+  font:500 11px/1 var(--mono);letter-spacing:.16em;color:var(--faint);
+  text-transform:uppercase;margin-bottom:-.1rem;
+}
+
+.panel{
+  max-width:940px;margin:1.1rem auto 0;padding:1.1rem 1.2rem 1.35rem;
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--line);border-radius:10px;
+}
+.panel h3{margin:0 0 .15rem;font-size:.95rem;font-weight:600;letter-spacing:.01em}
+.panel h3 .muted{font-weight:400}
+.panel label{display:block;margin:.75rem 0 0;font:500 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.panel label input{margin-top:.42rem;font-family:var(--sans);text-transform:none;letter-spacing:0;color:var(--ink)}
+
+.row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.3rem}
+#runStatus,#credsMsg{font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:.02em}
+
+/* ---------- form controls ---------- */
+input,textarea{
+  width:100%;padding:.62rem .72rem;
+  background:var(--bg3);border:1px solid var(--line);border-radius:var(--r-sm);
+  color:var(--ink);font:.92rem/1.45 var(--sans);
+  transition:border-color .14s,box-shadow .14s;
+}
+input::placeholder,textarea::placeholder{color:var(--faint)}
+input:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+textarea{font:.84rem/1.6 var(--mono);resize:vertical;min-height:130px}
+
+button,.btn{
+  font:600 13px/1 var(--sans);letter-spacing:.01em;
+  padding:.64rem 1.05rem;border:1px solid transparent;border-radius:var(--r-sm);
+  background:var(--accent);color:var(--accent-ink);cursor:pointer;
+  text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+  transition:background .14s,box-shadow .14s,transform .04s,border-color .14s;
+}
+button:hover,.btn:hover{background:var(--accent-bright);box-shadow:0 0 0 3px var(--accent-dim)}
+button:active{transform:translateY(1px)}
+button:focus-visible,.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-dim)}
+button:disabled{opacity:.45;cursor:default;box-shadow:none;background:var(--accent)}
+button.ghost{background:transparent;border-color:var(--line);color:var(--ink);font-weight:500}
+select.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:500;
+  padding:.45rem .8rem;border-radius:8px;cursor:pointer;font:inherit;max-width:22rem}
+select.ghost:hover{background:rgba(255,255,255,.04);border-color:var(--line-2)}
+select.ghost option{background:#14161a;color:var(--ink)}
+button.ghost:hover{background:rgba(255,255,255,.04);border-color:var(--line-2);box-shadow:none}
+/* View report matches Design building — both solid accent */
+
+/* ---------- execution log (terminal) ---------- */
+.log{
+  position:relative;margin-top:.3rem;padding:.9rem 1.1rem 1rem;
+  background:var(--bg3);border:1px solid var(--line);border-radius:10px;
+  font:.82rem/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;
+  min-height:160px;max-height:56vh;overflow:auto;
+}
+.log::before{
+  content:"// EXECUTION LOG";position:sticky;top:-.9rem;z-index:1;
+  display:block;margin:-.9rem -1.1rem .7rem;padding:.52rem 1.1rem;
+  background:rgba(12,10,7,.94);border-bottom:1px solid var(--line);
+  font:500 11px/1 var(--mono);letter-spacing:.16em;color:var(--faint);text-transform:uppercase;
+}
+.log .status{color:var(--muted)}
+.log .tool{color:var(--tool)}
+.log .res{color:var(--muted);padding-left:1.4rem;position:relative}
+.log .res::before{content:"";position:absolute;left:.5rem;top:.75em;width:.55rem;height:1px;background:var(--line-2)}
+.log .assistant{
+  color:var(--ink);margin-top:.7rem;padding:.65rem .85rem;
+  border-left:2px solid var(--accent);background:rgba(255,138,61,.06);border-radius:0 6px 6px 0;
+}
+.log .err{color:var(--err)}
+.log .paused{color:#e0a458;font-weight:600}
+.log .tok{color:#d8c4a8}
+
+@media (max-width:520px){
+  .card{margin:8vh auto;padding:1.8rem 1.4rem}
+  header{flex-wrap:wrap;gap:.6rem}
+}
+
+/* ---------- brand dot blinks while a design is running ---------- */
+@keyframes dotblink{0%,100%{opacity:1;box-shadow:0 0 10px var(--accent)}50%{opacity:.3;box-shadow:0 0 3px var(--accent)}}
+#brand.running::before{animation:dotblink 1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){#brand.running::before{animation:none}}
+
+/* Download button uses the standard accent .btn styling — same as the other action buttons. */
+
+/* ---------- settings button highlighted while the panel is open ---------- */
+button.ghost.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent-bright)}
+
+/* ---------- info (i) tooltip ---------- */
+.info{
+  display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:16px;height:16px;border-radius:50%;border:1px solid var(--line-2);
+  color:var(--muted);font:600 10px/1 var(--mono);font-style:italic;cursor:help;
+  position:relative;vertical-align:middle;user-select:none;text-transform:none;letter-spacing:0;margin-left:.1rem;
+}
+.info:hover,.info:focus-visible{color:var(--accent);border-color:var(--accent);outline:none}
+.info[data-tip]:hover::after,.info[data-tip]:focus-visible::after{
+  content:attr(data-tip);position:absolute;bottom:150%;left:50%;transform:translateX(-50%);
+  width:max-content;max-width:280px;white-space:normal;text-align:left;
+  background:var(--panel-2);color:var(--ink);border:1px solid var(--line-2);border-radius:8px;
+  padding:.55rem .7rem;font:500 11px/1.5 var(--sans);letter-spacing:0;text-transform:none;
+  box-shadow:0 14px 34px -14px rgba(0,0,0,.8);z-index:60;pointer-events:none;
+}
+.info[data-tip]:hover::before,.info[data-tip]:focus-visible::before{
+  content:"";position:absolute;bottom:150%;left:50%;transform:translate(-50%,60%) rotate(45deg);
+  width:9px;height:9px;background:var(--panel-2);border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);
+  z-index:61;pointer-events:none;
+}
+/* settings-panel info tooltips open DOWNWARD (these fields sit near the top of the panel) */
+.panel .info[data-tip]:hover::after,.panel .info[data-tip]:focus-visible::after{bottom:auto;top:150%}
+.panel .info[data-tip]:hover::before,.panel .info[data-tip]:focus-visible::before{
+  bottom:auto;top:150%;transform:translate(-50%,-60%) rotate(45deg);
+  border-right:0;border-bottom:0;border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);
+}
+
+/* ---------- uploaded-file chips ---------- */
+.filelist{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.1rem}
+.filelist:empty{display:none}
+.filechip{
+  display:inline-flex;align-items:center;gap:.45rem;
+  font:500 11px/1.1 var(--mono);color:var(--muted);
+  background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:.32rem .5rem;
+}
+.filechip::before{content:"\1F5BC";font-size:.9rem;line-height:1}
+.filechip b{font-weight:500;color:var(--ink);font-family:var(--sans);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filechip .sz{color:var(--faint)}
+.filechip .x{cursor:pointer;color:var(--faint);font-size:.95rem;line-height:1;padding:0 .1rem}
+.filechip .x:hover{color:var(--err)}
+
+/* ---------- agent activity lights ---------- */
+.lights{display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;align-items:center;margin:.1rem .1rem .2rem;padding:.1rem 0}
+.light{
+  display:inline-flex;align-items:center;gap:.45rem;
+  font:500 10.5px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);transition:color .15s;
+}
+.light i{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:#2a2620;border:1px solid var(--line-2);transition:all .15s}
+.light.on{color:var(--ink)}
+.light.on i{animation:blink 1s ease-in-out infinite}
+.light[data-k="thinking"].on i{background:#7aa2ff;border-color:#9db8ff;box-shadow:0 0 8px 1px #7aa2ff}
+.light[data-k="rag"].on i{background:#c08bff;border-color:#d4adff;box-shadow:0 0 8px 1px #c08bff}
+.light[data-k="files"].on i{background:var(--ok);border-color:#6fe0ad;box-shadow:0 0 8px 1px var(--ok)}
+.light[data-k="python"].on i{background:var(--tool);border-color:#f0cf86;box-shadow:0 0 8px 1px var(--tool)}
+.light[data-k="opensees"].on i{background:var(--accent);border-color:var(--accent-bright);box-shadow:0 0 8px 1px var(--accent)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+@media (prefers-reduced-motion:reduce){.light.on i{animation:none}}
+
+/* ---------- execution-log expand control ---------- */
+.logwrap{position:relative}
+.logbtn{
+  position:absolute;top:.5rem;right:.55rem;z-index:3;width:auto;
+  background:rgba(12,10,7,.92);border:1px solid var(--line);color:var(--muted);
+  padding:.22rem .42rem;border-radius:6px;font:500 .82rem/1 var(--mono);
+}
+.logbtn:hover{color:var(--ink);background:rgba(12,10,7,.98);border-color:var(--line-2);box-shadow:none}
+.log{resize:vertical}
+.log.expanded{max-height:88vh}
+
+/* ---------- per-run time-limit warning banner ---------- */
+.timewarn{
+  display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;
+  margin:.2rem 0 .1rem;padding:.6rem .8rem;
+  background:rgba(224,164,88,.10);border:1px solid rgba(224,164,88,.45);border-radius:8px;
+  color:var(--ink);font-size:.84rem;line-height:1.45;
+}
+.timewarn .tw-ico{font-size:1rem;flex:0 0 auto}
+.timewarn .tw-msg{flex:1;min-width:220px}
+.timewarn .tw-msg b{color:#e8b366}
+.timewarn .tw-dl{padding:.4rem .7rem;font-size:12px;background:var(--ok);color:#06241a;border-color:transparent}
+.timewarn .tw-dl:hover{background:#5fd6a4;box-shadow:0 0 0 3px rgba(70,201,147,.20)}
+.timewarn .tw-x{background:transparent;border:1px solid var(--line);color:var(--muted);padding:.25rem .5rem;font-size:.8rem;flex:0 0 auto}
+.timewarn .tw-x:hover{color:var(--ink);background:rgba(255,255,255,.04);box-shadow:none}
+
+/* ---------- Model reasoning box (second terminal, below the execution log) ---------- */
+.reason::before{content:"// MODEL REASONING"}
+.reason{min-height:84px;color:var(--muted)}
+.reason .rtok{color:var(--muted);white-space:pre-wrap;font-size:.78rem;line-height:1.55}
+.reason:empty::after{content:"the model's chain-of-thought streams here when it exposes one";color:var(--faint);font-style:italic}
+
+/* ---------- execution-log milestone dividers ---------- */
+.log .milestone{
+  color:var(--accent-bright);font-weight:600;letter-spacing:.01em;
+  margin:.55rem 0 .25rem;padding-top:.35rem;border-top:1px dashed var(--line-2);
+}
+
+/* ---------- session-timeout countdown banner ---------- */
+.sessionnote{margin:.1rem 0 .45rem;font-size:.72rem;line-height:1.45;color:var(--muted)}
+.sessionnote b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* ---------- inline streaming mark (end of the actively-streaming log / reasoning line) ---------- */
+.streamgif{height:1em;width:auto;vertical-align:-0.18em;margin-left:.35em;border-radius:2px;opacity:.95}

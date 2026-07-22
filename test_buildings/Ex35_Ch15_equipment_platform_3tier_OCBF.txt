@@ -1,0 +1,36 @@
+Structural System - NONBUILDING STRUCTURE similar to buildings (ASCE 7-22 Chapter 15): 3-tier steel equipment platform, braced-frame (OCBF-type) in both directions
+Frame type - Freestanding multi-tier equipment/process platform INSIDE an existing warehouse (building by others). THE POINT: this is NOT a Ch. 12 building - seismic design values come from Table 15.4-1 (choose and JUSTIFY the R option vs its height limit), the seismic weight includes the OPERATING equipment contents, and Risk Category / Ie follow the contents.
+Number of stories - 3 tiers (working platforms), open frame, no cladding
+Story heights - Tier 1 at 13'-0", Tier 2 at 26'-0", Tier 3 (top) at 38'-0"
+Analysis procedure - ELF per 15.4 (verify the structure is NONBUILDING, not a "component": it is supported at grade and its weight is well over 25% of any supporting structure consideration - state the 15.3 check)
+Design standards - AISC 360-22, AISC 341-22 (as invoked by the selected Table 15.4-1 row), ASCE 7-22 Ch. 15 (+ Ch. 13 for the ATTACHED equipment anchorage)
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi; braces HSS A500 Grade C; grating: galvanized steel bar grating (delegated)
+- Base plates on the warehouse slab-on-grade with drilled anchors (anchor design values per ACI - scoped/delegated; report the required anchor forces)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 12 psf per tier (grating, framing allowance) + equipment dead weights below |
+| Equipment (OPERATING) | Tier 1: two pumps + piping, 15 kip total. Tier 2: process skid 40 kip (10' x 16' footprint, CG 4 ft above the tier). Tier 3: one vessel 60 kip OPERATING (30 kip empty), 8 ft dia., CG 6 ft above the tier. |
+| Live Load | 100 psf on walkway/laydown areas per tier (not concurrent with equipment-maintenance removal case) |
+| Wind/Snow | NONE - fully inside the host building (state this scope boundary and the host-interface assumption) |
+
+## Seismic Design Data
+- SDS = 0.60 g, SD1 = 0.28 g, Site Class D, SDC D
+- Risk Category III (process contents; Ie = 1.25) - carry Ie through Cs AND the drift checks.
+- Table 15.4-1 selection REQUIRED: ordinary braced-frame options - R = 3.25 is limited to 35 ft in SDC D (top tier is 38 ft), so use the "with permitted height increase" row (R = 2.5, Omega_0 = 2, Cd = 2.5, up to 160 ft) OR the unlimited-height row (R = 1.5); CHOOSE, cite the row, and apply its detailing requirements consistently (AISC 341 where the row demands it).
+- W_seismic includes ALL operating contents (15.4.3): the 60-kip vessel at its CG height, the 40-kip skid, pumps + piping allowance. Model the equipment CGs at their true heights (mass offsets or equivalent point masses - state the idealisation).
+- Attached equipment anchorage: vessel and skid anchor bolts per Ch. 13/15.4.9 Fp with the platform's amplification - report the anchor design forces (delegated to the anchor designer).
+
+## Building Plan Geometry
+- Plan: 60'-0" (X) x 40'-0" (Y); columns on a 20'-0" grid (4 x 3 columns = Grids 1-4 / A-C).
+- Braced bays: X-direction - 2 bays on Grid A and 2 on Grid C (alternate tiers chevron/diagonal, agent's choice); Y-direction - Grids 1 and 4, one bay each, full height.
+- Tier framing: girders on the grid lines + infill beams @ 5'-0" o.c. under grating; the Tier 2 skid and Tier 3 vessel get DEDICATED support beams sized for their point loads.
+- CLEARANCE to the host building columns >= 6 in. everywhere: report the platform's Cd-amplified drift at the top tier and confirm the gap (or increase it).
+
+## Member Sizing Rules
+- One column size full height; one girder + one infill size per tier; one brace size per direction per 2 tiers.
+- Base fixity: pinned base plates; NO uplift anchors into the slab beyond the drilled-anchor capacity - if uplift governs, add counterweight or widen the braced bays and say so.
+- Delegated design register: grating, anchors (post-installed), skid/vessel internals, ladders + handrail (OSHA).

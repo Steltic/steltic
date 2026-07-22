@@ -1,0 +1,59 @@
+Structural System - Steel Special Concentrically Braced Frame (SCBF), two-story X bracing configuration
+Frame type - Core-located SCBF: four braced frames in each direction at the central elevator/stair core
+Number of stories - 7 (plus penthouse)
+Story heights - First story 22 ft 4 in; typical upper stories (2-7) 13 ft 4 in; roof at 102 ft 4 in; penthouse extends 16 ft above roof (PH roof at 118 ft 4 in)
+Analysis procedure - Equivalent Lateral Force for preliminary design (MRSA may be required for final per ASCE 7 Table 12.6-1); SDC D
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- Wide-flange sections: **ASTM A992, Grade 50**
+- HSS (braces): **ASTM A1085, Grade 50**
+- Plates (gussets): **ASTM A36**
+- Floor concrete: f'c = 3 ksi, lightweight; all other concrete: f'c = 4 ksi, normal weight
+- Floors: 3 1/4 in. lightweight concrete over composite metal deck
+
+## Seismic Design Parameters
+- Risk Category II
+- SDS = 1.0 g, SD1 = 0.6 g
+- Seismic Design Category: D
+- Steel SCBF (ASCE 7 Table 12.2-1): R = 6, Overstrength Omega0 = 2, Cd = 5
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 68 psf (deck, beams, girders, fireproofing, ceiling, MEP, partitions) |
+| Roof Dead Load | 55 psf (roofing, insulation, deck, beams, girders, fireproofing, ceiling, MEP) |
+| Cladding Load | 25 psf of wall area (exterior wall cladding) |
+| Floor Live Load | 50 psf (office); reducible per IBC / ASCE 7 |
+| Roof Live Load | 25 psf |
+
+### Penthouse loads
+- Penthouse roof dead load: 25 psf; penthouse floor dead load: 65 psf; penthouse exterior walls: 25 psf of wall; penthouse equipment: 39 psf.
+- Penthouse extends 16 ft above the roof over the central core (~25 ft x 75 ft footprint; bounded by Gridlines C-F and 2-5).
+
+## Building Plan Geometry (text rendering of Figure 9.2-1)
+- Rectangular plan: 177 ft 4 in long (E-W, Gridlines A-H) by 127 ft 4 in wide (N-S, Gridlines 1-6).
+- 25 ft bays each way: 7 bays E-W (A-H) and 5 bays N-S (1-6); 1 ft 2 in slab overhang beyond the column lines at each edge (7 x 25 + 2 x 1'-2" = 177'-4"; 5 x 25 + 2 x 1'-2" = 127'-4").
+- Column grid: 8 lines (A-H) x 6 lines (1-6) = 48 columns. North is toward Gridline 1.
+- Building section (Figure 9.2-1): first story 22 ft 4 in, six upper stories at 13 ft 4 in, penthouse 16 ft above roof.
+- Elevators and stairs occupy the central three bays (the core); the braced frames are in these core walls.
+
+### Braced-Frame Layout (text rendering of Figures 9.2-1 / 9.2-2; elevations 9.2-10 to 9.2-12)
+- Four SCBF in each direction, located in the central elevator/stair core (around Gridlines C-F, Lines 3-4):
+  - E-W direction (4 frames): braced bays between Columns 3C-3D, 3E-3F, 4C-4D, and 4E-4F (i.e., bays C-D and E-F, on Lines 3 and 4).
+  - N-S direction (4 frames): braced bays between Columns 3C-4C, 3D-4D, 3E-4E, and 3F-4F (i.e., bay 3-4, on Lines C, D, E, and F).
+- Vertical configuration: two-story-X bracing, stacked up the height. The four frames are identical in brace size/configuration, with minor differences in beam and column sizes.
+- All framing outside the core is gravity-only (simple connections).
+
+## Member Sizing (agent to determine; section designations are the design output)
+- Grouped by the two-story-X brace modules: 1-2, 3-4, 5-6; story 7 separate. Braces are HSS, ASTM A1085.
+- All columns are W14 and will vary in size every 2 storeys
+- All beams on a storey are the same size, every storey may have a different beam size, all are W18 (except storey 1  which is W30)
+- Column splices at two-story intervals; column unbraced length = clear story height.
+- Base fixity - all pinned
+- Aim for max drift 1.75% to 2.0% (allowable story drift 0.020 h_sx, ASCE 7 Table 12.12-1, Risk Category II).
+
+## Brace Connections (SCBF, per AISC 341)
+- Brace-to-frame gusset plates (ASTM A36) with a "2t" linear fold-line clearance (t = gusset thickness) to permit out-of-plane brace buckling.
+- Gusset-to-beam and gusset-to-column welds designed by the Uniform Force Method (UFM).
+- Brace and frame member width-to-thickness ratios: highly ductile limits per AISC 341 Table D1.1.

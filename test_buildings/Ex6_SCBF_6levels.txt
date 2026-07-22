@@ -1,0 +1,68 @@
+Structural System - Steel Special Concentrically Braced Frame (SCBF)
+Frame type - Perimeter SCBF (braced bays on all four faces; see Braced-Frame Layout)
+Number of stories - 6
+Story heights - All stories 12 ft; mean roof height 72 ft (6 @ 12 ft)
+Analysis procedure - Equivalent Lateral Force (ELF); SDC D (derived from SDS/SD1, Risk Category II)
+Design standards - AISC 360, AISC 341, ASCE 7-22
+Source - FEMA P-2192-V1, 2020 NEHRP Provisions Design Examples (Example Six-Story Building, Figure 7-7)
+
+## Material Properties
+- Structural steel (W-shapes): **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**, **Fy = 50 ksi**
+- Gusset plates: **ASTM A572 Grade 50**
+
+## Seismic Design Parameters
+- Risk Category II, Importance Factor Ie = 1.0
+- SDS = 1.2 g, SD1 = 0.70 g (ASCE 7-22 Section 11.4.4)
+- Seismic Design Category: D (derived - SDS >= 0.50 g and SD1 >= 0.20 g for Risk Category II)
+- Steel SCBF: R = 6, Overstrength Omega0 = 2; Cd = 5 (Cd per ASCE 7-22 Table 12.2-1 for SCBF; not stated in brief)
+- All seismic forces are at strength level.
+
+## Gravity / Seismic Weights
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load (floor + ceiling) | 80 psf (includes 10 psf interior partitions) |
+| Roof Dead Load (roof + ceiling) | 40 psf |
+| Cladding Load (exterior wall) | 20 psf |
+| Floor Live Load | 50 psf (office; partitions already included in the dead load, not added to LL); reducible per ASCE 7-22 Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Diaphragms
+- Floors (2nd-6th): concrete-filled steel deck (treat as rigid diaphragm).
+- Roof: bare steel deck (treat as flexible / semi-rigid diaphragm).
+
+## Building Plan Geometry (from Figure 7-7)
+- Plan: 5 bays @ 30 ft = 150 ft (length, X-direction) by 4 bays @ 30 ft = 120 ft (width, Y-direction).
+- Regular orthogonal column grid at 30 ft each way: 6 column lines (X) x 5 column lines (Y) = 30 columns.
+- Mean roof height 72 ft (6 stories @ 12 ft).
+
+### Braced-Frame Layout (text rendering of Figure 7-7 plan + Elevation A-A)
+- Steel SCBF located on all four perimeter frame lines; interior framing is gravity-only.
+- Braced bays are placed symmetrically about each wall's centerline:
+  - Long walls (150 ft, 5 bays - North and South): two braced bays flanking the center bay.
+  - Short walls (120 ft, 4 bays - East and West): the two central bays.
+  - Corner bays are NOT braced.
+- Vertical configuration (Elevation A-A): two-story-X bracing, stacked over the six stories (three two-story X modules up the height).
+
+## Member Sizing (agent to determine; section designations are the design output)
+
+Story	Brace	Braced-Frame Beam	Braced-Frame Column
+1	A	D	G
+2	A	D	G
+3	B	E	H
+4	B	E	H
+5	C	F	I
+6	C	F	I
+
+(Grouped by the two-story-X brace modules: stories 1-2, 3-4, 5-6. 
+
+- Consider one size for all gravity beams and one size for all gravity columns outside the braced frames (agent to determine).
+- Column splices at two-story intervals. Column unbraced length = clear story height.
+- Base fixity - pinned column bases (typical for SCBF).
+- Beam-to-column connections outside the brace work points - pinned / simple-shear (SCBF gravity framing).
+- Drift target - allowable story drift 0.020 h_sx (ASCE 7-22 Table 12.12-1, Risk Category II).
+
+## Brace Connections (SCBF, per AISC 341)
+- Brace-to-frame gusset plates (ASTM A572 Gr. 50) with a "2t" linear fold-line clearance (t = gusset thickness) to permit out-of-plane brace buckling.
+- Gusset-to-beam and gusset-to-column welds designed by the Uniform Force Method (UFM).
+- Brace and frame member width-to-thickness ratios: highly ductile limits per AISC 341 Table D1.1.

@@ -1,0 +1,76 @@
+Structural System - Eccentrically Braced Frame (EBF) with shear links
+Frame type - Distributed EBF bays, perimeter and re-entrant corner lines
+Number of stories - 8 (tall wing); 5 (low wing) - L-shaped plan with stepped roof
+Story heights - First story 16 ft; typical upper stories 13 ft
+Analysis procedure - Modal Response Spectrum Analysis (MRSA) required due to re-entrant corner irregularity (ASCE 7 Table 12.3-1, Type 2); SDC D
+Design standards - AISC 360, AISC 341 (Section F3), ASCE 7
+
+## Material Properties
+- Structural steel (W-shapes, including links): **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**, **Fy = 50 ksi**
+- Gusset and stiffener plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. lightweight concrete on 3 in. composite steel deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite floor: slab, deck, framing, superimposed MEP/ceiling/finishes) |
+| Cladding Load | 15 psf (glass/metal curtain wall on all perimeter and re-entrant faces) |
+| Floor Live Load | 50 psf (office) + 15 psf partition allowance; reducible per ASCE 7 Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8). Applies to both roof levels (Level 5 wing roof and Level 8 main roof) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.60 g, Site Class D, Risk Category II, Ie = 1.0
+- EBF: R = 8, Cd = 4, Omega_0 = 2
+- Redundancy factor rho = 1.0 (assume sufficient braced bays each direction)
+- Horizontal irregularity Type 2 (re-entrant corner): both plan projections exceed 15% of plan dimension. Apply 25% increase to diaphragm-to-collector connection forces per ASCE 7 12.3.3.4.
+
+## Wind Design Data
+- Basic wind speed V = 110 mph (Risk Cat II), Exposure B. Seismic governs the LFRS; check drift under wind service load (10-yr, 76 mph).
+
+## Building Plan Geometry (L-SHAPED PLAN, STEPPED ROOF)
+  - Overall envelope: 210'-0" (X) x 150'-0" (Y)
+  - Column Grid:
+      - X-Axis: Grid Lines 1 to 8 (7 bays @ 30'-0" o.c.)
+      - Y-Axis: Grid Lines A to F (5 bays @ 30'-0" o.c.)
+  - PLAN CUT-OUT: the zone bounded by Grids 5-8 / C-F (90'-0" x 90'-0") is OPEN AT ALL LEVELS (no framing, no floor). The resulting footprint is an L:
+      - North bar: Grids 1-8, A-C (210' x 60')
+      - West leg:  Grids 1-5, C-F (120' x 90')
+  - STEPPED ROOF:
+      - Tall wing (north bar, Grids 1-8 / A-C): 8 stories. Roof at 107'-0".
+      - Low wing (west leg, Grids 1-5 / C-F): 5 stories. Roof at 68'-0".
+  - Story Heights (both wings share floor elevations up to Level 5):
+      - Level 1: 16'-0"
+      - Levels 2-8: 13'-0" typical
+      - Low-wing roof = Level 5 floor elevation region continues as occupied roof terrace (add 25 psf superimposed dead for pavers over Grids 1-5 / C-F at Level 5 roof).
+
+## LFRS Bay Locations (EBF, inverted-V with center shear link)
+Transverse (Y) Direction:
+  - Frame Y1: Grid 1, between B-C (30' bay), Levels 1-8
+  - Frame Y2: Grid 8, between A-B (30' bay), Levels 1-8
+  - Frame Y3: Grid 5, between D-E (30' bay), Levels 1-5 (low wing, on the re-entrant line)
+  - Frame Y4: Grid 1, between D-E (30' bay), Levels 1-5
+Longitudinal (X) Direction:
+  - Frame X1: Grid A, between 3-4 (30' bay), Levels 1-8
+  - Frame X2: Grid C, between 6-7 (30' bay), Levels 1-8 (re-entrant face)
+  - Frame X3: Grid F, between 2-3 (30' bay), Levels 1-5
+  - Frame X4: Grid C, between 1-2 (30' bay), Levels 1-5
+
+## EBF Link Design (AISC 341 F3)
+- Link length e = 36 in. at all frames (shear-governed: e <= 1.6 Mp/Vp to be confirmed by agent per selected link section)
+- Links are the same W-section as the EBF beam outside the link (continuous member)
+- Link rotation limit: 0.08 rad for shear links
+- Full-depth web stiffeners both sides at link ends; intermediate stiffeners per AISC 341 F3.5b-4 spacing for shear links
+- Braces, columns, and beam segments outside links designed for capacity-limited forces from 1.25 Ry Vn of the link (Ry = 1.1)
+- Lateral bracing at link ends: top and bottom flange, required strength per AISC 341
+
+## Member Sizing Rules
+- One EBF beam/link size and one EBF column size per story per frame; frames may differ
+- Columns change size every 2 stories; never smaller in a lower story
+- Column splices at 2-story intervals, 4 ft above finished floor
+- Gravity framing: one gravity beam size and one gravity column size per story (agent to determine); infill beams @ 10 ft o.c.
+- Base fixity: all pinned. Gravity connections: pinned. EBF brace connections: gusseted, UFM.
+
+## Diaphragm / Collector Notes
+- Collectors along Grid C (Grids 5-8) and Grid 5 (Grids C-F) at the re-entrant corner must be designed with overstrength (Omega_0) load combinations.
+- Check diaphragm shear transfer at the Level 5 roof step where the low-wing diaphragm terminates against the tall wing.

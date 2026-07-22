@@ -1,0 +1,46 @@
+Structural System - Transverse Intermediate Moment Frames (IMF) + longitudinal Ordinary Concentrically Braced Frames (OCBF); crane runway girders on column brackets
+Frame type - Single-story crane-served manufacturing bay with a top-running bridge crane. THE POINT: the runway girders are FATIGUE-governed (AISC 360 Appendix 3, CMAA service class), not statically governed - a static-only runway design is wrong.
+Number of stories - 1 (eave 38 ft; runway rail elevation 28 ft)
+Story heights - Single story, 38 ft eave, low-slope (1/4:12) roof
+Analysis procedure - ELF; SDC C; wind vs seismic per direction (crane lateral forces combine per ASCE 7-22 2.3 / 12.4 as applicable)
+Design standards - AISC 360-22 (incl. APPENDIX 3 fatigue), AISC 341-22 (IMF Sec. E2, OCBF Sec. F1), AISC Design Guide 7 (industrial buildings / crane runways), CMAA 70, ASCE 7-22
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi; braces HSS A500 Grade C
+- Runway girders: W-shape + cap channel (A992/A36 channel); rail ASCE 85 lb with welded clips
+- Roof: 1 1/2 in. bare Type B deck on open-web joists (SJI)
+
+## Crane Data (governs the runway + frames)
+- One 20-ton (40 kip capacity) double-girder top-running bridge crane, span 68'-0", CMAA Class D (heavy service).
+- Bridge weight 38 kip; trolley + hoist 9 kip. MAX STATIC WHEEL LOAD 28 kip; 2 wheels per rail @ 11'-0" centers.
+- Impact/allowances (DG7 / CMAA): vertical +25% of wheel loads; LATERAL 20% of (lifted load + trolley) split between rails, applied at rail elevation; LONGITUDINAL 10% of max wheel loads per rail.
+- FATIGUE: design for 500,000 to 2,000,000 load cycles (Class D). Appendix 3 stress-range checks REQUIRED at: runway tension flange (plain metal + at the cap-channel weld), the girder-to-bracket connection, and the tie-back detail. State the category (A-E') and allowable stress range for each detail.
+- Serviceability (DG7): runway vertical deflection <= L/600 under wheel loads (no impact); lateral <= L/400.
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 18 psf roof (deck, joists, insulation, sprinklers, lights) |
+| Collateral | 5 psf |
+| Roof Live Load | 20 psf (Lr); Snow pg = 30 psf (drift at the parapet/screens) |
+
+## Seismic Design Data
+- SDS = 0.42 g, SD1 = 0.17 g, Site Class D, Risk Category II, Ie = 1.0, SDC C
+- Transverse IMF: R = 4.5, Cd = 4, Omega_0 = 3. Longitudinal OCBF: R = 3.25, Cd = 3.25, Omega_0 = 2.
+- Include the crane weight (bridge parked at the worst bay) in the seismic mass; state the assumption.
+
+## Wind Design Data
+- V = 115 mph, Exposure C; MWFRS both directions; C&C and net roof uplift anchorage for the light roof.
+
+## Building Plan Geometry
+- 70'-0" clear-span transverse frames (Y) x 10 bays @ 25'-0" = 250'-0" (X); Grids 1-11 / A-B.
+- Transverse LFRS: IMF portal frames at every grid (fixed-base columns permitted - state the choice and its base detail).
+- Longitudinal LFRS: OCBF bays (2 per side wall) + eave/crane-level struts.
+- Runway girders span 25'-0" between column BRACKETS at el. 28 ft along both A and B lines; the crane columns carry runway vertical + lateral + longitudinal forces with the moment from the bracket eccentricity (9 in. from the column face).
+- Model idealisation (STATE IT): crane wheel loads applied as the ENVELOPE of at least two positions (midspan of a runway span; wheels straddling a column) as static load cases; the fatigue stress-range checks are done BY HAND per Appendix 3 from the RAG.
+- Plan length 250 ft jointless: record the thermal/expansion-joint decision.
+
+## Member Sizing Rules
+- One runway girder + cap channel size; one crane-column size; one rafter size; one brace size; one joist designation.
+- All connections at the runway are fatigue details - pretensioned bolts or CJP as required by the chosen category; gravity roof connections pinned.
+- Delegated design register: crane + end trucks (supplier), rail clips, joists (SJI), deck (SDI).

@@ -1,0 +1,58 @@
+Structural System - Ordinary Concentrically Braced Frame (OCBF)
+Frame type - Distributed OCBF bays; L-shaped plan; two wings with NON-ALIGNED floor levels (split-level) and different roof heights
+Number of stories - 4 (office wing) + 2 tall stories (workshop wing, high-bay)
+Story heights - Office wing: L1 14 ft, L2-L4 12 ft (roof 50 ft). Workshop wing: L1 20 ft, L2 16 ft (roof 36 ft).
+Analysis procedure - ELF permitted (SDC C, regular-enough by calc - agent to verify); SDC C
+Design standards - AISC 360, AISC 341 (Section F1), ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**, **Fy = 50 ksi**
+- Gusset plates: **ASTM A572 Grade 50**
+- Office floor: composite - 3 in. NW concrete on 2 in. deck. Workshop Level 2 floor: 6 in. slab on 3 in. deck (equipment mezzanine). Workshop roof: bare metal deck + insulation.
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 70 psf office floors; 95 psf workshop mezzanine; 22 psf workshop roof (deck/insulation/sprinklers/lights); 25 psf office roof |
+| Cladding Load | 20 psf office (metal panel); 12 psf workshop (insulated metal panel) |
+| Floor Live Load | 50 psf + 15 psf partitions (office); 125 psf workshop mezzanine (light manufacturing) |
+| Roof Live Load | 20 psf (Lr) both roofs |
+| Snow | pg = 25 psf, Ce = 1.0, Ct = 1.0 office / 1.1 workshop (cold roof), Is = 1.0. CHECK DRIFT SNOW on workshop roof against the 14-ft step to the office wing wall. |
+
+## Seismic Design Data
+- SDS = 0.42 g, SD1 = 0.18 g, Site Class D, Risk Category II, Ie = 1.0, SDC C
+- OCBF: R = 3.25, Cd = 3.25, Omega_0 = 2; no height limit at SDC C
+- Braces: seismically compact per AISC 341 F1; K-braces not permitted
+
+## Wind Design Data
+- V = 105 mph, Exposure C. With R = 3.25, verify whether wind governs the workshop wing LFRS (likely).
+
+## Building Plan Geometry (L-SHAPE, SPLIT-LEVEL WINGS)
+  - Column Grid:
+      - X-Axis: Grids 1 to 9 (8 bays @ 25'-0" = 200'-0")
+      - Y-Axis: Grids A to D (3 bays @ 25'-0" = 75'-0")
+  - OFFICE WING (4 stories): Grids 1-5 / A-D (100' x 75')
+  - WORKSHOP WING (2 tall stories): Grids 5-9 / A-C (100' x 50'); zone Grids 5-9 / C-D is OPEN (exterior yard)
+  - SPLIT-LEVEL CONDITION along shared Grid 5:
+      - Office floor elevations: 14', 26', 38', roof 50'
+      - Workshop elevations: mezzanine 20', roof 36'
+      - NO floor elevations align. Each wing has its own diaphragms; Grid 5 columns receive connections at 6 different elevations. There is NO seismic joint - the wings are structurally connected, and the agent must design the shared Grid 5 columns for the interaction.
+  - Interconnection rule: Grid 5 columns are common to both wings; office beams frame in at office elevations, workshop girders at workshop elevations.
+
+## OCBF Bay Locations (all bays 25'-0" wide, single-diagonal or chevron as noted)
+Office wing, Transverse (Y): Grid 1 between B-C (chevron, L1-L4); Grid 5 between C-D (chevron, L1-L4)
+Office wing, Longitudinal (X): Grid A between 2-3 (chevron, L1-L4); Grid D between 3-4 (chevron, L1-L4)
+Workshop wing, Transverse (Y): Grid 6 between A-B (single diagonal, both stories); Grid 9 between B-C (single diagonal, both stories)
+Workshop wing, Longitudinal (X): Grid A between 7-8 (chevron, both stories); Grid C between 6-7 (chevron, both stories)
+
+## OCBF Requirements (AISC 341 F1)
+- Braces seismically compact (moderately ductile); chevron beams designed for unbalanced expected brace forces per F1.4a (or use Omega_0 forces where permitted)
+- Connections: design for load combinations with Omega_0, or expected brace strength - agent to choose consistent approach
+- KL/r <= 200
+
+## Member Sizing Rules
+- One brace size, one beam size, one column size per story per wing
+- Columns: office wing changes at Level 3; workshop single size full height; splices 4 ft above floor
+- Gravity framing: one beam + one column size per story per wing (agent to determine); office infill @ 8'-4" o.c.; workshop roof joists @ 6'-3" o.c.
+- Base fixity: all pinned. All gravity connections pinned.

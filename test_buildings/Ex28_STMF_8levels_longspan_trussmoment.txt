@@ -1,0 +1,43 @@
+Structural System - Special Truss Moment Frame (STMF) - AISC 341-22 Section E4.
+Frame type - Perimeter STMF: story-deep trusses acting as moment-frame "girders" with a ductile SPECIAL SEGMENT near midspan; column-tree/truss-to-column moment connections. Long clear spans (column-free interior).
+Number of stories - 8
+Story heights - Level 1: 16 ft; Levels 2-8: 14 ft (story-deep trusses). Roof at 114 ft.
+Analysis procedure - MRSA; SDC D. (STMF is a rarely-used but code-defined ductile steel system.)
+Design standards - AISC 360-22, AISC 341-22 (Sec. E4), ASCE 7-22.
+
+## Material Properties
+- Truss chords, verticals, diagonals, columns: ASTM A992, Fy = 50 ksi
+- Special-segment web members (the ductile fuses): ASTM A992 (or A572) - controlled expected strength
+- Gusset / connection plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck spanning between the trusses
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite floor + truss self-weight superimposed) |
+| Cladding Load | 15 psf |
+| Floor Live Load | 60 psf (open-plan office/lab, long spans); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.55 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- STMF: R = 7, Cd = 5.5, Omega_0 = 3
+- STMF applicability (E4): truss span <= 65 ft between columns; special-segment length 0.1-0.5 of the span and depth limits; the SPECIAL SEGMENT is the ductile fuse - everything else is capacity-designed to remain elastic.
+
+## Wind Design Data
+- V = 108 mph, Exposure B. Seismic governs; check drift under 10-yr service wind.
+
+## Building Plan Geometry (LONG-SPAN RECTANGLE)
+- Overall: 180'-0" (X) x 120'-0" (Y), uniform all levels.
+- Column Grid: X = 3 bays @ 60'-0" (long-span trusses); Y = 2 bays @ 60'-0". Interior is column-free between the 60-ft lines.
+- STMF: perimeter truss-moment lines on all four faces (story-deep trusses spanning 60 ft between perimeter columns), Levels 1-8. Interior gravity trusses/girders as needed.
+
+## STMF Design Requirements - AISC 341-22 E4
+- SPECIAL SEGMENT: locate near midspan; size its web members (X-diagonals or Vierendeel chords) as the ductile fuses; compute the special-segment expected VERTICAL SHEAR strength Vne (E4.5) from the expected strengths of its members.
+- CAPACITY DESIGN: chords and non-special-segment web members, the truss-to-column connections, and the COLUMNS are designed for the forces developed by the fully-yielded special segment (E4.4) using RyFy and strain-hardening - they must remain elastic.
+- Truss-to-column connection and column strength for the amplified (capacity) forces; stability bracing of the special segment chords.
+- Drift: Cd = 5.5; the story-deep trusses make the frame stiff - verify drift and that the special segment governs the mechanism.
+
+## Member Sizing Rules
+- One truss configuration per level-group; special-segment members sized as their own group (do not oversize - they are fuses).
+- Columns change every 2 stories; splices 4 ft above floor. Column bases fixed; gravity connections pinned.

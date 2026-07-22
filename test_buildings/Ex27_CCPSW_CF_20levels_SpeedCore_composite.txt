@@ -1,0 +1,44 @@
+Structural System - COUPLED COMPOSITE PLATE SHEAR WALL / CONCRETE-FILLED (CC-PSW/CF), aka "SpeedCore" - AISC 341-22 Section H8. Concrete-filled composite steel plate core with composite coupling beams.
+Frame type - Central CC-PSW/CF core (concrete-filled steel-plate wall piers coupled by composite coupling beams); steel gravity framing (composite floor) outside the core.
+Number of stories - 20
+Story heights - Level 1: 16 ft; Levels 2-20: 12 ft. Roof at 244 ft.
+Analysis procedure - MRSA; SDC D. (Modern high-rise steel core system - AISC 341-22 H8 governs.)
+Design standards - AISC 360-22, AISC 341-22 (Sec. H8), ASCE 7-22. (This system is NEW in AISC 341-22 / ASCE 7-22 - confirm coefficients from Table 12.2-1.)
+
+## Material Properties
+- Steel wall plates + coupling-beam plates: ASTM A572 Grade 50 (or A992 for W-shape elements)
+- Tie bars / studs: per AISC 341 H8 spacing rules
+- Infill concrete: normal-weight, f'c = 6 ksi (self-consolidating), unreinforced (composite action via steel plates + ties)
+- Gravity framing: ASTM A992 W-shapes; composite floor 3 1/4 in. LW on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 85 psf floor (composite) + core self-weight |
+| Cladding Load | 20 psf (unitized curtain wall) |
+| Floor Live Load | 50 psf office + 15 psf partitions (or 40 psf residential); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) + mechanical penthouse allowance |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.58 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- Coupled CC-PSW/CF: R = 8, Cd = 5.5, Omega_0 = 2.5 (CONFIRM against ASCE 7-22 Table 12.2-1; uncoupled C-PSW/CF differs)
+- Height 244 ft: check the Table 12.2-1 SDC D height limit for this system and the coupled-wall applicability.
+
+## Wind Design Data
+- V = 115 mph, Exposure B. At 244 ft check wind serviceability drift (H/500, 10-yr) and occupant-comfort acceleration; determine governing hazard.
+
+## Building Plan Geometry (CORE + PERIMETER GRAVITY)
+- Overall: 120'-0" (X) x 120'-0" (Y), square, uniform all levels.
+- Column Grid: 4 bays @ 30'-0" each way.
+- CC-PSW/CF CORE: central 2-bay x 1-bay core (Grids 2-4 / B-C), two coupled wall-pier lines each direction with composite coupling beams over the core doorways at every level. Gravity steel columns on the perimeter and remaining interior grid.
+
+## CC-PSW/CF (SpeedCore) Design Requirements - AISC 341-22 H8
+- Wall PIERS: composite plate-concrete section; slenderness/plate-width-to-thickness (b/t) tie-bar spacing limits per H8; axial-flexure interaction of the composite section.
+- COUPLING BEAMS: composite, length-to-depth ratio 3 <= L/d <= 5; wall-pier height-to-length h/L >= 4 (H8 applicability); design coupling beams as the ductile fuses.
+- CAPACITY DESIGN: wall piers and foundations designed for the forces from the fully-yielded coupling beams (coupling-beam expected flexural strength); report the degree of coupling.
+- Panel zones / wall-to-foundation and coupling-beam-to-wall connections per H8.
+- Note if the framework cannot model a composite plate-concrete section explicitly: idealize core stiffness (transformed section) for the analysis and STATE the idealization; do the H8 member/connection capacities by hand from the RAG.
+
+## Member Sizing Rules
+- Wall plate thickness + concrete thickness per story-group (change every 2-3 stories, never thinner below); coupling-beam size per level-group.
+- Gravity columns change every 2 stories; splices 4 ft above floor. Core fixed at base; gravity columns pinned.

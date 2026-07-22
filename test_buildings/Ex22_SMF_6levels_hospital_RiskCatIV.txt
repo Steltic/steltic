@@ -1,0 +1,47 @@
+Structural System - Special Steel Moment Frame (SMF), perimeter, with prequalified RBS connections.
+Frame type - Perimeter SMF both directions; interior gravity framing. ESSENTIAL FACILITY (acute-care hospital wing).
+Number of stories - 6
+Story heights - Level 1: 16 ft; Levels 2-6: 14 ft (tall floors for MEP/interstitial). Roof at 86 ft.
+Analysis procedure - MRSA; SDC D. RISK CATEGORY IV (hospital with surgery/emergency) - Ie = 1.5.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22.
+
+## Material Properties
+- SMF W-shapes: ASTM A992, Fy = 50 ksi
+- Connection / continuity / doubler plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. NW concrete on 3 in. composite deck (vibration-sensitive occupancies)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 95 psf (composite floor + heavy MEP/interstitial superimposed) |
+| Cladding Load | 20 psf |
+| Floor Live Load | 80 psf (hospital patient/operating), 100 psf corridors/lobbies; reducible per Sec. 4.7 limits |
+| Roof Live Load | 20 psf (Lr); plus 60 psf mechanical penthouse zone allowance |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.60 g, Site Class D
+- RISK CATEGORY IV (essential facility); IMPORTANCE FACTOR Ie = 1.5  <-- the defining condition
+- SDC D
+- SMF: R = 8, Cd = 5.5, Omega_0 = 3; no height limit
+- ALLOWABLE STORY DRIFT: Risk Category IV -> 0.010 h_sx for this structure (ASCE 7-22 Table 12.12-1, "all other structures," Risk Cat IV) - much tighter than the 0.020 used for Risk Cat II. Amplified drift delta = Cd*delta_e/Ie must satisfy 0.010 h_sx.
+- Ie = 1.5 raises seismic demand ~50% vs Risk Cat II; do NOT design as if Ie = 1.0.
+- Nonstructural/component importance Ip = 1.5 (note; component design delegated).
+
+## Wind Design Data
+- V = 120 mph (Risk Cat IV -> longer MRI map), Exposure C. Seismic governs strength; verify the TIGHT 0.010 drift limit is met (drift will likely govern member sizes).
+
+## Building Plan Geometry (REGULAR RECTANGLE)
+- Overall: 180'-0" (X) x 120'-0" (Y), uniform all levels (regular - the trap is the loads/limits, not geometry).
+- Column Grid: X = 6 bays @ 30'-0"; Y = 4 bays @ 30'-0".
+- Perimeter SMF: all four faces, Levels 1-6.
+- Roof: flat; central mechanical penthouse over Grids 3-5 / B-C (model as added mass + gravity).
+
+## SMF + Risk-Category-IV Design Requirements
+- Apply Ie = 1.5 to the seismic base shear and to the diaphragm forces; carry it through the whole design.
+- Apply the RISK CATEGORY IV drift limit 0.010 h_sx (NOT 0.020) to the Cd-amplified story drift; this is the most common miss.
+- AISC 341 F: SCWB (E3.4a) at every joint (biaxial at corners), panel-zone shear + doubler plates, continuity plates; RBS per AISC 358; demand-critical welds, protected zones.
+- Redundancy rho = 1.3 unless the 12.3.4.2 redundancy conditions are demonstrated.
+
+## Member Sizing Rules
+- One SMF beam size per level per frame; SMF columns change every 2 stories, never smaller below; splices 4 ft above floor.
+- Gravity: one beam + one column size per story. SMF bases fixed; gravity columns pinned.

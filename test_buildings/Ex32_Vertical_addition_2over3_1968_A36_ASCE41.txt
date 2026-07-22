@@ -1,0 +1,46 @@
+Structural System - EXISTING 1968 steel Ordinary Moment Frames (ASTM A36) + NEW 2-story vertical addition (A992)
+Frame type - Two light office stories added on top of an existing 3-story 1968 moment-frame building. THE POINT: the existing frame is a CONSTRAINT, not a design variable - existing member sizes are FIXED (from the 1968 drawings, Fy = 36 ksi), you may NOT "re-certify" or resize them as new steel; where combined demands overload them you record a RETROFIT SCOPE item, and you SCOPE (not perform) the ASCE 41 evaluation and IEBC triggers.
+Number of stories - 5 total: 3 existing + 2 added
+Story heights - Existing L1-L3: 13'-0" each (existing roof 39 ft). Addition L4-L5: 12'-6" each (new roof 64 ft).
+Analysis procedure - ELF; SDC C. Model the FULL 5-story assembly (existing + addition) - the addition's mass and stiffness change the whole building's response.
+Design standards - AISC 360-22 (new members), ASCE 7-22, IEBC (alteration/addition triggers - scope), ASCE 41-23 (existing-building evaluation - scope only)
+
+## Material Properties
+- EXISTING (1968, from drawings): W-shapes ASTM A36, Fy = 36 ksi; riveted/bolted field connections (assume A307-class bolts); composite action NOT to be relied on.
+- NEW (addition): W-shapes ASTM A992, Fy = 50 ksi; bolts A325/F3125; deck + 2 1/2 in. LW topping.
+
+## EXISTING MEMBER SIZES (FIXED - from the 1968 drawings; verify, do not resize)
+- Columns (full height L1-L3): exterior W14X90, interior W14X109 (A36)
+- Perimeter moment-frame girders: W24X76 (A36), all four faces, L1-L3
+- Interior gravity girders: W24X76 (A36, same as perimeter); infill beams W16X31 @ 8'-4" o.c. (A36)
+- Column bases: FIXED (deep encased grillage footings provide rotational restraint - state the assumption; its verification is part of the scoped ASCE 41 evaluation)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | Existing floors 75 psf; existing (now demolished) roofing replaced - L3 becomes a floor at 78 psf; new addition floors 55 psf; new roof 28 psf |
+| Cladding Load | Existing 25 psf (masonry infill/precast); addition 15 psf (lightweight panel) |
+| Floor Live Load | 50 psf + 15 psf partitions (all office levels) |
+| Roof Live Load | 20 psf (Lr); Snow pg = 25 psf |
+
+## Seismic Design Data
+- SDS = 0.40 g, SD1 = 0.15 g, Site Class D, Risk Category II, Ie = 1.0, SDC C
+- Steel OMF (the existing system, which the addition extends): R = 3.5, Cd = 3, Omega_0 = 3
+- IEBC scope statement REQUIRED: does the addition increase any existing element's seismic demand > 10% or gravity demand > 5%? List the triggered elements and the code path (comply as new vs ASCE 41 Tier evaluation).
+
+## Wind Design Data
+- V = 105 mph, Exposure B. Combined 64-ft building, both directions.
+
+## Building Plan Geometry
+- Column Grid: X = 4 bays @ 30'-0" (120'-0"); Y = 3 bays @ 30'-0" (90'-0"); addition matches the existing grid exactly, no setback.
+- Addition columns splice to the existing column tops 4 ft above L3; design the SPLICE for the addition's full demands (axial + moment + shear).
+- Perimeter moment frames continue in the addition (new A992 girders/columns, field-welded or bolted end-plate - state the choice).
+
+## Existing-Building Requirements (recognize-and-scope discipline)
+- Check every EXISTING member (fixed sizes, Fy = 36 ksi) under the COMBINED 5-story demands. Report D/C honestly; entries over 1.0 get a 'retrofit_scope' record (e.g. cover-plate the L1 interior columns, strengthen the L1-L2 girder connections), NOT a resize.
+- Existing connection capacities are UNKNOWN: carry them as a scoped ASCE 41 Tier 1/Tier 2 evaluation item with the destructive/NDE survey listed as a deliverable.
+- Foundations: existing footing capacity verification is scoped out to the geotechnical/ASCE 41 stage; state the assumed allowable increase trigger.
+
+## Member Sizing Rules (NEW members only)
+- Addition: one girder + one infill size per level; one column size; one cladding-support detail note.
+- Base fixity: existing FIXED bases retained (stated assumption, ASCE 41-scoped). All new gravity connections pinned.

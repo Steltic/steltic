@@ -1,0 +1,64 @@
+Structural System - Eccentrically Braced Frame (EBF), shear links
+Frame type - EBF bays on the inner faces of a CRUCIFORM (plus-shaped) plan; hillside site with a walkout basement under the east half only
+Number of stories - 11 above grade + 1 partial walkout basement (east half); stepped grade
+Story heights - Basement (east half): 12 ft; Level 1: 16 ft; Levels 2-11: 12 ft 6 in; main roof at 141'-0" above Level 1 slab
+Analysis procedure - MRSA; SDC D. Re-entrant corners (Type 2) at all four inside corners of the cross.
+Design standards - AISC 360, AISC 341 (Section F3), ASCE 7
+
+## Material Properties
+- W-shapes (incl. links): **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**, **Fy = 50 ksi**
+- Gussets/stiffeners: **ASTM A572 Grade 50**
+- Basement perimeter: concrete retaining walls on the uphill (west) side of the basement zone; steel frame carries all seismic above the basement slab - basement walls are NOT part of the steel LFRS but restrain the east-half base.
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 78 psf (composite office floor); 110 psf basement slab-on-metal-deck over crawl (east half) |
+| Cladding Load | 16 psf curtain wall |
+| Floor Live Load | 50 psf office + 15 psf partitions; 100 psf Level 1 lobby; 40 psf basement storage/parking |
+| Roof Live Load | 20 psf (Lr); rooftop PV allowance 8 psf over the full roof |
+
+## Seismic Design Data
+- SDS = 0.95 g, SD1 = 0.52 g, Site Class C, Risk Category II, Ie = 1.0, SDC D
+- EBF: R = 8, Cd = 4, Omega_0 = 2
+- Height above base: define BASE at Level 1 (grade plane on west); total 141.0 ft < 160 ft SDC D limit - OK. Agent to justify base definition given the east walkout.
+- Vertical irregularity: partial basement = stiffness step; include basement level in model for the east half.
+
+## Wind Design Data
+- V = 110 mph, Exposure C (hilltop; apply topographic factor Kzt = 1.15).
+
+## Building Plan Geometry (CRUCIFORM PLAN)
+  - Column Grid:
+      - X-Axis: Grids 1 to 7 (6 bays @ 26'-0" = 156'-0")
+      - Y-Axis: Grids A to G (6 bays @ 26'-0" = 156'-0")
+  - CRUCIFORM: the four 52' x 52' corner zones are OPEN at all levels:
+      - Omitted: Grids 1-3/A-C, Grids 5-7/A-C, Grids 1-3/E-G, Grids 5-7/E-G
+      - Occupied: center Grids 3-5/C-E plus four arms: south 3-5/A-C, north 3-5/E-G, west 1-3/C-E, east 5-7/C-E
+  - WALKOUT BASEMENT: under the EAST arm and east half of center only (Grids 4-7 / C-E); grade slopes one full story from west (Level 1 at grade) to east (basement at grade, walkout).
+  - Story Heights: Basement 12'-0" (east zone only); Level 1: 16'-0"; Levels 2-11: 12'-6".
+
+## EBF Bay Locations (inverted-V, center shear link; bays 26'-0" wide)
+Transverse (Y) Direction:
+  - Frame Y1: Grid 3, between C-D, Levels 1-11 (inside face, west)
+  - Frame Y2: Grid 5, between D-E, Levels 1-11 (inside face, east; EXTENDS to basement level B1-11 in the basement zone)
+  - Frame Y3: Grid 1, between C-D, Levels 1-11 (west arm end)
+  - Frame Y4: Grid 7, between D-E, Levels B1-11 (east arm end, starts at basement)
+Longitudinal (X) Direction:
+  - Frame X1: Grid C, between 3-4, Levels 1-11
+  - Frame X2: Grid E, between 4-5, Levels 1-11 (extends to B1 within basement zone)
+  - Frame X3: Grid A, between 3-4, Levels 1-11 (south arm end)
+  - Frame X4: Grid G, between 3-4, Levels 1-11 (north arm end)
+
+## EBF Link Design (AISC 341 F3)
+- Link length e = 40 in. all levels; verify shear-governed (e <= 1.6 Mp/Vp)
+- Link rotation <= 0.08 rad at Cd-amplified drift
+- Full-depth stiffeners at link ends both sides; intermediate stiffener spacing per F3.5b-4
+- Capacity design of braces/columns/beam-outside-link from 1.25 Ry Vn (Ry = 1.1)
+- Link lateral bracing top/bottom flange at link ends
+
+## Member Sizing Rules
+- One link/beam size and one column size per story per frame; frames may differ
+- Columns change every 2 stories; splices 4 ft above floor; never smaller below
+- Gravity framing: one beam + one column size per story (agent to determine)
+- Base fixity: all pinned (at Level 1 footings on west; at B1 footings within the basement zone). Gravity connections pinned.

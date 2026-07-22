@@ -1,0 +1,65 @@
+Structural System - DUAL SYSTEM: Special Moment Frames (perimeter) + Special Concentrically Braced Frames (core)
+Frame type - SCBF core continuous ground-to-roof; perimeter SMF on tower faces; SMF sized for >= 25% of design seismic force per ASCE 7 12.2.5.1
+Number of stories - 16 (3-level podium + 13-level tower) - podium footprint larger than tower
+Story heights - Level 1: 20 ft (retail); Levels 2-3: 14 ft (podium office/parking); Levels 4-16: 12 ft 6 in (tower office)
+Analysis procedure - MRSA; SDC D. Vertical geometric irregularity (Type 3) at the Level 3 podium setback.
+Design standards - AISC 360, AISC 341, AISC 358, ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- Braces (round HSS): **ASTM A500 Grade C**, **Fy = 46 ksi**
+- Gusset plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf typical office; 100 psf Level 1 retail slab; 110 psf Level 3 podium roof terrace (pavers + landscaping) |
+| Cladding Load | 15 psf tower curtain wall; 30 psf podium precast |
+| Floor Live Load | 50 psf office + 15 psf partitions (Levels 4-16); 100 psf retail (Level 1); 40 psf parking (Levels 2-3); 100 psf Level 3 terrace (assembly) |
+| Roof Live Load | 20 psf (Lr) at Level 16 main roof |
+
+## Seismic Design Data
+- SDS = 1.10 g, SD1 = 0.62 g, Site Class D, Risk Category II, Ie = 1.0
+- Dual SMF + SCBF: R = 7, Cd = 5.5, Omega_0 = 2.5; no height limit (dual system) - total height 210.5 ft OK
+- SMF portion must independently resist >= 25% of the design seismic force at every level
+- rho = 1.0 assumed; agent to confirm per 12.3.4.2
+
+## Wind Design Data
+- V = 110 mph, Exposure B (urban). Tower drift limit H/450 under 10-yr wind.
+
+## Building Plan Geometry (PODIUM + TOWER SETBACK)
+  - Column Grid (shared podium/tower):
+      - X-Axis: Grids 1 to 8 (7 bays @ 30'-0" = 210'-0")
+      - Y-Axis: Grids A to G (6 bays @ 30'-0" = 180'-0")
+  - PODIUM (Levels 1-3): full footprint 210' x 180'
+  - TOWER (Levels 4-16): Grids 2-6 / B-F only (120' x 120'); all podium area outside the tower becomes the Level 3 roof terrace
+  - Elevations: Level 3 podium roof at 48'-0"; Level 16 main roof at 210'-6"
+
+## LFRS Layout
+CORE - SCBF (X-braced over two-story modules, continuous Levels 1-16):
+  - Core bays at Grids 3-4 and 4-5 on Grid C (X-direction piers), and Grids C-D and D-E on Grid 4 (Y-direction piers)
+  - All core braced bays are 30'-0" wide and run full height ground to roof (no transfer)
+PERIMETER - SMF (RBS connections per AISC 358):
+  - Tower faces, Levels 1-16 (columns continue straight to foundation through podium):
+      - Grid B between 3-5 (2 bays) and Grid F between 3-5 (2 bays) - X-direction
+      - Grid 2 between C-E (2 bays) and Grid 6 between C-E (2 bays) - Y-direction
+  - Podium-only SMF (Levels 1-3, to control podium diaphragm forces):
+      - Grid A between 4-5; Grid G between 4-5; Grid 1 between D-E; Grid 8 between D-E
+
+## SCBF Requirements (AISC 341 F2)
+- Two-story X configuration; braces meet at mid-height of the module
+- Braces satisfy highly ductile slenderness and b/t limits; KL/r <= 200
+- Columns and beams designed for capacity-limited brace forces (expected strength Ry Fy Ag in tension, 1.14 Fcre Ag in compression, and post-buckling 0.3x)
+- Gussets with 2t fold-line clearance; UFM force distribution
+
+## SMF Requirements (AISC 341 E3, AISC 358)
+- RBS connections; strong-column/weak-beam per E3.4a at every joint
+- Panel zones per AISC 360 J10-11/J10-12; doubler and continuity plates as required
+- Beam flange bracing at highly ductile spacing Lb <= 0.086 ry E/Fy
+
+## Member Sizing Rules
+- SMF beams W24-W33 range; SMF columns W14; SCBF columns W14 (agent to select)
+- Columns change every 2 stories; splices 4 ft above floor; never smaller below
+- One gravity beam size + one gravity column size per story outside LFRS (agent to determine)
+- Base fixity: SMF and SCBF columns fixed; gravity columns pinned. Gravity connections pinned.

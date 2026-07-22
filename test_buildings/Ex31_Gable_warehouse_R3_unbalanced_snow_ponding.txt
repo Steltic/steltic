@@ -1,0 +1,40 @@
+Structural System - Steel systems not specifically detailed for seismic resistance (R = 3), SDC B
+Frame type - Single-story GABLE warehouse (clear-span portal frames) with an attached FLAT low-roof shipping office. THE POINTS: (1) the sloped gable roof - unbalanced/sliding snow and the flat-level model idealisation; (2) the dead-flat, long-span low roof - PONDING stability and rain loads.
+Number of stories - 1 (+ attached 1-story low-roof office)
+Story heights - Main hall: eave 26 ft, ridge 36 ft (3:12 gable over the 80-ft width; MEAN ROOF HEIGHT 31 ft). Office: flat roof at 16 ft.
+Analysis procedure - ELF; SDC B; wind expected to govern the LFRS
+Design standards - AISC 360-22 (ponding per B3.10 - note the former Appendix 2 was removed; flexibility method per SJI TD3), ASCE 7-22 Ch. 7 (snow incl. 7.6 unbalanced, 7.7 drift, 7.9 sliding) and Ch. 8 (rain)
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi; rod bracing: ASTM A36 threaded rods
+- Main-hall roof: bare metal standing-seam deck on purlins; office roof: 1 1/2 in. Type B deck + rigid insulation on open-web joists (SJI)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 15 psf main-hall roof (along the slope); 22 psf office roof |
+| Collateral | 5 psf both roofs (sprinklers, lighting) |
+| Roof Live Load | 20 psf (Lr) |
+| Snow | pg = 35 psf, Ce = 1.0, Ct = 1.1 (cold), Is = 1.0. REQUIRED CASES: balanced; UNBALANCED gable (7.6.2); DRIFT on the office low roof from the 15-20 ft step (7.7.1 leeward + windward); SLIDING snow off the gable onto the office roof (7.9). |
+| Rain | Office roof is DEAD FLAT with interior primary drains + overflow scuppers; compute the 8.3 hydraulic head and design rain load. |
+
+## Seismic Design Data
+- SDS = 0.25 g, SD1 = 0.10 g, Site Class D, Risk Category II, Ie = 1.0, SDC B
+- R = 3 (not detailed), Cd = 3, Omega_0 = 3 - AISC 341 does NOT apply.
+
+## Wind Design Data
+- V = 110 mph, Exposure C. MWFRS both directions on the gable profile (windward/leeward slopes); C&C on roof zones; NET UPLIFT anchorage for the light roof. State the enclosure classification (large dock doors on one wall - verify enclosed vs partially enclosed).
+
+## Building Plan Geometry
+- MAIN HALL: 80'-0" (Y, clear-span gabled portal frames) x 200'-0" (X), portal frames @ 25'-0" (Grids 1-9). Longitudinal LFRS: rod-braced bays (2 per side wall) + eave strut.
+- OFFICE: 40'-0" x 100'-0" flat-roof lean-to along Grids 3-7 on the south eave wall, roof at 16 ft; joists span 40 ft @ 5'-0" o.c. - long-span, flexible, PONDING-PRONE.
+- Model idealisation (STATE IT): model the gabled hall as a flat level at the MEAN ROOF HEIGHT (31 ft); carry the slope effects by hand - unbalanced/sliding snow load cases applied as line loads, and the portal-frame KNEE THRUST from the sloped rafters reported and carried into the column/base design.
+
+## Ponding + Low-Roof Requirements
+- Ponding stability for the office joists/girders (AISC 360-22 B3.10): flexibility check (Cp + 0.9 Cs <= 0.25, SJI TD3 / legacy App. 2 method) or a direct impounded-water analysis, including the overflow (secondary drainage) hydraulic head; state which members required stiffening or slope.
+- The office roof must ALSO carry the drift + sliding snow surcharge concurrently with its dead/rain cases per the governing combinations.
+
+## Member Sizing Rules
+- One rafter size + one column size for the portal frames; one purlin size; one joist designation + one girder size for the office; one rod size.
+- Base fixity: portal-frame bases pinned (state if uplift demands otherwise); office columns pinned.
+- Delegated design register: joists (SJI), deck (SDI), standing-seam clips.

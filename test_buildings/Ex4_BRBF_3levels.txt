@@ -1,0 +1,57 @@
+Structural System - Buckling-Restrained Braced Frame (BRBF)
+Number of stories - 3
+Story heights - First story 18 ft (high ceilings for public gathering spaces); typical upper stories (2-3) 16 ft (high stack loads, tall windows, underfloor air distribution); total height ~50 ft
+Analysis procedure - Equivalent Lateral Force (ELF); SDC D (high seismic)
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- Structural steel (W-shapes): **ASTM A992**, **Fy = 50 ksi**
+- BRB yielding core: **ASTM A36 or low-yield steel**, encased in a concrete/mortar-filled steel casing
+- Gusset plates: **ASTM A572 Grade 50** (1 1/4 in. thick)
+- Column base plates: **ASTM A572 Grade 50** (2 1/2 in. thick)
+- Floor system: composite steel framing
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 90 psf (library floor: thicker slab for stack loads, framing, superimposed) |
+| Cladding Load | 25 psf (perimeter facade - precast/curtain wall) |
+| Floor Live Load | 60 psf (library reading rooms); typical floor only - book-stack zones (150 psf) not separately modeled |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 110 mph (ASCE 7-22), Exposure B; MWFRS per Ch. 26-27. Seismic overturning governs the BRBF design; verify wind per direction.
+- Design governed by high seismic overturning and compression demands at the BRBF locations.
+
+## Building Plan Geometry
+  - Footprint: 110'-0" (Transverse/Y-axis) × 185'-0" (Longitudinal/X-axis).
+  - Story Heights:
+      - Level 1: 18'-0" (Floor-to-Floor)
+      - Level 2: 16'-0" (Floor-to-Floor)
+      - Level 3: 16'-0" (Floor-to-Roof)
+      - Total Height: 52'-0" (to roof parapet)
+  - Column Grid Coordinates:
+      - Transverse (Y-Axis): Grid Lines A to E (4 bays @ 27'-6" o.c. typical).
+      - Longitudinal (X-Axis): Grid Lines 1 to 7 (6 bays @ 30'-10" o.c.
+        typical).
+BRBF Bay Locations (1-Bay Widths)
+Transverse Direction (Y-Axis):
+  - Frame 1 (Northwest Perimeter): Located on Grid Line 1, between Grid Lines D
+    and E (Bay Width: 27'-6").
+  - Frame 2 (Southeast Perimeter): Located on Grid Line 7, between Grid Lines B
+    and C (Bay Width: 27'-6").
+Longitudinal Direction (X-Axis):
+  - Frame 3 (Southwest Perimeter): Located on Grid Line A, between Grid Lines 2
+    and 3 (Bay Width: 30'-10").
+  - Frame 4 (Northeast Perimeter): Located on Grid Line E, between Grid Lines 5
+    and 6 (Bay Width: 30'-10").
+- Consider 1 beam size and 1 column size per storey, all BRB frames use identical members
+- Consider one size for all gravity beams outside the BRB frames (agent to determine).
+- Consider one size for all gravity-only columns outside the BRB frames (agent to determine).
+
+## BRB Connections (per AISC 341)
+- BRB-to-frame connections: gusset plates, **1 1/4 in. thick (ASTM A572 Gr. 50)** welded to the column and beam flanges.
+- BRB ends connected to the gussets via **heavy pin connections** (3 in. to 4 in. dia. high-strength steel pins) to minimize moment transfer and allow rotation.
+
+## Column Base Connections
+- Column base plates: **2 1/2 in. thick ASTM A572 Gr.

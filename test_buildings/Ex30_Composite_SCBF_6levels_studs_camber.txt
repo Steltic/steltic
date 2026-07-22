@@ -1,0 +1,47 @@
+Structural System - Special Concentrically Braced Frame (SCBF) core + COMPOSITE floor framing (AISC 360 Chapter I)
+Frame type - 6-story speculative office: SCBF braced core, gravity perimeter, and composite beams/girders with headed studs. THE POINT: the floors must be designed COMPOSITE - stud schedule, partial-composite percentage, camber, the wet-concrete (construction) stage, and lower-bound-I deflection - not just bare steel.
+Number of stories - 6
+Story heights - L1 15 ft, L2-L6 13.5 ft (roof at 82.5 ft)
+Analysis procedure - ELF; SDC C
+Design standards - AISC 360-22 (including Chapter I composite members and I8 studs), AISC 341-22 (Section F2), ASCE 7-22, AISC Design Guide 11 (floor vibration screen)
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi
+- Braces (HSS): ASTM A500 Grade C, Fy = 50 ksi
+- Slab: 3-1/4 in. lightweight concrete (f'c = 4 ksi, 110 pcf) on 3 in. composite deck (6-1/4 in. total)
+- Shear studs: 3/4 in. dia. headed, Fu = 65 ksi, welded through deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 57 psf floors (slab+deck 47, MEP/ceiling/finishes 10) + framing self-weight; 30 psf roof |
+| Cladding Load | 15 psf (glass/aluminum curtain wall) |
+| Floor Live Load | 50 psf + 15 psf partitions (reducible) |
+| Roof Live Load | 20 psf (Lr) |
+| Snow | pg = 20 psf (flat roof, drift at the mechanical screen) |
+| Construction | 20 psf construction live on the bare (non-composite) beam + wet concrete - UNSHORED |
+
+## Seismic Design Data
+- SDS = 0.38 g, SD1 = 0.16 g, Site Class D, Risk Category II, Ie = 1.0, SDC C
+- SCBF: R = 6, Cd = 5, Omega_0 = 2
+
+## Wind Design Data
+- V = 100 mph, Exposure B. Verify wind vs seismic per direction.
+
+## Building Plan Geometry
+- Column Grid: X = 5 bays @ 30'-0" (150'-0"); Y = 3 bays @ 40'-0" (120'-0")
+- Girders span 30 ft along the numbered grids; FLOOR BEAMS (infill) span the 40-ft direction @ 10'-0" o.c. - these long-span composite beams are the design focus.
+- SCBF braced bays: 2 per direction, PLACED BY THE AGENT to control torsion and overturning (core and/or perimeter; X-braces or chevron - agent's choice), continuous to the base.
+
+## Composite Design Requirements (AISC 360 Ch. I - by hand from the RAG; the OpenSees model stays BARE STEEL as the lower-bound lateral model, and you must STATE that idealisation)
+- Effective width b_eff per I3.1a; full or PARTIAL composite action (>= 50%); stud strength Qn per I8.2a including deck-rib position effects; report a STUD SCHEDULE (count + spacing) per member type.
+- Construction stage: bare beam under wet concrete + construction live, unshored - strength AND deflection.
+- CAMBER: 3/4 of the calculated wet-concrete dead-load deflection, rounded to the nearest 1/4 in.; no camber if < 3/4 in. Report the camber per member type.
+- Service deflection with the LOWER-BOUND moment of inertia (I_LB), live-load limit L/360, total L/240.
+- Vibration: DG11 walking screen for the 40-ft bays - report fn and predicted peak acceleration vs the 0.5% g office criterion.
+
+## Member Sizing Rules
+- One infill-beam size + one girder size per floor type (typical floor / roof); stud schedule per member type.
+- Braces: one size per 2 stories. Columns: one exterior + one interior size, changing every 2 stories.
+- Base fixity: pinned. Gravity connections pinned (simple shear); state releases explicitly.
+- Delegated design register: metal deck (SDI), stud installation QC, curtain wall.

@@ -1,0 +1,64 @@
+Structural System - DUAL SYSTEM: Special Moment Frames (perimeter) + Buckling-Restrained Braced Frames (core)
+Frame type - Continuous BRBF core; perimeter SMF that STEPS INWARD at two setbacks ("wedding cake" massing); SMF resists >= 25% of design seismic force at every level
+Number of stories - 20 (Tier 1: L1-7; Tier 2: L8-14; Tier 3: L15-20)
+Story heights - Level 1: 18 ft; Levels 2-20: 12 ft 6 in; roof at 255'-6"
+Analysis procedure - MRSA; SDC D. Vertical geometric irregularity (Type 3) at both setbacks.
+Design standards - AISC 360, AISC 341 (E3, F4), AISC 358, ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- BRB cores: **ASTM A36** (certified Fy 38-46 ksi); concrete-filled HSS casings
+- Gussets/doublers/continuity plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 82 psf typical; setback terraces (L7 and L14 roofs) 115 psf (pavers/planting) |
+| Cladding Load | 17 psf curtain wall |
+| Floor Live Load | 50 psf office + 15 psf partitions; 100 psf terraces (assembly); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) at Level 20 roof |
+
+## Seismic Design Data
+- SDS = 1.15 g, SD1 = 0.68 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- Dual SMF + BRBF: R = 8, Cd = 5, Omega_0 = 2.5; NO height limit as a dual system (255.5 ft OK; pure BRBF would be capped at 160 ft - this is the point of the dual system here)
+- 25% SMF backup check required at every level (12.2.5.1)
+- Drift limit 2.0% Cd-amplified
+
+## Wind Design Data
+- V = 115 mph, Exposure B. At 255 ft, wind serviceability (H/500 overall, 10-yr) may govern upper-tier SMF sizes.
+
+## Building Plan Geometry (TWO SETBACKS)
+  - Column Grid:
+      - X-Axis: Grids 1 to 7 (6 bays @ 30'-0" = 180'-0")
+      - Y-Axis: Grids A to F (5 bays @ 30'-0" = 150'-0")
+  - TIER 1 (Levels 1-7): full plan, Grids 1-7 / A-F (180' x 150'); Level 7 roof terrace on the areas outside Tier 2
+  - TIER 2 (Levels 8-14): Grids 1-6 / A-E (150' x 120'); setback removes the east bay strip (6-7) and north bay strip (E-F). Level 14 roof terrace outside Tier 3.
+  - TIER 3 (Levels 15-20): Grids 2-6 / B-E (120' x 90')
+  - NOTE: setbacks are asymmetric (both cut from the same corner side) - the tower centroid DRIFTS southwest with height. Torsional response expected; verify Type 1a/1b at each tier.
+  - Elevations: L7 roof 93'-0"; L14 roof 180'-6"; L20 roof 255'-6"
+
+## LFRS Layout
+CORE - BRBF (chevron, continuous Levels 1-20, no transfers; core sits inside Tier 3 so it never gets cut):
+  - Y-direction piers: Grid 3 between C-D; Grid 5 between C-D
+  - X-direction piers: Grid C between 3-4; Grid D between 4-5
+PERIMETER - SMF (RBS), stepping with the massing:
+  - Tier 1 (L1-7): Grid A bays 2-5 (3 bays); Grid F bays 2-5; Grid 1 bays B-E (3 bays); Grid 7 bays B-E
+  - Tier 2 (L8-14): Grid A bays 2-5; Grid E bays 2-5 (NEW line at the setback face; columns below L8 on Grid E are gravity + Tier-1 interior); Grid 1 bays B-D; Grid 6 bays B-D (NEW line)
+  - Tier 3 (L15-20): Grid B bays 2-5 (NEW); Grid E bays 2-5 (continuous from Tier 2); Grid 2 bays B-D (NEW); Grid 6 bays B-D (continuous)
+  - SMF columns at new tier lines run to the foundation (as gravity columns below their moment-frame levels)
+
+## BRBF Requirements (AISC 341 F4)
+- omega = 1.5, beta = 1.1; capacity design of beams/columns for adjusted brace strengths
+- Chevron beams for unbalanced adjusted forces; core areas per story (agent to size)
+- BRB deformation >= 2x design story drift
+
+## SMF Requirements (AISC 341 E3, AISC 358)
+- RBS per AISC 358 Ch. 5; SCWB at every joint; panel zone per AISC 360 J10-11/12
+- Beam bracing Lb <= 0.086 ry E/Fy
+
+## Member Sizing Rules
+- BRB core area, one beam size, one column size per story per pier
+- SMF: one beam size per frame line per story; columns W14, change every 2 stories, splices 4 ft above floor
+- Gravity: one beam + one column size per story (agent to determine)
+- Base fixity: BRBF and SMF columns fixed; gravity pinned. Gravity connections pinned.

@@ -1,0 +1,63 @@
+Structural System - Special Concentrically Braced Frame (SCBF)
+Frame type - ALL braced bays concentrated in an OFFSET core at the east end (torsionally irregular by design); notched rectangular plan; partial rooftop amenity level
+Number of stories - 9 + partial Level 10 (rooftop amenity/mechanical over east third)
+Story heights - Level 1: 15 ft; Levels 2-9: 12 ft 6 in; Level 10 (partial): 12 ft. Main roof 115 ft; amenity roof 127 ft.
+Analysis procedure - MRSA with amplified accidental torsion; SDC D
+Design standards - AISC 360, AISC 341 (Section F2), ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- Braces (round HSS): **ASTM A500 Grade C**, **Fy = 46 ksi**
+- Gusset plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf typical; 105 psf Level 10 amenity floor (topping + planters) |
+| Cladding Load | 18 psf |
+| Floor Live Load | 50 psf office + 15 psf partitions; 100 psf Level 10 amenity (assembly); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) at both roof levels |
+| Mechanical | 60 psf allowance over Grids 7-8 / B-C at Level 10 |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.55 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- SCBF: R = 6, Cd = 5, Omega_0 = 2
+- Height 115 ft (<160 ft SDC D limit) - OK; partial Level 10 treated as a story for the east zone
+- EXPECTED horizontal irregularity Type 1a or 1b (torsional): core offset east. Agent must compute drift ratios at plan extremes, classify, amplify accidental torsion (Ax up to 3.0), and check whether Type 1b invokes additional SDC D prohibitions/penalties (rho = 1.3 likely).
+
+## Wind Design Data
+- V = 110 mph, Exposure B. Torsional wind load cases (ASCE 7 Fig. 27.3-8) meaningful here.
+
+## Building Plan Geometry (NOTCHED RECTANGLE, OFFSET CORE)
+  - Column Grid:
+      - X-Axis: Grids 1 to 8 (7 bays @ 29'-0" = 203'-0")
+      - Y-Axis: Grids A to D (3 bays @ 29'-0" = 87'-0")
+  - NOTCH (all levels): zone Grids 1-2 / C-D (29' x 29') is OPEN (no framing) - northwest corner cut-out
+  - Levels 1-9: full notched plan
+  - LEVEL 10 (partial): Grids 6-8 / A-D only (58' x 87'); remainder of Level 9 roof is unoccupied membrane roof
+  - Elevations: main roof 115'-0"; Level 10 amenity roof 127'-0"
+
+## SCBF Bay Locations (ALL in the east core zone; two-story X configuration; bays 29'-0" wide)
+Transverse (Y) Direction:
+  - Frame Y1: Grid 7, between A-B, Levels 1-10
+  - Frame Y2: Grid 7, between C-D, Levels 1-10
+  - Frame Y3: Grid 8, between B-C, Levels 1-10
+Longitudinal (X) Direction:
+  - Frame X1: Grid B, between 6-7, Levels 1-10
+  - Frame X2: Grid C, between 6-7, Levels 1-10
+  - Frame X3: Grid B, between 7-8, Levels 1-9
+  - NOTE: NO braced bays west of Grid 6. The west 145 ft of the building is gravity-only and is dragged to the core by collectors.
+
+## SCBF Requirements (AISC 341 F2)
+- Two-story X; braces meet at module mid-height columns/beams
+- Highly ductile b/t and slenderness; KL/r <= 200
+- Capacity design: columns/beams for expected brace strengths (tension Ry Fy Ag; compression 1.14 Fcre Ag; post-buckling 0.3 x compression) in the governing plastic mechanism combinations
+- Gussets: 2t fold-line clearance, UFM
+- Exempt no member from moderately/highly ductile checks in the core
+
+## Member Sizing Rules
+- One brace size, one beam size, one column size per 2-story module per frame
+- Columns change every 2 stories; splices 4 ft above floor; never smaller below
+- Gravity framing: one beam + one column size per story (agent to determine); infill @ 9'-8" o.c.
+- Base fixity: all pinned. Gravity connections pinned.

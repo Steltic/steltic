@@ -1,0 +1,71 @@
+Structural System - Buckling-Restrained Braced Frame (BRBF)
+Frame type - Distributed single-diagonal and chevron BRB bays; U-shaped (courtyard) plan with unequal wing heights
+Number of stories - 10 (west wing and south bar); 7 (east wing) - stepped roof
+Story heights - First story 15 ft; typical upper stories 12 ft
+Analysis procedure - MRSA; SDC E (near-fault site). Re-entrant corner irregularity (Type 2) at both courtyard corners.
+Design standards - AISC 360, AISC 341 (Section F4), ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- BRB steel core: **ASTM A36**, Fy = 38-46 ksi actual (supplier-certified range); casing = concrete-filled HSS
+- Gusset plates: **ASTM A572 Grade 50**, 1 1/4 in. thick
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 85 psf (laboratory/office floors: extra slab thickness for vibration) |
+| Cladding Load | 20 psf (all faces including courtyard faces) |
+| Floor Live Load | 60 psf (light lab) + 15 psf partitions; corridors 80 psf; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) at Level 7 (east wing roof) and Level 10 (main roof) |
+| Rooftop mechanical | 40 psf allowance over Grids 1-3 / A-C at Level 10 roof |
+
+## Seismic Design Data
+- SDS = 1.25 g, SD1 = 0.85 g, Site Class D, Risk Category II, Ie = 1.0, SDC E
+- BRBF: R = 8, Cd = 5, Omega_0 = 2.5
+- Height: 123 ft < 160 ft SDC E limit for BRBF - OK
+- Near-fault: no ELF shortcut; MRSA scaled to 100% of ELF base shear
+
+## Wind Design Data
+- V = 105 mph, Exposure B. Seismic governs.
+
+## Building Plan Geometry (U-SHAPED PLAN, COURTYARD OPENS NORTH, STEPPED ROOF)
+  - Column Grid:
+      - X-Axis: Grids 1 to 9 (8 bays @ 28'-0" = 224'-0")
+      - Y-Axis: Grids A to F (5 bays @ 28'-0" = 140'-0")
+  - Footprint (all levels): U-shape =
+      - South bar: Grids 1-9 / A-C (224' x 56')
+      - West wing: Grids 1-4 / C-F (84' x 84')
+      - East wing: Grids 6-9 / C-F (84' x 84')
+      - COURTYARD (open, no framing, all levels): Grids 4-6 / C-F (56' x 84')
+  - STEPPED ROOF:
+      - West wing + south bar (Grids 1-9/A-C and 1-4/C-F): 10 stories; roof at 123'-0"
+      - East wing (Grids 6-9 / C-F): 7 stories; roof at 87'-0"
+  - Story Heights: Level 1: 15'-0"; Levels 2-10: 12'-0" typical
+
+## BRBF Bay Locations (all bays 28'-0" wide)
+Transverse (Y) Direction:
+  - Frame Y1: Grid 1, between D-E, Levels 1-10 (chevron)
+  - Frame Y2: Grid 4, between C-D (courtyard face), Levels 1-10 (chevron)
+  - Frame Y3: Grid 6, between C-D (courtyard face), Levels 1-7 (chevron)
+  - Frame Y4: Grid 9, between D-E, Levels 1-7 (chevron)
+  - Frame Y5: Grid 2, between A-B, Levels 1-10 (single diagonal, alternating direction by story)
+Longitudinal (X) Direction:
+  - Frame X1: Grid A, between 2-3, Levels 1-10 (chevron)
+  - Frame X2: Grid A, between 7-8, Levels 1-10 (chevron)
+  - Frame X3: Grid C, between 4-5, Levels 1-10 (chevron, spans the courtyard south face)
+  - Frame X4: Grid F, between 1-2, Levels 1-10 (chevron)
+  - Frame X5: Grid F, between 8-9, Levels 1-7 (chevron)
+
+## BRB Design Requirements (AISC 341 F4)
+- Core areas sized per story (agent to determine); adjusted brace strength uses omega = 1.5, beta = 1.1 (from qualification testing envelope)
+- Beams and columns designed for adjusted brace strengths (beta omega Ry Fy Asc in compression, omega Ry Fy Asc in tension)
+- Chevron beams: design for unbalanced adjusted brace forces; do not rely on Exception reductions
+- BRB-to-gusset: welded lug or pinned per supplier standard; gussets designed by UFM with free-edge stiffening
+- Story drift limit 2.0% (Cd-amplified); BRB deformation capacity >= 2x design story drift
+
+## Member Sizing Rules
+- One BRB core area, one beam size, one column size per story per frame; identical Y-direction frames where story counts match
+- Columns change every 2 stories; splices 4 ft above floor; never smaller below
+- Gravity framing: one beam + one column size per story (agent to determine); infill @ 9'-4" o.c.
+- Base fixity: all pinned (BRBF and gravity). All framing connections pinned except chevron beam-to-column (pinned OK per F4 with proper gusset detailing).

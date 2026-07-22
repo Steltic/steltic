@@ -1,0 +1,43 @@
+Structural System - DUAL SYSTEM: Special Moment Frames (perimeter) + Buckling-Restrained Braced Frame core. TALL building (> 240 ft) - analysis escalates to nonlinear response history.
+Frame type - Continuous BRBF core; perimeter SMF (>= 25% of V). Tall tower where the height triggers response-history analysis / performance-based design.
+Number of stories - 20 (tall floors)
+Story heights - Level 1: 20 ft; Levels 2-20: 12 ft 10 in. Roof at 263.9 ft.
+Analysis procedure - MRSA for the code (Design Earthquake) design PLUS a NONLINEAR RESPONSE HISTORY analysis (ASCE 7-22 Chapter 16) for MCE-level performance verification - the height and performance goals require it.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22 (Ch. 12 + Ch. 16), with PEER TBI / LATBSDC-style performance objectives.
+
+## Material Properties
+- SMF + BRBF W-shapes: ASTM A992, Fy = 50 ksi
+- BRB cores: ASTM A36 machined core (Fy per qualification)
+- Connection / gusset / continuity plates: ASTM A572 Grade 50
+- Floor system: composite - 3 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite floor + superimposed) |
+| Cladding Load | 20 psf (unitized curtain wall) |
+| Floor Live Load | 50 psf office + 15 psf partitions (or 40 psf residential); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) + mechanical penthouse allowance |
+
+## Seismic Design Data
+- SDS = 1.15 g, SD1 = 0.68 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- Dual SMF + BRBF: R = 8, Cd = 5, Omega_0 = 2.5; dual system (no height limit) - but at 264 ft the agent must ADDRESS the tall-building analysis requirements.
+- ANALYSIS ESCALATION: at this height (> 240 ft) and for a code-alternative performance-based design, ELF is not permitted; MRSA is the minimum, and a NONLINEAR RESPONSE HISTORY analysis per ASCE 7-22 Chapter 16 (or a Ch. 16 linear response history) is used to verify MCE performance (collapse prevention) with a suite of scaled/spectrally-matched ground motions.
+- Note the two-stage flow: (1) Ch. 12 MRSA Design-Earthquake strength/drift design; (2) Ch. 16 nonlinear MCE verification (acceptance criteria: story drift, BRB core strains/ductility, SMF plastic rotations, column demands from capacity design).
+
+## Wind Design Data
+- V = 115 mph, Exposure B. At 264 ft, wind serviceability (H/500 drift, 10-yr) and occupant-comfort acceleration likely govern the upper-tier stiffness; flexible-structure gust effect (n1 < 1 Hz). Determine wind-vs-seismic per response quantity.
+
+## Building Plan Geometry (REGULAR TALL RECTANGLE)
+- Overall: 120'-0" (X) x 100'-0" (Y), uniform all levels (regular; the challenge is height + analysis, not shape).
+- Column Grid: X = 4 bays @ 30'-0"; Y = 4 bays @ 25'-0".
+- BRBF core: two braced bays each direction at the central core (Grids 2-4). Perimeter SMF on all four faces.
+
+## Dual + Tall-Building Analysis Requirements
+- Perform the Ch. 12 MRSA Design-Earthquake design (R = 8 dual; SMF >= 25% of V at every level; SCWB, RBS per A358; BRB adjusted brace strengths beta*omega*Ry*Fy*Asc / omega*Ry*Fy*Asc).
+- STATE the Chapter 16 nonlinear response-history plan: ground-motion selection & scaling to the MCE spectrum (min. 11 motions or per Ch. 16), the nonlinear model (BRB hysteresis, SMF plastic hinges/RBS, P-Delta, expected material strengths), and the ACCEPTANCE CRITERIA (mean story drift, BRB ductility, SMF rotation, force-controlled action demands).
+- If the framework runs only linear analysis: DELIVER the linear MRSA design and EXPLICITLY scope the Ch. 16 nonlinear verification as the next stage with its ground-motion and acceptance-criteria plan - do not claim MCE performance is verified without it.
+
+## Member Sizing Rules
+- BRB core areas per story (change every 2 stories, never smaller below); one SMF beam per level per frame; columns change every 2 stories; splices 4 ft above floor.
+- SMF + BRBF bases fixed; gravity columns pinned.

@@ -1,0 +1,80 @@
+Structural System - Special Steel Moment Frame (SMF)
+Frame type - Perimeter SMF, interior gravity-only framing
+Number of stories - 10
+Story heights - First story 15 ft; typical upper stories (2-10) 13 ft (= 156 in., the h_sx used in the drift calc); total height 132 ft
+Analysis procedure - SDC D
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- Structural steel: **ASTM A992**
+- Yield strength: **Fy = 50 ksi**
+
+## Seismic Design Parameters
+- Risk Category II, Importance Factor Ie = 1.0
+- Mapped spectral accelerations: Ss = 1.50g, S1 = 0.60g
+- Site Class D; site coefficients Fa = 1.0, Fv = 1.5
+- Design spectral accelerations: SDS = 1.0g, SD1 = 0.60g
+- Seismic Design Category: D
+- Response modification R = 8.0, Overstrength Omega0 = 3.0, Deflection amplification Cd = 5.5
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 75 psf (floor: slab, deck, framing, partitions, ceiling/MEP) |
+| Cladding Load | 15 psf (perimeter facade - glass/metal curtain wall) |
+| Floor Live Load | 50 psf (reducible office live load per ASCE 7 Chapter 4) |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 110 mph (ASCE 7-22), Exposure B; MWFRS per Ch. 26-27. Seismic drift expected to govern member selection; verify wind serviceability.
+- Lateral story drift is expected to govern member selection rather than strength.
+
+## Column Design Requirements
+- Column sizes in lower stories never smaller than stories above
+- Perimeter SMF columns selected to satisfy strong-column/weak-beam (AISC 341 E3.4a) and drift limits.
+
+## Building Plan Geometry
+- Column Grid Coordinates:
+  - Transverse (Y-Axis): Grid Lines A to F (5 bays @ 30'-0" o.c.).
+  - Longitudinal (X-Axis): Grid Lines 1 to 6 (5 bays @ 30'-0" o.c.).
+
+Transverse Direction (Y-Axis LFRS):
+
+  - Frame 1 (West Face): Located on Grid Line A, moment-connected between Grid
+    Lines B and E (3 continuous bays, 90'-0" total width).
+  - Frame 2 (East Face): Located on Grid Line F, moment-connected between Grid
+    Lines B and E (3 continuous bays, 90'-0" total width).
+
+Longitudinal Direction (X-Axis LFRS):
+
+  - Frame 3 (South Face): Located on Grid Line 1, moment-connected between Grid
+    Lines 2 and 5 (3 continuous bays, 90'-0" total width).
+  - Frame 4 (North Face): Located on Grid Line 6, moment-connected between Grid
+    Lines 2 and 5 (3 continuous bays, 90'-0" total width).
+
+- Consider these section-size groups in the SMF frames (agent to determine the actual sections):
+
+Story	Beam	Exterior SMF Column	Interior SMF Column
+1	A	D	G
+2	A	D	G
+3	A	D	G
+4	A	D	G
+5	B	E	H
+6	B	E	H
+7	B	E	H
+8	B	E	H
+9	C	F	I
+10	C	F	I
+
+- Consider one size for all interior gravity beams and one size for all interior gravity columns - agent to determine.
+- Consider rigid bases and rigid connections in the SMF frames.
+- Consider pinned bases and pinned connections for the interior gravity framing.
+- Aim for max drift of **2.0%** (allowable story drift = 0.020 h_sx, ASCE 7 Table 12.12-1, Risk Category II).
+
+## Panel Zone Design in the SMF frames
+- Joint panel zones designed per AISC 360, Equations J10-11 and J10-12.
+- Doubler plates provided where required.
+- Continuity plates: transverse stiffeners aligned with the beam flanges.
+
+## Moment Connections
+- All beam-to-column moment connections utilize **Reduced Beam Section (RBS)** connections per AISC 358.

@@ -1,0 +1,44 @@
+Structural System - Buckling-Restrained Braced Frames (BRBF), two towers on a shared 2-story podium
+Frame type - Tower A (12 stories) and Tower B (8 stories) rise ABUTTING each other from one continuous 2-story podium. THE POINT: the towers are separated above the podium roof by a SEISMIC JOINT whose width you must CALCULATE (ASCE 7-22 12.12.3, Cd-amplified drifts of BOTH structures), plus a pounding statement - not assume.
+Number of stories - Tower A: 2 podium + 12 tower = 14 levels (177.5 ft). Tower B: 2 podium + 8 tower = 10 levels (127.5 ft).
+Story heights - Podium L1 15 ft, L2 12.5 ft; all tower stories 12'-6".
+Analysis procedure - ELF each structure (verify permitted); SDC D
+Design standards - AISC 360-22, AISC 341-22 (Section F4 BRBF), ASCE 7-22 (12.12.3 structural separation; 12.2-3 vertical combinations at the podium)
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi; BRB casings HSS A500 Grade C
+- BRB steel core: Fysc = 38-46 ksi (supplier range) - record the assumed Fysc and the qualification/delegated-design requirement
+- Floors: 3 1/4 in. LW concrete on 3 in. deck; podium L2 (amenity/transfer level): 6 in. NW slab on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 58 psf tower floors; 95 psf podium L2 (landscaped amenity deck); 30 psf roofs |
+| Cladding Load | 15 psf towers; 20 psf podium |
+| Floor Live Load | 50 psf + 15 psf partitions (office); 100 psf podium L2 (assembly) |
+| Roof Live Load | 20 psf (Lr); Snow pg = 25 psf, drift at the tower/podium steps and BETWEEN the towers at the Tower-B roof step |
+
+## Seismic Design Data
+- SDS = 0.85 g, SD1 = 0.45 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- BRBF: R = 8, Cd = 5, Omega_0 = 2.5; drift limit 0.020 hsx
+- HEIGHT LIMIT: Tower A (177.5 ft) exceeds the 160 ft Table 12.2-1 cap for BRBF at SDC D - RESOLVE it per 12.2.5.4 (increase to 240 ft: verify no extreme torsional irregularity and the braced-frame arrangement conditions, and SHOW the check).
+- SEPARATE STRUCTURES above the podium roof: analyze Tower A (with its podium share) and Tower B (with its podium share) as separate models; the podium diaphragm below the joint is continuous - design the podium-roof (L2) diaphragm, chords and collectors for BOTH towers' transfer shears.
+
+## Wind Design Data
+- V = 110 mph, Exposure B. Serviceability drift and the joint's wind-movement check (joint must also accommodate wind sway without cover-plate damage).
+
+## Building Plan Geometry
+- Podium (one structure, continuous at L1-L2): 220'-0" (X) x 100'-0" (Y); grid 30-ft bays (X: Grids 1-8 approx., Y: Grids A-D + adjust; keep a regular 30 ft module and state your final grid).
+- TOWER A (12 stories above podium): west footprint 90' x 100'. TOWER B (8 stories): east footprint 90' x 100'. The towers ABUT along a shared plane near mid-plan: DOUBLE COLUMN LINE (two independent column lines ~2-3 ft apart - set by YOUR joint calc) from the podium roof up.
+- BRBF bays: each tower gets its own complete LFRS - 2 braced bays per direction per tower, continuous to the foundation THROUGH the podium (no transfer of the LFRS).
+
+## Seismic Joint Requirements (the core of this brief)
+- Compute delta_max (Cd x delta_e / Ie) envelopes for BOTH towers at every level up to the Tower B roof.
+- Required separation per 12.12.3: delta_MT = sqrt(delta_M1^2 + delta_M2^2) at each level; the joint width is the envelope + construction tolerance. Report the joint width at the podium roof, at mid-height of Tower B, and at the Tower B roof.
+- POUNDING statement: floor levels align (same story heights) - state why that mitigates slab-to-column impact, and check the Tower B roof against Tower A's frame at that elevation.
+- Joint hardware (cover plates, fire barrier, facade closure) = delegated design; list it in the register with the movement range.
+
+## Member Sizing Rules
+- Per tower: one BRB core area per 2 stories (report kip capacities); one column size per 3 stories (exterior/interior); one girder + one infill size per floor type.
+- Podium: one transfer-diaphragm chord/collector size per line.
+- Base fixity: pinned; BRB frames' beams/columns per F4 capacity design (adjusted brace strengths omega, beta).

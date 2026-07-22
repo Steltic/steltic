@@ -1,0 +1,29 @@
+# secrets & local config
+.env
+
+# runtime data (designs live in the OS user-data dir by default; this covers DATA_DIR=./data setups)
+data/
+jobs/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# packaging
+dist/
+build/
+*.egg-info/
+
+# editors / OS
+.DS_Store
+
+# working files
+*.zip
+*.bak
+*.bak2
+*.bak3
+*.patch
+SCOPING.md

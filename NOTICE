@@ -1,0 +1,20 @@
+THIRD-PARTY DATA & NOTICES
+==========================
+
+1. AISC-derived data.
+   - steel_engine/aisc_shapes.csv (AISC shape properties) and the AISC 360-22 / 341-22 / 358
+     references in contract/ (AGENT_START.md, README_AGENT.md, AISC360_TOC.md) are derived from
+     AISC publications. AISC specifications and shape data remain the property of the American
+     Institute of Steel Construction. This repository does not reproduce AISC specification text.
+
+2. Three.js.
+   - steel_engine/vendor/three.min.js is Three.js, MIT-licensed (see steel_engine/vendor/THREE_LICENSE).
+
+3. Secrets.
+   - Never commit API keys. All keys (LLM provider, RAG token) are read from the environment or
+     entered at runtime and are excluded by .gitignore (.env). They are NOT written to disk by the app.
+   - If any token was ever pasted into a terminal, file, or chat, treat it as compromised and ROTATE it.
+
+4. Engineering liability.
+   - Outputs are preliminary and must be independently reviewed and, where applicable, sealed/stamped
+     by a professional engineer licensed in the relevant jurisdiction. See DISCLAIMER.md.

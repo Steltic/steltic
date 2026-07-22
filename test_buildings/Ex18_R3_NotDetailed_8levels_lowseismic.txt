@@ -1,0 +1,49 @@
+Structural System - Steel systems NOT SPECIFICALLY DETAILED FOR SEISMIC RESISTANCE (R = 3); ordinary steel concentrically braced frames + gravity framing. AISC 341 does NOT apply.
+Frame type - Perimeter braced bays (X-braced) on all four faces, both directions; interior gravity-only framing (pinned).
+Number of stories - 8
+Story heights - Level 1: 15 ft; Levels 2-8: 13 ft typical. Roof at 106 ft.
+Analysis procedure - Equivalent Lateral Force (ELF); SDC B (low seismicity). Determine whether WIND or seismic governs the LFRS in each direction (wind is expected to govern).
+Design standards - AISC 360-22, ASCE 7-22. (AISC 341 is NOT invoked - an R = 3 system is not detailed for seismic; design members and connections to AISC 360 only.)
+Regional context - low-seismic interior region (e.g., Midwest); a conventional-steel office building.
+
+## Material Properties
+- W-shapes: ASTM A992, Fy = 50 ksi
+- HSS braces: ASTM A500 Grade C, Fy = 50 ksi
+- Gusset / connection plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. composite deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 75 psf (composite floor + superimposed MEP/ceiling/finishes) |
+| Cladding Load | 15 psf (metal/glass curtain wall, all perimeter) |
+| Floor Live Load | 50 psf office + 15 psf partitions; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible) |
+
+## Seismic Design Data
+- SDS = 0.20 g, SD1 = 0.09 g, Site Class D, Risk Category II, Ie = 1.0
+- Seismic Design Category: B (SDS in 0.167-0.33 g, SD1 in 0.067-0.133 g, Risk Cat II)
+- System: R = 3, Cd = 3, Omega_0 = 3 ("not specifically detailed for seismic," permitted in SDC B/C only)
+- No AISC 341 ductile detailing, no SCWB, no capacity-limited (expected-strength) design, no protected zones - by definition of an R = 3 system.
+
+## Wind Design Data
+- Basic wind speed V = 120 mph (Risk Cat II), Exposure C (open terrain).
+- EXPECT wind to govern the LFRS strength at this low seismicity - run both hazards and STATE which governs each direction and why.
+
+## Building Plan Geometry (REGULAR RECTANGLE)
+- Overall: 150'-0" (X) x 100'-0" (Y). Regular, no irregularities.
+- Column Grid: X = Grids 1-6 (5 bays @ 30'-0"); Y = Grids A-E (4 bays @ 25'-0").
+- Braced bays (X-braced, single-bay):
+    - X-direction: Grid A between 2-3 and Grid E between 4-5; Levels 1-8.
+    - Y-direction: Grid 1 between B-C and Grid 6 between C-D; Levels 1-8.
+- Roof: flat, uniform. No setbacks, no cut-outs.
+
+## Design Requirements (R = 3, AISC 360 ONLY)
+- Members: design columns, beams, braces to AISC 360-22 (E/F/G/H). NO AISC 341 width-thickness ductility, NO brace expected-strength capacity design.
+- Connections: design brace and beam connections to the ANALYSIS (ELF or wind) forces per AISC 360 Ch. J / K - NOT to amplified/expected-strength seismic forces. Apply Omega_0 = 3 ONLY where ASCE 7-22 specifically requires it (e.g., collector elements per Sec. 12.10.2.1).
+- Drift: Cd = 3; check story drift vs 0.020 h_sx (Risk Cat II) under seismic, and the project wind drift limit under service wind.
+
+## Member Sizing Rules
+- One brace size per story per braced bay; braces change every 2 stories, never smaller below.
+- One column size per story-group (change every 2 stories); one beam size per level (floor vs roof distinct).
+- All column bases pinned; all beam-to-column gravity connections pinned (shear tabs).

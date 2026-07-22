@@ -1,0 +1,62 @@
+Structural System - Intermediate Steel Moment Frame (IMF)
+Frame type - Perimeter/distributed IMF; Z-shaped (offset) plan school with three wings at three different roof heights
+Number of stories - 3 (classroom wing); 2 (link wing); 1 tall story (gymnasium)
+Story heights - Classroom: 3 @ 12 ft (roof 36 ft). Link: L1 12 ft, L2 12 ft (roof 24 ft). Gym: single 26-ft story (roof 26 ft).
+Analysis procedure - ELF; SDC C; Risk Category III (school, >250 occupants) - Ie = 1.25
+Design standards - AISC 360, AISC 341 (Section E2), AISC 358, ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- Plates: **ASTM A572 Grade 50**
+- Classroom/link floors: composite - 3 in. NW concrete on 2 in. deck
+- Gym roof: long-span joists/trusses (agent to select) with 1.5B metal deck; classroom/link roofs: composite deck roofs
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 75 psf classroom/link floors; 30 psf classroom/link roofs; 24 psf gym roof (trusses/deck/MEP/ceiling) |
+| Cladding Load | 25 psf (brick veneer on studs, all wings) |
+| Floor Live Load | 40 psf classrooms + 15 psf partitions; 80 psf corridors (first-floor corridors 100 psf); link L2 library 60 psf + stack allowance 90 psf over Grids 4-5/B-D |
+| Roof Live Load | 20 psf (Lr) all roofs |
+| Snow | pg = 30 psf, Is = 1.1 (RC III); drift checks at BOTH roof steps (36'->24' and 26'->24') |
+
+## Seismic Design Data
+- SDS = 0.48 g, SD1 = 0.20 g, Site Class D, Risk Category III, Ie = 1.25, SDC C
+- IMF: R = 4.5, Cd = 4, Omega_0 = 3; permitted without height limit in SDC C
+- Horizontal irregularity: Type 2 re-entrant corners at both Z offsets
+
+## Wind Design Data
+- V = 115 mph (RC III map), Exposure C. Wind likely governs the gym (light roof, tall open story).
+
+## Building Plan Geometry (Z-SHAPED PLAN, THREE ROOF HEIGHTS)
+  - Column Grid:
+      - X-Axis: Grids 1 to 8 (7 bays @ 28'-0" = 196'-0")
+      - Y-Axis: Grids A to E (4 bays @ 28'-0" = 112'-0")
+  - Z-shape (offsets step southward going east):
+      - CLASSROOM WING (3 stories, roof 36'): Grids 1-4 / A-C (84' x 56')
+      - LINK WING (2 stories, roof 24'): Grids 4-6 / B-D (56' x 56')
+      - GYMNASIUM (1 tall story, roof 26'): Grids 6-8 / C-E (56' x 56'); long-span roof framing spans 56' in Y between Grids C and E; interior Grid D columns OMITTED within the gym
+      - All other grid zones are open (site/landscape)
+  - Wing interfaces: classroom and link share Grid 4 (B-C segment); link and gym share Grid 6 (C-D segment). Floor at 12' aligns between classroom and link; gym has no intermediate floor.
+
+## IMF Frame Locations (fully restrained moment connections per AISC 358 prequalification or IMF-qualified WUF-W)
+Classroom wing:
+  - X-direction: Grid A bays 1-2, 2-3, 3-4 (L1-L3); Grid C bays 1-2, 2-3 (L1-L3)
+  - Y-direction: Grid 1 bays A-B, B-C (L1-L3); Grid 4 bay A-B (L1-L3)
+Link wing:
+  - X-direction: Grid B bays 4-5, 5-6 (L1-L2); Grid D bays 4-5, 5-6 (L1-L2)
+  - Y-direction: Grid 5 bays B-C, C-D (L1-L2)
+Gymnasium:
+  - X-direction: Grid C bays 6-7, 7-8 (full-height single story); Grid E bays 6-7, 7-8
+  - Y-direction: Grid 6 bay C-D; Grid 8 bays C-D, D-E
+
+## IMF Requirements (AISC 341 E2)
+- Moment connections: prequalified per AISC 358 (RBS or WUF-W) qualified for IMF (0.02 rad interstory drift capacity)
+- Beam and column sections moderately ductile per Table D1.1
+- Panel zone per AISC 360; continuity plates as required
+- Gym moment columns: check tall-story stability (26 ft unbraced about both axes at the open story; no intermediate floor bracing)
+
+## Member Sizing Rules
+- One beam size per frame line per story; one column size per wing per 2 stories
+- Gravity framing: one size per story per wing (agent to determine); gym long-span roof members one size
+- Base fixity: gym moment columns FIXED (tall single story drift control); all other columns pinned. Gravity connections pinned.

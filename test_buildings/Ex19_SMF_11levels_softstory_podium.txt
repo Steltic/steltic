@@ -1,0 +1,43 @@
+Structural System - Special Steel Moment Frame (SMF), perimeter.
+Frame type - Perimeter SMF (RBS connections) on all faces above; an OPEN, TALL ground floor (lobby/valet) with WIDER column spacing and NO infill/partition stiffness - a deliberate soft/weak first story.
+Number of stories - 11
+Story heights - Level 1 (open lobby): 22 ft; Levels 2-11: 11 ft typical. Roof at 132 ft.
+Analysis procedure - MRSA; SDC D. Screen and CLASSIFY vertical stiffness/strength irregularity at Level 1.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22.
+
+## Material Properties
+- W-shapes (SMF beams/columns): ASTM A992, Fy = 50 ksi
+- Connection/continuity/doubler plates: ASTM A572 Grade 50
+- Floor system: composite - 3 in. NW concrete on 3 in. composite deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 85 psf (composite floor + superimposed) |
+| Cladding Load | 18 psf (curtain wall) |
+| Floor Live Load | 50 psf office + 15 psf partitions (Levels 2-11); 100 psf lobby/assembly at Level 1; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 1.05 g, SD1 = 0.60 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- SMF: R = 8, Cd = 5.5, Omega_0 = 3; no height limit
+- Vertical irregularity WATCH: the 22-ft open Level 1 (vs 11-ft typical) with no partition/cladding stiffness at grade is a SOFT-STORY candidate (Vertical Type 1a/1b) and, with fewer/lighter Level-1 columns, a WEAK-STORY candidate (Type 5a/5b). The agent must COMPUTE the story stiffness and story-strength ratios, classify, and apply consequences. ASCE 7-22 Sec. 12.3.3.1 PROHIBITS an extreme soft story (1b) or extreme weak story (5b) in SDC D-F.
+
+## Wind Design Data
+- V = 115 mph, Exposure B. Seismic governs the LFRS; check drift under 10-yr service wind.
+
+## Building Plan Geometry (RECTANGULAR; TALL OPEN GROUND FLOOR)
+- Overall: 120'-0" (X) x 90'-0" (Y), uniform all levels (no plan irregularity).
+- Column Grid: X = Grids 1-5 (4 bays @ 30'-0"); Y = Grids A-D (3 bays @ 30'-0").
+- Perimeter SMF: all four faces, Levels 1-11.
+- LEVEL 1 SPECIAL CONDITION: the lobby is column-transparent on the north (Grid A) face - the two intermediate Grid A columns (Grids 2, 3) are OMITTED at Level 1 only and pick up at Level 2 on a Level-2 transfer girder; the SMF beam at Grid A Level 2 spans the full 90 ft as a transfer/pickup girder. Everywhere else columns are continuous to grade.
+- Roof: flat, uniform.
+
+## SMF + Irregularity Design Requirements
+- AISC 341 F: SCWB (E3.4a) at every SMF joint (biaxial at corners), panel-zone shear, RBS per AISC 358.
+- Level 1 soft/weak story: compute Ki/Ki+1 story-stiffness ratio and story-strength ratio; classify per Tables 12.3-2 (Types 1a/1b, 5a/5b); if extreme (1b/5b) in SDC D the configuration is PROHIBITED - stiffen/strengthen Level 1 until it is at most a non-extreme irregularity, and report the ratios.
+- The Grid A Level-2 transfer/pickup girder and the columns supporting it are elements supporting a discontinuous frame - design them for the Omega_0 (2.5-3) overstrength load combinations per ASCE 7-22 Sec. 12.3.3.3.
+
+## Member Sizing Rules
+- One SMF beam size per level per frame; SMF columns change every 2 stories, never smaller below; splices 4 ft above floor.
+- Gravity framing: one beam + one column size per story. Bases fixed at grade (SMF), gravity columns pinned.

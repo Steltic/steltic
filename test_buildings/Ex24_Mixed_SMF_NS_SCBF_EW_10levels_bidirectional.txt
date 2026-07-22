@@ -1,0 +1,49 @@
+Structural System - DIFFERENT SEISMIC SYSTEM IN EACH DIRECTION (permitted per ASCE 7-22 Sec. 12.2.2): Special Moment Frame (SMF) in the N-S (Y) direction; Special Concentrically Braced Frame (SCBF) in the E-W (X) direction.
+Frame type - Perimeter SMF on the two long (Y-resisting) faces; SCBF braced bays on the two short (X-resisting) faces + one interior X-line.
+Number of stories - 10
+Story heights - Level 1: 15 ft; Levels 2-10: 13 ft. Roof at 132 ft.
+Analysis procedure - MRSA; SDC D. Two independent lateral systems with DIFFERENT R/Cd/Omega_0 per direction.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22.
+
+## Material Properties
+- SMF + SCBF W-shapes: ASTM A992, Fy = 50 ksi
+- HSS braces: ASTM A500 Grade C, Fy = 50 ksi
+- Connection / gusset / continuity plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. composite deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite floor + superimposed) |
+| Cladding Load | 15 psf |
+| Floor Live Load | 50 psf office + 15 psf partitions; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.58 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- DIRECTION-DEPENDENT SYSTEM FACTORS (do NOT apply one set to both):
+    - N-S (Y), SMF:  R = 8,   Cd = 5.5, Omega_0 = 3
+    - E-W (X), SCBF: R = 6,   Cd = 5,   Omega_0 = 2
+- Base shear, vertical distribution, drift amplification, redundancy rho, and capacity design are computed SEPARATELY per direction with that direction's factors.
+- Height 132 ft: SMF no limit (Y OK); SCBF SDC D limit 160 ft (X OK).
+
+## Wind Design Data
+- V = 110 mph, Exposure B. Seismic governs; check drift under 10-yr service wind in both directions.
+
+## Building Plan Geometry (RECTANGLE; system differs by axis)
+- Overall: 180'-0" (X) x 90'-0" (Y), uniform all levels.
+- Column Grid: X = 6 bays @ 30'-0"; Y = 3 bays @ 30'-0".
+- N-S SMF (resists Y load): perimeter moment frames on Grid A and Grid D (the long faces), Levels 1-10.
+- E-W SCBF (resists X load): braced bays on Grid 1 (A-B), Grid 7 (C-D), and interior Grid 4 (B-C), Levels 1-10.
+
+## Bi-directional Design Requirements
+- Compute TWO base shears: Vy with R = 8 (SMF), Vx with R = 6 (SCBF). Vertical distribution and story drift use each direction's Cd (5.5 vs 5.0).
+- Evaluate redundancy rho SEPARATELY for each direction (Sec. 12.3.4).
+- Y-direction (SMF): SCWB (E3.4a), panel-zone shear, RBS per A358, demand-critical welds.
+- X-direction (SCBF): brace expected strength (RyFyAg / 1.1RyPn), capacity-limited columns/beams/gussets, KL/r and width-thickness ductility.
+- Corner columns participate in BOTH systems - check them for the governing biaxial demand from each system's load combinations and detail for the more stringent requirement.
+- 100/30 orthogonal combination: apply with each direction's own system forces.
+
+## Member Sizing Rules
+- SMF beams: one size per level per frame; SCBF braces: one size per story per bay (change every 2 stories, never smaller below).
+- Columns change every 2 stories; splices 4 ft above floor. SMF and SCBF bases fixed; gravity columns pinned.

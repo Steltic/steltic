@@ -1,0 +1,70 @@
+Structural System - Special Plate Shear Walls (SPSW), AISC 341 Section F5
+Frame type - SPSW piers in core and re-entrant lines; steel web plates with W-shape HBEs/VBEs
+Number of stories - 12 residential + 1 partial mechanical penthouse (Level 13) - T-shaped plan
+Story heights - First story 14 ft (lobby/retail); typical residential 10 ft 6 in; penthouse 14 ft
+Analysis procedure - MRSA; SDC D. Re-entrant corner irregularity (Type 2) at both T junctions.
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- HBEs and VBEs (W-shapes): **ASTM A992**, **Fy = 50 ksi**
+- Infill web plates: **ASTM A36**, **Fy = 36 ksi** (thin plates, tension-field action), thickness range 3/16 in. to 1/2 in. (agent to size per story)
+- Fishplates / connection plates: **ASTM A572 Grade 50**
+- Floor system: composite - 2 1/2 in. NW concrete on 2 in. deck (residential)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 70 psf (residential composite floor + superimposed) |
+| Cladding Load | 20 psf (unitized curtain wall + masonry accents) |
+| Floor Live Load | 40 psf (residential); 100 psf lobbies/corridors at Level 1; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr); Level 12 main roof and Level 13 penthouse roof |
+| Penthouse Mechanical | 150 psf equipment allowance on Level 13 floor (Grids 3-5 / A-C zone) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.55 g, Site Class D, Risk Category II, Ie = 1.0
+- SPSW: R = 7, Cd = 6, Omega_0 = 2
+- Height check: 143.5 ft < 160 ft SDC D limit - OK
+- Vertical irregularity: penthouse mass/stiffness step at Level 13 - include in MRSA model.
+
+## Wind Design Data
+- V = 115 mph, Exposure C (open suburban site). Check across-wind serviceability drift H/400.
+
+## Building Plan Geometry (T-SHAPED PLAN + PARTIAL PENTHOUSE)
+  - Column Grid:
+      - X-Axis: Grids 1 to 7 (6 bays @ 28'-0" = 168'-0")
+      - Y-Axis: Grids A to E (4 bays @ 28'-0" = 112'-0")
+  - T-shape footprint (all levels 1-12):
+      - Flange (north bar): Grids 1-7 / A-C (168' x 56')
+      - Stem (south leg):  Grids 3-5 / C-E (56' x 56')
+      - Zones Grids 1-3 / C-E and Grids 5-7 / C-E are OPEN (no framing)
+  - PENTHOUSE (Level 13): over Grids 3-5 / A-C only (56' x 56'); mechanical; enclosed with 15 psf metal panel cladding
+  - Story Heights:
+      - Level 1: 14'-0"
+      - Levels 2-12: 10'-6" typical (11 stories @ 10'-6")
+      - Level 12 main roof elevation: 129'-6"
+      - Level 13 penthouse: 14'-0"; penthouse roof at 143'-6"
+
+## SPSW Pier Locations (single-bay piers, 28'-0" wide, plate height = clear story)
+Transverse (Y) Direction:
+  - Pier Y1: Grid 3, between A-B, Levels 1-13 (continuous into penthouse)
+  - Pier Y2: Grid 5, between A-B, Levels 1-13 (continuous into penthouse)
+  - Pier Y3: Grid 4, between C-D (stem), Levels 1-12
+Longitudinal (X) Direction:
+  - Pier X1: Grid B, between 2-3, Levels 1-12
+  - Pier X2: Grid B, between 5-6, Levels 1-12
+  - Pier X3: Grid D (stem interior line), between 3-4, Levels 1-12
+
+## SPSW Design Requirements (AISC 341 F5)
+- Web plates designed to resist 100% of story shear via tension-field action; tension field angle alpha per F5.5b
+- HBEs and VBEs designed for capacity-limited forces from fully yielded plates at 1.1 Ry Fy (Ry = 1.3 for A36 plate)
+- VBE stiffness: Ic >= 0.00307 t h^4 / L per AISC 341 F5.4a
+- HBE-to-VBE connections: rigid, fully welded moment connections (ordinary moment connection detailing per F5.6b)
+- Plate-to-boundary connections: fillet-welded fishplates, developing plate expected tensile strength
+- Panel zones per AISC 360 J10 at top and base HBEs
+
+## Member Sizing Rules
+- Web plate thickness may change every 2 stories; VBEs change every 2 stories; never smaller below
+- One HBE size per level per pier; column (VBE) splices at 2-story intervals
+- Gravity framing outside SPSW piers: one beam size + one column size per story (agent to determine)
+- Base fixity: VBEs fixed at base (embedded base plates); gravity columns pinned
+- Gravity connections pinned

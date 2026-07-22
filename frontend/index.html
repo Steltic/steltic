@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steltic</title>
+  <link rel="stylesheet" href="/static/styles.css?v=17">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <strong id="brand">Steltic</strong>
+      <span class="muted">AISC 360/341 steel-design agent</span>
+      <span class="spacer"></span>
+      <span class="badge" id="execBadge" title="sandbox executor"></span>
+      <button id="settingsBtn" class="ghost">Settings</button>
+    </header>
+
+    <section id="settings" class="panel hidden">
+      <h3>LLM connection <span class="muted">— kept in memory only, never stored on disk</span></h3>
+      <label>API base URL
+        <span class="info" tabindex="0" data-tip="The URL of your LLM provider (e.g. OpenRouter is https://openrouter.ai/api/v1, Claude is https://api.anthropic.com/v1, ChatGPT is https://api.openai.com/v1).">i</span>
+        <input id="baseUrl" placeholder="https://api.your-provider.com/v1">
+      </label>
+      <label>API key
+        <span class="info" tabindex="0" data-tip="Your API key from your LLM provider.">i</span>
+        <input id="apiKey" type="password" placeholder="sk-…  (your key, billed to you)">
+      </label>
+      <label>Model
+        <span class="info" tabindex="0" data-tip="The LLM to use, following the naming convention of your LLM provider (e.g. deepseek/deepseek-v4-pro).">i</span>
+        <input id="model" placeholder="model name per your provider (e.g. gpt-5.6, claude-opus-4-8)">
+      </label>
+      <div class="row">
+        <label style="flex:1">Reasoning effort
+          <select id="reasoning">
+            <option value="off">Off</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high" selected>High</option>
+            <option value="default">Model default</option>
+          </select>
+        </label>
+        <label style="flex:1">Max output tokens
+          <input id="maxTokens" type="number" min="256" max="200000" value="32000">
+        </label>
+      </div>
+      <label>Provider
+        <span class="info" tabindex="0" data-tip="The provider of inference for the LLM. Leave blank for auto. Check options with your provider, but ensure if you use auto you are not switched between different providers, as you cannot prompt-cache between LLM calls.">i</span>
+        <input id="provider" placeholder="leave blank for auto">
+      </label>
+      <div class="row">
+        <button id="saveCreds">Save connection</button>
+        <span id="credsMsg" class="muted"></span>
+      </div>
+    </section>
+
+    <main>
+      <div class="row">
+        <input id="building" placeholder="Project name (eg 27_High_St)">
+      </div>
+      <div class="row">
+        <label class="ghost" for="briefFile" style="cursor:pointer;padding:.45rem .8rem;border:1px solid var(--line);border-radius:8px">Upload files…</label>
+        <input id="briefFile" type="file" multiple
+               accept=".txt,.md,.markdown,.text,.pdf,.png,.jpg,.jpeg,.gif,.webp,text/plain,text/markdown,application/pdf,image/png,image/jpeg,image/gif,image/webp"
+               style="display:none">
+        <span class="info" tabindex="0" data-tip="Up to 3 files, 5 MB each. Text / Markdown (.txt, .md) is read into the brief. PDFs (.pdf) have their text extracted into the brief (text-based PDFs only — scanned pages have no text layer). Images (.png, .jpg, .jpeg, .gif, .webp) are attached as references and sent to the model — but not all LLMs can read images.">i</span>
+        <select id="exampleSelect" class="ghost" title="Load an example design brief into the prompt">
+          <option value="" selected>Example Prompts…</option>
+          <option value="ex1">Ex1 — SCBF, 5 levels</option>
+          <option value="ex2">Ex2 — SMF, 9 levels</option>
+          <option value="ex3">Ex3 — Braced + Moment, 7 levels</option>
+          <option value="ex4">Ex4 — BRBF, 3 levels</option>
+          <option value="ex5">Ex5 — SMF, 10 levels</option>
+          <option value="ex6">Ex6 — SCBF, 6 levels</option>
+          <option value="ex7a">Ex7a — SMF, 7 levels</option>
+          <option value="ex7b">Ex7b — SCBF, 7 levels</option>
+          <option value="ex8">Ex8 — EBF, 8 levels, L-plan</option>
+          <option value="ex9">Ex9 — SPSW, 12 levels, T-plan</option>
+          <option value="ex10">Ex10 — Dual SMF+SCBF, 16 levels, podium</option>
+          <option value="ex11">Ex11 — BRBF, 10 levels, U-plan</option>
+          <option value="ex12">Ex12 — SMF, 14 levels, chamfer + setback</option>
+          <option value="ex13">Ex13 — OCBF, 4 levels, split-level</option>
+          <option value="ex14">Ex14 — EBF, 11 levels, cruciform, hillside</option>
+          <option value="ex15">Ex15 — Dual SMF+BRBF, 20 levels, wedding-cake</option>
+          <option value="ex16">Ex16 — IMF, 3 levels, Z-plan school</option>
+          <option value="ex17">Ex17 — SCBF, 9 levels, offset core</option>
+          <option value="ex18">Ex18 — R=3 (not detailed), 8 levels, low seismic</option>
+          <option value="ex19">Ex19 — SMF, 11 levels, soft-story podium</option>
+          <option value="ex20">Ex20 — SCBF, 12 levels, transfer / discontinuous</option>
+          <option value="ex21">Ex21 — OCBF, 1-story big-box, flexible diaphragm</option>
+          <option value="ex22">Ex22 — SMF, 6 levels, hospital (Risk Cat IV)</option>
+          <option value="ex23">Ex23 — Dual SMF+BRBF, 9 levels, SDC F near-fault EOC</option>
+          <option value="ex24">Ex24 — Mixed: SMF N-S + SCBF E-W, 10 levels</option>
+          <option value="ex25">Ex25 — SMF, 12 levels, atrium diaphragm discontinuity</option>
+          <option value="ex26">Ex26 — Dual SMF+SCBF, 18 levels, slender, wind-governed</option>
+          <option value="ex27">Ex27 — CC-PSW/CF SpeedCore, 20 levels, composite</option>
+          <option value="ex28">Ex28 — STMF, 8 levels, long-span truss moment</option>
+          <option value="ex29">Ex29 — Dual SMF+BRBF, 20 levels, 264 ft, NLRHA/PBSD</option>
+          <option value="ex30">Ex30 — Composite floors + SCBF, 6 levels, studs/camber</option>
+          <option value="ex31">Ex31 — Gable warehouse, R=3, snow + ponding</option>
+          <option value="ex32">Ex32 — Vertical addition on 1968 A36 frame, ASCE 41 scope</option>
+          <option value="ex33">Ex33 — Crane bay, IMF+OCBF, App.3 fatigue runway</option>
+          <option value="ex34">Ex34 — Twin towers on shared podium, seismic joint</option>
+          <option value="ex35">Ex35 — Ch.15 equipment platform, 3 tiers</option>
+        </select>
+        <span class="info" tabindex="0" data-tip="Load a ready-made design brief (36 examples covering every supported lateral system, irregular plans and specialty cases). Edit it if you like, then click Design building.">i</span>
+        <label class="ghost" for="restoreFile" style="cursor:pointer;padding:.45rem .8rem;border:1px solid var(--line);border-radius:8px" title="Recover a session: re-upload a previously downloaded design .zip, then click Continue">Restore session…</label>
+        <input id="restoreFile" type="file" accept=".zip,application/zip" style="display:none">
+        <span class="info" tabindex="0" data-tip="Moved machines or reinstalled? Type the same project name, choose the design .zip you downloaded, and it restores so you can Continue.">i</span>
+        <span id="briefFileName" class="muted"></span>
+      </div>
+      <div id="fileList" class="filelist"></div>
+      <textarea id="brief" rows="7"
+        placeholder="Design brief — e.g.&#10;4-story office, 3 bays @ 30 ft (X) × 4 bays @ 25 ft (Y), 15 ft ground / 13 ft typ.&#10;Perimeter special moment frames. Roof DL 25 psf / LL 20 psf; floor DL 75 / LL 50.&#10;Seismic: SDC D, Ss=1.5g, S1=0.6g, Site C. Wind 115 mph Exp B."></textarea>
+      <div class="row">
+        <button id="runBtn">Design building</button>
+        <button id="resumeBtn" class="ghost hidden">Continue</button>
+        <button id="stopBtn" class="ghost hidden">Stop</button>
+        <span class="info hidden" id="stopInfo" tabindex="0" data-tip="Pause the design and continue again, or stop and continue later by inputting the name of the job. In both cases you can add instructions in the input box. Work with your agent to modify and/or optimise. If the agent takes a wrong turn, pause the design and instruct.">i</span>
+        <a id="reportLink" class="btn hidden" target="_blank" rel="noopener">View report ↗</a>
+        <a id="modelLink" class="btn hidden" target="_blank" rel="noopener" title="Interactive 3D model — geometry, mode shapes, loads, member D/C">View model ↗</a>
+        <a id="downloadLink" class="btn hidden" download title="Self-contained report (figures inlined) + the model .py files, zipped">Download ⤓</a>
+        <span id="backupNote" class="muted hidden" style="font-size:.72rem"></span>
+        <span id="runStatus" class="muted"></span>
+      </div>
+      <div id="activity" class="lights" title="what the agent is doing right now">
+        <span class="light" data-k="thinking"><i></i>Thinking</span>
+        <span class="light" data-k="rag"><i></i>Searching standards</span>
+        <span class="light" data-k="python"><i></i>Running Python</span>
+        <span class="light" data-k="opensees"><i></i>Running OpenSees</span>
+      </div>
+      <div class="logwrap">
+        <button id="logExpand" class="logbtn" title="Expand log" aria-label="Expand log">⤢</button>
+        <div id="log" class="log" aria-live="polite"></div>
+      </div>
+      <div class="logwrap">
+        <button id="reasonExpand" class="logbtn" title="Expand reasoning" aria-label="Expand reasoning">⤢</button>
+        <div id="reason" class="log reason" aria-live="polite"></div>
+      </div>
+      <div id="tokens" class="muted" style="margin-top:.5rem;font-family:monospace;font-size:.78rem">
+        <span id="tokensLast"></span><span class="info hidden" id="tokensInfoCtx" tabindex="0" data-tip="Agents make many calls to the LLM, and this grows the input tokens per call. Be aware of the context limit for the selected LLM, and that very large contexts may reduce accuracy in the response.">i</span><span id="tokensSep" class="hidden">      |      </span><span id="tokensCum"></span><span class="info hidden" id="tokensInfo" tabindex="0" data-tip="Cumulative input can grow very high. Make sure your provider prompt-caches after every model call — you'll reduce your token costs substantially.">i</span>
+      </div>
+      <p class="muted" style="font-size:.68rem;line-height:1.5;margin-top:1rem">Every result is produced by your own AI model, may be incomplete or incorrect, and must be independently checked and sealed by a licensed professional engineer before any use for design, construction, or permitting. See the <a href="/terms" target="_blank" rel="noopener" style="color:var(--accent)">full disclaimer</a>. Your LLM key stays in memory only — never written to disk; your designs never leave this machine (except your briefs/prompts, which go to your chosen LLM provider).</p>
+    </main>
+  </div>
+
+  <script src="/static/app.js?v=30"></script>
+</body>
+</html>

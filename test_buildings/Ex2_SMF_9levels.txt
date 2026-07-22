@@ -1,0 +1,75 @@
+Structural System - Special Steel Moment Frame (SMF)
+Frame type - Perimeter SMF
+Number of stories - 9
+Story heights - First story 18 ft; typical upper stories (2-9) 13 ft; total height 122 ft 
+Analysis procedure - Equivalent Lateral Force (ELF); SDC D
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- Structural steel: **ASTM A992**
+- Yield strength: **Fy = 50 ksi**
+- Floor system: composite gravity beams on slab-on-metal-deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite floor: slab, deck, framing, superimposed) |
+| Cladding Load | 25 psf (perimeter facade - precast/masonry) |
+| Floor Live Load | 50 psf (office) + 15 psf partition allowance; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 110 mph (ASCE 7-22), Exposure B; MWFRS per Ch. 26-27. Strength and drift expected to be seismic-governed; verify per direction.
+- Member sizes for this archetype are typically drift-controlled rather than strength-controlled.
+
+## Column Design Requirements
+- Column sizes in lower stories never smaller than stories above 
+- SMF columns selected to satisfy the strong-column/weak-beam ratio (AISC 341 E3.4a).
+
+## Building Plan Geometry
+  - Footprint: 150'-0" (Transverse/Y-axis) × 150'-0" (Longitudinal/X-axis).
+  - Story Heights:
+      - Level 1: 18'-0" (Floor-to-Floor)
+      - Levels 2–9: 13'-0" (Floor-to-Floor, typical)
+      - Total Height: 122'-0" (to roof parapet)
+  - Column Grid Coordinates:
+      - Transverse (Y-Axis): Grid Lines A to F (5 bays @ 30'-0" o.c.).
+      - Longitudinal (X-Axis): Grid Lines 1 to 6 (5 bays @ 30'-0" o.c.).
+
+LFRS System Classification
+  - System Type: Special Moment Frames (SMF) conforming to AISC 341 and AISC 358
+    (Seismic Design Category D/E).
+  - Connection Profile: Prequalified Reduced Beam Section (RBS) moment
+    connections.
+
+To maximize interior space flexibility and torsional stiffness, the LFRS is
+located entirely on the perimeter column lines:
+Transverse Direction (Y-Axis LFRS):
+  - Frame 1 (West Face): Located on Grid Line A, moment-connected between Grid
+    Lines B and E (3 continuous bays, 90'-0" total width).
+  - Frame 2 (East Face): Located on Grid Line F, moment-connected between Grid
+    Lines B and E (3 continuous bays, 90'-0" total width).
+Longitudinal Direction (X-Axis LFRS):
+  - Frame 3 (South Face): Located on Grid Line 1, moment-connected between Grid
+    Lines 2 and 5 (3 continuous bays, 90'-0" total width).
+  - Frame 4 (North Face): Located on Grid Line 6, moment-connected between Grid
+    Lines 2 and 5 (3 continuous bays, 90'-0" total width).
+
+  - Stability Bracing of Beams (AISC 341 Section D1.2b): Both top and bottom
+    flanges of SMF beams require lateral bracing. Maximum unbraced length must
+    comply with highly ductile limits: L_b \le 0.086 \frac{r_y E}{F_y}
+
+  * **SMF Beams:** W30 or W36
+  * **SMF Columns:** W14
+
+- Consider one size for all gravity beams outside the SMF frames and one size for all gravity columns outside the SMF frames - agent to determine.
+- Consider rigid bases and rigid connections in the SMF frames.
+- Consider pinned bases and pinned connections for gravity framing outside the SMF frames.
+
+## Panel Zone Design in the SMF frames
+- Joint panel zones designed per AISC 360, Equations J10-11 and J10-12.
+- Doubler plates provided where required 
+- Continuity plates: transverse stiffeners welded inside the column flanges, aligned with the beam flanges.
+
+## Moment Connections
+- All beam-to-column moment connections utilize **Reduced Beam Section (RBS)** connections per AISC 358.

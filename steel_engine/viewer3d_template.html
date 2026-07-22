@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__ · 3D Structural Viewer</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',system-ui,sans-serif; background:#14171c; color:#dde3ea; overflow:hidden; }
+  #canvas { position:fixed; inset:0; }
+  .panel { position:fixed; background:rgba(22,26,33,.92); border:1px solid #2c333e; border-radius:10px; padding:12px 14px; font-size:12.5px; backdrop-filter:blur(6px); }
+  #left { top:12px; left:12px; width:252px; max-height:calc(100vh - 24px); overflow-y:auto; }
+  #info { bottom:12px; right:12px; width:290px; display:none; }
+  #legend { bottom:12px; left:276px; max-width:340px; }
+  h1 { font-size:14px; margin-bottom:2px; color:#fff; }
+  .sub { color:#8b95a3; font-size:11px; }
+  .modelline { color:#ffa15c; font-size:11px; margin-bottom:8px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:#7d8794; margin:12px 0 6px; }
+  label { display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer; user-select:none; }
+  select, input[type=range] { width:100%; }
+  select { background:#1d222b; color:#dde3ea; border:1px solid #333c49; border-radius:6px; padding:5px; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; margin:4px 0; }
+  .row span.val { color:#9fb4cc; min-width:34px; text-align:right; font-variant-numeric:tabular-nums; }
+  .stat { display:flex; justify-content:space-between; padding:1.5px 0; gap:8px; }
+  .stat b { color:#cfe3ff; font-weight:600; font-variant-numeric:tabular-nums; text-align:right; }
+  .swatch { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; }
+  .util-bar { height:8px; border-radius:4px; background:linear-gradient(90deg,#27ae60,#f1c40f 55%,#e67e22 75%,#e74c3c 95%); margin:4px 0 2px; }
+  .caveat { font-size:10.5px; color:#79828e; line-height:1.45; margin-top:10px; border-top:1px solid #2c333e; padding-top:8px; }
+  #info h3 { font-size:13px; color:#fff; margin-bottom:4px; }
+  #info table, #legend table { width:100%; border-collapse:collapse; }
+  #info td, #legend td { padding:1.5px 0; font-size:11.5px; }
+  #info td:last-child, #legend td:last-child { text-align:right; color:#9fb4cc; font-variant-numeric:tabular-nums; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:10.5px; font-weight:600; }
+  .toplist div { display:flex; justify-content:space-between; padding:1px 0; font-size:11.5px; cursor:pointer; }
+  .toplist div:hover { color:#fff; }
+  button.reset { background:#26405e; color:#cfe3ff; border:none; border-radius:6px; padding:5px 10px; font-size:11.5px; cursor:pointer; margin-top:6px; width:100%; }
+  button.reset:hover { background:#2f4f75; }
+  .lgsec { margin-top:6px; border-top:1px solid #2c333e; padding-top:5px; font-size:11px; }
+</style>
+</head>
+<body>
+<div id="canvas"></div>
+
+<div id="left" class="panel">
+  <h1 id="title"></h1>
+  <div class="sub" id="subtitle"></div>
+  <div class="modelline" id="modelLine"></div>
+
+  <h2>Color by</h2>
+  <select id="colorMode">
+    <option value="type">Member type</option>
+    <option value="util">Utilization (D/C ratio)</option>
+    <option value="sec">Section</option>
+    <option value="fe">Fixed-ended beams</option>
+    <option value="web">Web depth orientation</option>
+  </select>
+
+  <h2>Mode shape animation</h2>
+  <select id="modeSel"><option value="-1">Off — undeformed</option></select>
+  <div class="row"><span style="min-width:62px">Amplitude</span><input type="range" id="amp" min="0" max="100" value="35"><span class="val" id="ampV">35</span></div>
+
+  <h2>Show</h2>
+  <label><input type="checkbox" id="fCol" checked> Columns</label>
+  <label><input type="checkbox" id="fBeam" checked> Beams</label>
+  <label><input type="checkbox" id="fBrace" checked> Braces</label>
+  <label><input type="checkbox" id="fSlab" checked> Floor slabs</label>
+  <label><input type="checkbox" id="fSupp" checked> <span id="suppLabel">Supports</span></label>
+  <label><input type="checkbox" id="fAxes" checked> Axes &amp; north indicator</label>
+  <div id="lvlBoxes" style="margin-top:4px"></div>
+
+  <h2>Loads</h2>
+  <label><input type="checkbox" id="lDLdyn"> Dead load (dynamic model)</label>
+  <label><input type="checkbox" id="lLLdyn"> Live load (dynamic model)</label>
+  <label><input type="checkbox" id="lDLstat"> Dead load (static model)</label>
+  <label><input type="checkbox" id="lLLstat"> Live load (static model)</label>
+  <label><input type="checkbox" id="lWind"> Wind load</label>
+  <label><input type="checkbox" id="lSeis"> Horizontal seismic load</label>
+
+  <h2>Model summary</h2>
+  <div id="stats"></div>
+
+  <h2>Highest utilization</h2>
+  <div class="toplist" id="toplist"></div>
+  <button class="reset" id="resetCam">Reset camera</button>
+
+  <div class="caveat" id="caveat"></div>
+</div>
+
+<div id="legend" class="panel"></div>
+
+<div id="info" class="panel">
+  <h3 id="iTitle"></h3>
+  <div id="iBody"></div>
+</div>
+
+<script>
+__THREE__
+</script>
+<script>
+const DATA = __DATA__;
+
+// ---------- scene ----------
+const W = () => window.innerWidth, H = () => window.innerHeight;
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(W(), H()); renderer.setPixelRatio(window.devicePixelRatio);
+document.getElementById('canvas').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14171c);
+const nodeOf = t => DATA.nodes[String(t)];
+function map3(x,y,z){ return new THREE.Vector3(x, z, y); }   // model z-up -> three y-up
+
+let bmin=[1e9,1e9,1e9], bmax=[-1e9,-1e9,-1e9];
+for (const t in DATA.nodes){ const c=DATA.nodes[t]; for(let d=0;d<3;d++){bmin[d]=Math.min(bmin[d],c[d]); bmax[d]=Math.max(bmax[d],c[d]);} }
+const DIM = [bmax[0]-bmin[0], bmax[1]-bmin[1], bmax[2]-bmin[2]];
+const MAXD = Math.max(...DIM);
+const CTR = map3((bmin[0]+bmax[0])/2, (bmin[1]+bmax[1])/2, (bmin[2]+bmax[2])/2*1.5);
+scene.fog = new THREE.Fog(0x14171c, MAXD*2.2, MAXD*6);
+const camera = new THREE.PerspectiveCamera(45, W()/H(), MAXD/200, MAXD*14);
+
+scene.add(new THREE.AmbientLight(0xffffff, .55));
+const dl = new THREE.DirectionalLight(0xffffff, .8); dl.position.set(MAXD*.6, MAXD*1.1, -MAXD*.4); scene.add(dl);
+const dl2 = new THREE.DirectionalLight(0x88aaff, .25); dl2.position.set(-MAXD*.5, MAXD*.35, MAXD*.6); scene.add(dl2);
+const grid = new THREE.GridHelper(MAXD*2.5, 40, 0x2a3542, 0x1e2631);
+grid.position.set((bmin[0]+bmax[0])/2, -MAXD/800, (bmin[1]+bmax[1])/2); scene.add(grid);
+
+// ---------- orbit controls ----------
+let sph = {r: MAXD*1.55, theta: Math.PI/4.4, phi: 1.15}, target = CTR.clone();
+function applyCam(){
+  camera.position.set(
+    target.x + sph.r*Math.sin(sph.phi)*Math.cos(sph.theta),
+    target.y + sph.r*Math.cos(sph.phi),
+    target.z + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta));
+  camera.lookAt(target);
+}
+applyCam();
+let drag = null;
+renderer.domElement.addEventListener('mousedown', e => { drag = {x:e.clientX, y:e.clientY, btn:e.button, shift:e.shiftKey, moved:0}; });
+window.addEventListener('mouseup', () => drag = null);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const dx = e.clientX-drag.x, dy = e.clientY-drag.y; drag.x = e.clientX; drag.y = e.clientY;
+  drag.moved += Math.abs(dx)+Math.abs(dy);
+  if (drag.btn === 2 || drag.shift) {
+    const fwd = new THREE.Vector3().subVectors(target, camera.position).normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+    const up = new THREE.Vector3().crossVectors(right, fwd);
+    target.addScaledVector(right, -dx*sph.r/900).addScaledVector(up, dy*sph.r/900);
+  } else {
+    sph.theta += dx*0.005; sph.phi = Math.min(Math.PI-0.05, Math.max(0.05, sph.phi - dy*0.005));
+  }
+  applyCam();
+});
+renderer.domElement.addEventListener('wheel', e => { e.preventDefault(); sph.r = Math.min(MAXD*10, Math.max(MAXD/8, sph.r*(1+Math.sign(e.deltaY)*0.09))); applyCam(); }, {passive:false});
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+document.getElementById('resetCam').onclick = () => { sph = {r:MAXD*1.55, theta:Math.PI/4.4, phi:1.15}; target = CTR.clone(); applyCam(); };
+
+// ---------- colors ----------
+const TYPE_COL = {column:0x5b8dd9, beam:0x9aa7b8, brace:0xe67e22};
+const GREY = 0x5a6472, FE_ORANGE = 0xe67e22, FIN_RED = 0xe74c3c;
+const LOAD_COL = {DL:0x7aa2ff, LL:0x2ecc71, wind:0x00bcd4, seis:0xc08bff};
+const SECS = [...new Set(DATA.elements.map(e=>e.sec))];
+const SEC_PALETTE = [0x5b8dd9,0x2ecc71,0xe67e22,0x9b59b6,0xf1c40f,0x1abc9c,0xe74c3c,0x95a5a6,0xd35400,0x3498db,0x27ae60,0xc0392b];
+const SEC_COL = {}; SECS.forEach((s,i)=> SEC_COL[s] = SEC_PALETTE[i%SEC_PALETTE.length]);
+function utilColor(u){
+  const c = new THREE.Color();
+  if (u === null || u === undefined || u < 0) return c.set(GREY);
+  if (u < 0.5) c.setHSL(0.33 - 0.13*(u/0.5), .75, .48);
+  else if (u < 0.75) c.setHSL(0.20 - 0.12*((u-0.5)/0.25), .85, .5);
+  else if (u < 1.0) c.setHSL(0.08 - 0.08*((u-0.75)/0.25), .9, .5);
+  else c.setHSL(0, .95, .45);
+  return c;
+}
+
+// ---------- element meshes ----------
+const RB = Math.max(1.5, MAXD/340);
+const RAD = {column:2.3*RB, beam:1.7*RB, brace:1.3*RB};
+const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1);
+const meshes = [];
+const LEV = DATA.meta.levels;
+const lvlOfZ = z => { let best=0,bd=1e9; LEV.forEach((v,i)=>{const d=Math.abs(v-z); if(d<bd){bd=d;best=i;}}); return best; };
+for (const e of DATA.elements) {
+  const mesh = new THREE.Mesh(cylGeo, new THREE.MeshLambertMaterial({color:0xffffff}));
+  mesh.userData = e;
+  const [,,z1] = nodeOf(e.n[0]), [,,z2] = nodeOf(e.n[1]);
+  e._lvl = Math.max(lvlOfZ(z1), lvlOfZ(z2));
+  scene.add(mesh); meshes.push(mesh);
+}
+let thinCols = false;   // columns as thin lines while nodal (dynamic-model) loads are displayed
+function placeMesh(mesh, p1, p2){
+  const mid = new THREE.Vector3().addVectors(p1,p2).multiplyScalar(.5);
+  const dir = new THREE.Vector3().subVectors(p2,p1);
+  const len = dir.length();
+  const r = (thinCols && mesh.userData.type === 'column') ? 0.3*RB : RAD[mesh.userData.type];
+  mesh.position.copy(mid);
+  mesh.scale.set(r, len, r);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.normalize());
+}
+
+// web-orientation fins (red plates showing the web plane; static, undeformed)
+const finGrp = new THREE.Group(); finGrp.visible = false;
+const finMat = new THREE.MeshLambertMaterial({color:FIN_RED});
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+for (const e of DATA.elements) {
+  if (e.type === 'brace') continue;
+  let webdir = null;                                   // model-space direction the web depth runs
+  if (e.type === 'column' && (e.wd === 'X' || e.wd === 'Y')) webdir = e.wd === 'X' ? [1,0,0] : [0,1,0];
+  if (e.type === 'beam') webdir = [0,0,1];             // beam web is vertical (strong axis vertical)
+  if (!webdir) continue;
+  const p1v = nodeOf(e.n[0]), p2v = nodeOf(e.n[1]);
+  const p1 = map3(...p1v), p2 = map3(...p2v);
+  const axis = new THREE.Vector3().subVectors(p2,p1); const len = axis.length(); axis.normalize();
+  const wx = map3(...webdir).sub(map3(0,0,0)).normalize();
+  const zax = new THREE.Vector3().crossVectors(wx, axis).normalize();
+  const xax = new THREE.Vector3().crossVectors(axis, zax).normalize();
+  const fin = new THREE.Mesh(boxGeo, finMat);
+  fin.scale.set(7*RB, len*0.92, 0.7*RB);
+  fin.position.copy(p1).add(p2).multiplyScalar(.5);
+  const M = new THREE.Matrix4().makeBasis(xax, axis, zax);
+  fin.quaternion.setFromRotationMatrix(M);
+  finGrp.add(fin);
+}
+scene.add(finGrp);
+
+// supports: cones = pinned, cubes = fixed
+const suppGrp = new THREE.Group();
+const isFixedBase = /fixed/i.test(DATA.meta.support_label||'');
+const suppMat = new THREE.MeshLambertMaterial({color:0x2ecc71});
+for (const t of DATA.fixed) {
+  const [x,y,z] = nodeOf(t);
+  const c = isFixedBase ? new THREE.Mesh(new THREE.BoxGeometry(8*RB,4*RB,8*RB), suppMat)
+                        : new THREE.Mesh(new THREE.ConeGeometry(5.5*RB, 9*RB, 4), suppMat);
+  c.position.copy(map3(x,y,z)).add(new THREE.Vector3(0,-5*RB,0));
+  suppGrp.add(c);
+}
+scene.add(suppGrp);
+
+// floor slabs
+const slabGrp = new THREE.Group();
+const slabMat = new THREE.MeshLambertMaterial({color:0x3a4656, transparent:true, opacity:.30, side:THREE.DoubleSide});
+for (const [x0,x1,y0,y1,z] of (DATA.slabs||[])) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(x1-x0, y1-y0), slabMat);
+  m.rotation.x = -Math.PI/2;
+  m.position.set((x0+x1)/2, z, (y0+y1)/2);
+  m.userData._lvl = lvlOfZ(z);
+  slabGrp.add(m);
+}
+scene.add(slabGrp);
+
+// ---------- ground axes + north indicator (report convention: north = +Y) ----------
+function textSprite(txt, color){
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  g.font = 'bold 84px Segoe UI, sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  g.fillStyle = color; g.fillText(txt, 64, 68);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv), transparent:true}));
+  sp.scale.set(MAXD*0.07, MAXD*0.07, 1);
+  return sp;
+}
+function arrow(from, dirModel, len, color, rad){
+  const g = new THREE.Group();
+  const dir = map3(...dirModel).normalize();
+  const shaftLen = len*0.75;
+  const shaft = new THREE.Mesh(cylGeo, new THREE.MeshLambertMaterial({color}));
+  shaft.scale.set(rad, shaftLen, rad);
+  shaft.position.copy(from).addScaledVector(dir, shaftLen/2);
+  shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(rad*2.6, len*0.25, 10), new THREE.MeshLambertMaterial({color}));
+  head.position.copy(from).addScaledVector(dir, shaftLen + len*0.125);
+  head.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+  g.add(shaft, head);
+  return g;
+}
+const axesGrp = new THREE.Group();
+{
+  const ax0 = map3(bmin[0]-MAXD*0.16, bmin[1]-MAXD*0.16, 0);
+  const al = MAXD*0.13;
+  axesGrp.add(arrow(ax0.clone(), [1,0,0], al, 0xe74c3c, RB*0.9));
+  axesGrp.add(arrow(ax0.clone(), [0,1,0], al, 0x2ecc71, RB*0.9));
+  const lx = textSprite('X', '#e74c3c'); lx.position.copy(ax0).add(map3(al*1.25,0,0).sub(map3(0,0,0))); axesGrp.add(lx);
+  const ly = textSprite('Y', '#2ecc71'); ly.position.copy(ax0).add(map3(0,al*1.25,0).sub(map3(0,0,0))); axesGrp.add(ly);
+  // north indicator: single arrow (+Y = north, report convention) + "N" label
+  const c0 = map3(bmin[0]-MAXD*0.16, (bmin[1]+bmax[1])/2, 0);
+  axesGrp.add(arrow(c0.clone(), [0,1,0], MAXD*0.09, 0xffffff, RB*0.7));
+  const ln = textSprite('N', '#ffffff'); ln.position.copy(c0).add(new THREE.Vector3(0, MAXD*0.012, -MAXD*0.13)); axesGrp.add(ln);
+}
+scene.add(axesGrp);
+
+// ---------- load visualisations (built lazily, toggled) ----------
+const LD = DATA.loads || {};
+const loadGrps = {};
+function grpFor(key, builder){
+  if (!loadGrps[key]) { loadGrps[key] = builder(); scene.add(loadGrps[key]); }
+  return loadGrps[key];
+}
+function gravArrowGroup(pts, color){
+  const g = new THREE.Group();
+  if (!pts || !pts.length) return g;
+  const pmax = Math.max(...pts.map(p=>p[3])) || 1;
+  for (const [x,y,z,p] of pts) {
+    const len = MAXD*0.03 + MAXD*0.06*(p/pmax);
+    g.add(arrow(map3(x,y,z).add(new THREE.Vector3(0,len,0)), [0,0,-1], len, color, RB*0.55));
+  }
+  return g;
+}
+function statLoadGroup(beams, color){
+  // translucent load "ribbons" above beams, height ~ tributary w(s)
+  const g = new THREE.Group();
+  if (!beams || !beams.length) return g;
+  let wmax = 0;
+  for (const b of beams) wmax = Math.max(wmax, ...b[6]);
+  if (!wmax) return g;
+  const mat = new THREE.MeshLambertMaterial({color, transparent:true, opacity:.5, side:THREE.DoubleSide});
+  for (const b of beams) {
+    const p1 = map3(b[0],b[1],b[2]), p2 = map3(b[3],b[4],b[5]), ws = b[6], n = ws.length;
+    const verts = [];
+    for (let s=0; s<n; s++) {
+      const a0 = s/n, a1 = (s+1)/n;
+      const q0 = p1.clone().lerp(p2, a0), q1 = p1.clone().lerp(p2, a1);
+      const h = MAXD*0.045*(ws[s]/wmax);
+      verts.push(q0.x,q0.y,q0.z, q1.x,q1.y,q1.z, q0.x,q0.y+h,q0.z);
+      verts.push(q1.x,q1.y,q1.z, q1.x,q1.y+h,q1.z, q0.x,q0.y+h,q0.z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo, mat));
+  }
+  return g;
+}
+function lateralGroup(kind){
+  const g = new THREE.Group();
+  const d = LD[kind === 'wind' ? 'wind' : 'seis'];
+  if (!d) return g;
+  const cx = (bmin[0]+bmax[0])/2, cy = (bmin[1]+bmax[1])/2;
+  const col = LOAD_COL[kind === 'wind' ? 'wind' : 'seis'];
+  const FXs = kind === 'wind' ? d.X : d.F, FYs = kind === 'wind' ? d.Y : d.F;
+  const fmax = Math.max(...FXs, ...FYs) || 1;
+  d.z.forEach((z,i)=>{
+    const lx = MAXD*0.05 + MAXD*0.1*(FXs[i]/fmax);
+    const ly = MAXD*0.05 + MAXD*0.1*(FYs[i]/fmax);
+    // X-direction arrow approaching the -X face; Y-direction arrow approaching the -Y face
+    g.add(arrow(map3(bmin[0]-lx-MAXD*0.02, cy, z), [1,0,0], lx, col, RB*0.8));
+    g.add(arrow(map3(cx, bmin[1]-ly-MAXD*0.02, z), [0,1,0], ly, col, RB*0.8));
+  });
+  return g;
+}
+const LOAD_DEFS = {
+  lDLdyn:  () => gravArrowGroup((LD.DLdyn||{}).pts, LOAD_COL.DL),
+  lLLdyn:  () => gravArrowGroup((LD.LLdyn||{}).pts, LOAD_COL.LL),
+  lDLstat: () => statLoadGroup(((LD.stat||{}).D||{}).beams, LOAD_COL.DL),
+  lLLstat: () => statLoadGroup(((LD.stat||{}).L||{}).beams, LOAD_COL.LL),
+  lWind:   () => lateralGroup('wind'),
+  lSeis:   () => lateralGroup('seis'),
+};
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+$('title').textContent = DATA.meta.title;
+$('subtitle').textContent = DATA.meta.subtitle;
+$('modelLine').textContent = DATA.meta.model_line || '';
+$('suppLabel').textContent = DATA.meta.support_label || 'Supports';
+$('caveat').innerHTML = '<b>Notes:</b> ' + DATA.meta.caveat;
+const modeSel = $('modeSel');
+DATA.modes.forEach((m,i)=>{
+  const o = document.createElement('option'); o.value = i;
+  o.textContent = `Mode ${i+1} — T=${m.T.toFixed(3)} s`;
+  modeSel.appendChild(o);
+});
+const lvlOn = LEV.map(()=>true);
+for (let k=1;k<LEV.length;k++){
+  const l = document.createElement('label');
+  const nm = (k===LEV.length-1?'Roof':'L'+k) + ` (z=${LEV[k]}″)`;
+  l.innerHTML = `<input type="checkbox" checked> ${nm}`;
+  l.querySelector('input').onchange = ev => { lvlOn[k] = ev.target.checked; refresh(); };
+  $('lvlBoxes').appendChild(l);
+}
+$('stats').innerHTML = DATA.meta.stats.map(([a,b])=>`<div class="stat"><span>${a}</span><b>${b}</b></div>`).join('');
+const topEls = [...DATA.elements].filter(e=>e.util!==null && e.util!==undefined).sort((a,b)=>b.util-a.util).slice(0,8);
+$('toplist').innerHTML = topEls.length ? topEls.map(e=>`<div data-tag="${e.tag}"><span>#${e.tag} ${e.type} ${e.sec}</span><b style="color:${'#'+utilColor(e.util).getHexString()}">${e.util.toFixed(2)}</b></div>`).join('')
+  : '<div style="color:#79828e">no demand data found</div>';
+$('toplist').querySelectorAll('div[data-tag]').forEach(d => d.onclick = () => {
+  const mesh = meshes.find(mm => mm.userData.tag == d.dataset.tag);
+  if (mesh) { select(mesh); target.copy(mesh.position); applyCam(); }
+});
+
+function loadLegend(){
+  let h = '';
+  const sf = (arr) => arr.map((f,i)=>`<tr><td>Level ${i+1}</td><td>${f} k</td></tr>`).join('');
+  if ($('lDLdyn').checked && LD.DLdyn) h += `<div class="lgsec"><span class="swatch" style="background:#7aa2ff"></span>Dead (dynamic model): level totals at grid nodes — ΣD = <b>${LD.DLdyn.total}</b> k</div>`;
+  if ($('lLLdyn').checked && LD.LLdyn) h += `<div class="lgsec"><span class="swatch" style="background:#2ecc71"></span>Live (dynamic model): level totals at grid nodes — ΣL = <b>${LD.LLdyn.total}</b> k</div>`;
+  if ($('lDLstat').checked && LD.stat && LD.stat.D) h += `<div class="lgsec"><span class="swatch" style="background:#7aa2ff"></span>Dead (static model): two-way tributary ribbons, height ∝ w — ΣD = <b>${LD.stat.D.total}</b> k</div>`;
+  if ($('lLLstat').checked && LD.stat && LD.stat.L) h += `<div class="lgsec"><span class="swatch" style="background:#2ecc71"></span>Live (static model): two-way tributary ribbons — ΣL = <b>${LD.stat.L.total}</b> k</div>`;
+  if ($('lWind').checked && LD.wind) h += `<div class="lgsec"><span class="swatch" style="background:#00bcd4"></span>Wind story forces (kip) X: ${LD.wind.X.join(', ')} · Y: ${LD.wind.Y.join(', ')}</div>`;
+  if ($('lSeis').checked && LD.seis) h += `<div class="lgsec"><span class="swatch" style="background:#c08bff"></span>Seismic ELF story forces (kip): ${LD.seis.F.join(', ')} — V = <b>${LD.seis.V}</b> k (Cs=${LD.seis.Cs})</div>`;
+  return h;
+}
+function legendHTML(){
+  const mode = $('colorMode').value;
+  let h;
+  if (mode === 'type') h = Object.entries(TYPE_COL).map(([k,v])=>`<span class="swatch" style="background:#${v.toString(16).padStart(6,'0')}"></span>${k}&nbsp;&nbsp;`).join('');
+  else if (mode === 'sec') h = SECS.map(s=>`<div><span class="swatch" style="background:#${SEC_COL[s].toString(16).padStart(6,'0')}"></span>${s}</div>`).join('');
+  else if (mode === 'fe') h = `<div><span class="swatch" style="background:#e67e22"></span>fixed-ended beam (moment connection both ends)</div><div><span class="swatch" style="background:#5a6472"></span>all other members</div>`;
+  else if (mode === 'web') h = `<div><span class="swatch" style="background:#5b8dd9"></span>columns &nbsp;<span class="swatch" style="background:#9aa7b8"></span>beams &nbsp;<span class="swatch" style="background:#3f4854"></span>braces</div><div><span class="swatch" style="background:#e74c3c"></span>red fin = web plane / depth direction</div>`;
+  else h = `<div style="width:210px"><div style="display:flex;justify-content:space-between;font-size:10.5px"><span>D/C&nbsp;0</span><span>0.5</span><span>0.75</span><span>1.0+</span></div><div class="util-bar"></div><div style="font-size:10.5px;color:#8b95a3">${DATA.meta.demand_src}</div></div>`;
+  return h + loadLegend();
+}
+
+// ---------- selection ----------
+const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+let selected = null, hovered = null;
+const FLAB = {P:'Axial P (k)', N:'Axial N (k)', Mx:'M major (k·ft)', My:'M minor (k·ft)', V:'Shear V (k)'};
+function select(mesh){
+  selected = mesh;
+  const e = mesh.userData;
+  const uc = '#'+utilColor(e.util).getHexString();
+  $('info').style.display = 'block';
+  const ub = (e.util===null||e.util===undefined) ? '' : ` <span class="badge" style="background:${uc}22;color:${uc};border:1px solid ${uc}55">D/C ${e.util.toFixed(2)}</span>`;
+  $('iTitle').innerHTML = `Element #${e.tag}${ub}`;
+  let rows = `<tr><td>Type</td><td>${e.type}</td></tr><tr><td>Section</td><td>${e.sec}</td></tr>
+    <tr><td>Length</td><td>${(e.L/12).toFixed(1)} ft</td></tr><tr><td>Nodes</td><td>${e.n[0]} → ${e.n[1]}</td></tr>`;
+  if (e.rel) rows += `<tr><td>End releases</td><td>${e.rel}</td></tr>`;
+  else if (e.type === 'beam') rows += `<tr><td>End fixity</td><td>${e.fe ? 'fixed-ended' : 'released / mixed'}</td></tr>`;
+  if (e.wd) rows += `<tr><td>Web depth runs</td><td>${e.wd} (strong axis ⟂ ${e.wd})</td></tr>`;
+  if (e.combo) rows += `<tr><td>Governing combo</td><td>${e.combo}</td></tr>`;
+  for (const k in (e.f||{})) rows += `<tr><td>${FLAB[k]||k}</td><td>${e.f[k]}</td></tr>`;
+  $('iBody').innerHTML = `<table>${rows}</table>`;
+  refresh();
+}
+renderer.domElement.addEventListener('click', e => {
+  if (drag && drag.moved > 4) return;
+  mouse.set(e.clientX/W()*2-1, -(e.clientY/H())*2+1);
+  ray.setFromCamera(mouse, camera);
+  const hits = ray.intersectObjects(meshes.filter(mm=>mm.visible));
+  if (hits.length) select(hits[0].object);
+  else { selected = null; $('info').style.display = 'none'; refresh(); }
+});
+renderer.domElement.addEventListener('mousemove', e => {
+  mouse.set(e.clientX/W()*2-1, -(e.clientY/H())*2+1);
+  ray.setFromCamera(mouse, camera);
+  const hits = ray.intersectObjects(meshes.filter(mm=>mm.visible));
+  const h = hits.length ? hits[0].object : null;
+  if (h !== hovered) { hovered = h; refresh(); }
+  renderer.domElement.style.cursor = h ? 'pointer' : 'default';
+});
+
+// ---------- refresh ----------
+function colorOf(e, mode){
+  if (mode === 'type') return new THREE.Color(TYPE_COL[e.type]);
+  if (mode === 'sec') return new THREE.Color(SEC_COL[e.sec]);
+  if (mode === 'fe') return new THREE.Color(e.type==='beam' && e.fe ? FE_ORANGE : GREY);
+  if (mode === 'web') return new THREE.Color(e.type==='column' ? 0x5b8dd9 : e.type==='beam' ? 0x9aa7b8 : 0x3f4854);
+  return utilColor(e.util);
+}
+function refresh(){
+  const mode = $('colorMode').value;
+  const show = {column:$('fCol').checked, beam:$('fBeam').checked, brace:$('fBrace').checked};
+  thinCols = $('lDLdyn').checked || $('lLLdyn').checked;
+  for (const mesh of meshes) {
+    const e = mesh.userData;
+    mesh.visible = show[e.type] && lvlOn[e._lvl];
+    const c = colorOf(e, mode);
+    if (mesh === selected) c.lerp(new THREE.Color(0xffffff), .45);
+    else if (mesh === hovered) c.lerp(new THREE.Color(0xffffff), .25);
+    mesh.material.color = c;
+    mesh.material.emissive = new THREE.Color(mesh === selected ? 0x334455 : 0x000000);
+  }
+  finGrp.visible = (mode === 'web');
+  slabGrp.visible = $('fSlab').checked;
+  slabGrp.children.forEach(s => s.visible = lvlOn[s.userData._lvl]);
+  suppGrp.visible = $('fSupp').checked;
+  axesGrp.visible = $('fAxes').checked;
+  for (const key in LOAD_DEFS) {
+    if ($(key).checked) grpFor(key, LOAD_DEFS[key]).visible = true;
+    else if (loadGrps[key]) loadGrps[key].visible = false;
+  }
+  $('legend').innerHTML = legendHTML();
+}
+['colorMode','fCol','fBeam','fBrace','fSlab','fSupp','fAxes',
+ 'lDLdyn','lLLdyn','lDLstat','lLLstat','lWind','lSeis'].forEach(id => $(id).addEventListener('change', refresh));
+$('amp').addEventListener('input', () => $('ampV').textContent = $('amp').value);
+
+// ---------- animation ----------
+const AMP_SCALE = MAXD/2000;
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const mi = parseInt(modeSel.value);
+  let disp;
+  if (mi >= 0) {
+    const md = DATA.modes[mi];
+    const s = Math.sin(clock.getElapsedTime() * 2*Math.PI / Math.max(md.T*4, 1.2)) * parseFloat($('amp').value) * AMP_SCALE;
+    disp = t => { const v = md.shape[String(t)]; return v ? [v[0]*s, v[1]*s, v[2]*s] : [0,0,0]; };
+  } else disp = t => [0,0,0];
+  for (const mesh of meshes) {
+    if (!mesh.visible) continue;
+    const e = mesh.userData;
+    const [x1,y1,z1] = nodeOf(e.n[0]), [x2,y2,z2] = nodeOf(e.n[1]);
+    const d1 = disp(e.n[0]), d2 = disp(e.n[1]);
+    placeMesh(mesh, map3(x1+d1[0], y1+d1[1], z1+d1[2]), map3(x2+d2[0], y2+d2[1], z2+d2[2]));
+  }
+  renderer.render(scene, camera);
+}
+window.addEventListener('resize', () => { camera.aspect = W()/H(); camera.updateProjectionMatrix(); renderer.setSize(W(), H()); });
+refresh(); animate();
+</script>
+</body>
+</html>

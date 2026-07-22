@@ -1,0 +1,77 @@
+Structural System - Special Concentrically Braced Frame (SCBF)
+Frame type - Centralized-core SCBF: chevron (inverted-V) braced bays on the interior core lines, per the LFRS bay layout below
+Number of stories - 5
+Story heights - First story 15 ft (ground-floor lobby + MEP main distribution); typical upper stories (2-5) 12 ft 6 in to 13 ft; total height ~65 to 67 ft
+Analysis procedure - Equivalent Lateral Force (ELF); SDC D (high seismic)
+Design standards - AISC 360, AISC 341, ASCE 7
+
+## Material Properties
+- Structural steel (W-shapes): **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**, **Fy = 50 ksi**
+- Gusset plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. lightweight concrete on 3 in. composite steel deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 75 psf (composite floor: slab, deck, framing, superimposed MEP/ceiling/finishes) |
+| Cladding Load | 15 psf (perimeter facade - glass/metal curtain wall) |
+| Floor Live Load | 50 psf (office) + 15 psf partition allowance (ASCE 7-22 Table 4.3-1); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr, ordinary roof; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 110 mph (ASCE 7-22), Exposure B; MWFRS per Ch. 26-27. Verify wind vs seismic per direction - seismic expected to govern in SDC D.
+- Composite gravity beams designed per AISC 360; infill beams spaced at 10 ft o.c.
+
+## Column Design Requirements
+- Column splices at two-story intervals, located ~4 ft above finished floor
+- Column sizes in lower stories never smaller than stories above
+- Unbraced length of columns = clear story height (floor framing braces both axes at each level)
+
+## Building Plan Geometry
+  - Footprint: 90'-0" (Transverse/Y-axis) × 150'-0" (Longitudinal/X-axis).
+  - Story Heights:
+      - Level 1: 15'-0" (Floor-to-Floor)
+      - Levels 2–5: 13'-0" (Floor-to-Floor, typical)
+      - Total Height: 67'-0" (to roof parapet)
+  - Column Grid Coordinates:
+      - Transverse (Y-Axis): Grid Lines A to D (3 bays @ 30'-0" o.c.).
+      - Longitudinal (X-Axis): Grid Lines 1 to 6 (5 bays @ 30'-0" o.c.).
+LFRS System Classification
+  - System Type: Special Concentrically Braced Frames (SCBF) conforming to
+    AISC 341 (Seismic Design Category D).
+  - Brace Configuration: Chevron (Inverted-V) configuration within designated
+    bays.
+LFRS Bay Locations (1-Bay Widths, Centralized Core Layout)
+To concentrate the lateral system within a central service/circulation core and
+preserve a fully glazed exterior perimeter, LFRS bays are located as follows:
+Transverse Direction (Y-Axis LFRS):
+  - Frame 1 (Interior Core Line): Located on Grid Line 2, between Grid Lines B
+    and C (Bay Width: 30'-0").
+  - Frame 2 (Interior Core Line): Located on Grid Line 5, between Grid Lines B
+    and C (Bay Width: 30'-0").
+Longitudinal Direction (X-Axis LFRS):
+  - Frame 3 (Interior Core Line): Located on Grid Line B, between Grid Lines 3
+    and 4 (Bay Width: 30'-0").
+  - Frame 4 (Interior Core Line): Located on Grid Line C, between Grid Lines 3
+    and 4 (Bay Width: 30'-0").
+Critical Design Provisions (AISC 341 & AISC 360)
+  - Member Slenderness: All bracing members must satisfy highly ductile member
+    limits (\lambda_{hd}) per AISC 341 Table D1.1 (e.g., b/t limits for HSS
+    sections).
+  - Connection Design:
+      - Brace-to-gusset connections must utilize the Uniform Force Method (UFM)
+        for force distribution.
+      - Gusset plates must incorporate a continuous "2t" plastic hinge fold-line
+        clearance to accommodate out-of-plane buckling rotation.
+- All columns will vary in size every 2 storeys
+- All beams on a storey are the same size, every storey may have a different beam size
+- Column splices at two-story intervals; column unbraced length = clear story height.
+- Base fixity - all pinned
+- framing connections - pinned
+
+## Brace Connections (SCBF, per AISC 341)
+- Brace-to-frame connections: gusset plates, **3/4 in. to 1 in. thick (ASTM A572 Gr. 50)**.
+- Provide a **"2t" linear fold-line clearance** (t = gusset thickness) to permit the brace to form an out-of-plane plastic hinge during buckling.
+- Gusset-to-beam and gusset-to-column welds designed by the **Uniform Force Method (UFM)**.
+- Brace width-to-thickness ratios: **highly ductile** limits per AISC 341 Table D1.1.

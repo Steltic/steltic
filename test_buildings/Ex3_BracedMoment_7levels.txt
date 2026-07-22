@@ -1,0 +1,83 @@
+Structural System - Dual lateral system: steel braced frames + moment frames
+Frame type - Dual lateral layout: perimeter moment frames (WUF-B) on the street facades + concentric HSS braced frames on the rear core lines, per the LFRS bay layout below
+Number of stories - 7 (plus cellar)
+Story heights - First story 17 ft 6 in to 19 ft (retail/lobby, max daylight + high-volume retail); typical upper stories (office levels 2-7) 13 ft 4 in to 14 ft (exposed steel ceilings); total height ~102 ft (excluding bulkhead)
+Analysis procedure - Equivalent Lateral Force (ELF); SDC B (low-seismic NYC site). R = 3 'steel systems not specifically detailed for seismic resistance' - AISC 341 not invoked; lateral design per the NYC Building Code with wind expected to govern
+Design standards - AISC 360, NYC Building Code
+Project - 300 Lafayette Street, New York, NY (commercial office + retail)
+
+## Material Properties
+- Structural steel (W-shapes): **ASTM A992**, **Fy = 50 ksi**
+- Braces (HSS): **ASTM A500 Grade C**
+- High-strength bolts: **ASTM F3125 Grade A325** (3/4 in. or 7/8 in. dia.)
+- Floor system: composite - 3 1/4 in. lightweight concrete on 3 in. 20-gauge composite metal deck (6 1/4 in. total)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 85 psf (composite floor on 6 1/4 in. deck assembly: slab, deck, framing, superimposed) |
+| Cladding Load | 25 psf (perimeter facade - masonry/precast) |
+| Floor Live Load | 50 psf (typical office floors 2-7) + 15 psf partition allowance; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr); verify NYC ground snow ~25-30 psf - snow may govern the roof |
+
+### Additional Notes
+- Wind loads - V = 115 mph (ASCE 7-22, NYC), Exposure B; MWFRS per Ch. 26-27 - wind governs the lateral design at this low-seismic site
+- Infill beams spaced at 8 ft to 10 ft on center.
+- Some connections are Architecturally Exposed Structural Steel (AESS): countersunk bolts, ground welds, tapered plate-to-round-HSS details.
+
+## Column Design Requirements
+- Column splices at two-story intervals, located ~4 ft above finished floor
+- Column sizes in lower stories never smaller than stories above
+- Unbraced length of columns = clear story height (floor framing braces both axes at each level)
+
+## Building Plan Geometry
+- Column Grid Coordinates:
+      - Transverse (Y-Axis): Grid Lines A to E (4 bays @ 27'-6" o.c.).
+      - Longitudinal (X-Axis): Grid Lines 1 to 7 (6 bays @ 30'-10" o.c.)
+
+Transverse Direction (Y-Axis LFRS):
+
+  - Frame 1 (Moment Frame - Front/Lafayette St): Located on Grid Line 1,
+    moment-connected between Grid Lines A-B and D-E (WUF-B connections).
+  - Frame 2 (Braced Frame - Rear Core): Concentrically braced frame located on
+    Grid Line 7, between Grid Lines B and C (HSS diagonal braces).
+
+Longitudinal Direction (X-Axis LFRS):
+
+  - Frame 3 (Moment Frame - Side Street Facade): Located on Grid Line E,
+    moment-connected between Grid Lines 2-3 and 5-6 (WUF-B connections).
+  - Frame 4 (Braced Frame - Rear Boundary): Concentrically braced frame located
+    on Grid Line A, between Grid Lines 3 and 4 (HSS diagonal braces).
+
+- Consider these section-size groups in the lateral frames (agent to determine the actual sections):
+
+Story	Brace	Braced-Frame Column	Moment-Frame Beam	Moment-Frame Column
+Cellar	A	C	E	G
+1	A	C	E	G
+2	A	C	E	G
+3	A	C	E	G
+4	B	D	F	H
+5	B	D	F	H
+6	B	D	F	H
+7	B	D	F	H
+
+(Lower group = Cellar to story 3, upper group = stories 4 to Roof, per the documented gravity-column tiers
+
+- Consider one size for all gravity girders and one size for all infill (gravity) beams outside the lateral frames (agent to determine).
+- Group gravity columns outside the lateral frames by tier (agent to determine): Cellar to Grade = I, stories 4 to Roof = J.
+- Base fixity - fixed bases for braced moment frames, pinned for internal gravity columns
+
+## Moment Connections
+- Beam-to-column moment connections: **Welded Unreinforced Flange - Bolted web (WUF-B)** - complete-joint-penetration (CJP) welds at the beam flanges and a bolted shear tab at the web.
+Welded Flange-Bolted Web (WUF-B) Detailing (AISC 358 Chapter 8):
+  - Beam flanges must be connected to the column flange using
+    complete-joint-penetration (CJP) groove welds.
+  - Access Holes: Weld access holes must comply with the geometric requirements
+    of AISC 358 Section 8.5.
+  - Web Connection: Beam web must be bolted to a single-plate shear tab welded
+    to the column flange. Bolted connection must be designed to resist the shear
+    associated with the development of the beam's plastic moment capacity
+    (M_{pr}).
+
+## Brace Connections
+- Brace-to-frame gusset connections per AISC 360 

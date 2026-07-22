@@ -1,0 +1,23 @@
+1. The client wishes to add a penthouse to the building:
+New Story heights - First story, upper stories, roof the same; penthouse extends 16 ft above roof (PH roof at 118 ft 4 in) over the central core (~25 ft x 75 ft footprint; bounded by Gridlines C-F and 2-5).
+### Penthouse loads
+- Penthouse roof dead load: 25 psf; penthouse floor dead load: 65 psf; penthouse exterior walls: 25 psf of wall; penthouse equipment: 39 psf.
+
+2. Lets try a different structural system in this redesign also:
+New Structural System - Steel Special Concentrically Braced Frame (SCBF), two-story X bracing configuration
+
+### Braced-Frame Layout
+- Four SCBF in each direction, located in the central elevator/stair core (around Gridlines C-F, Lines 3-4):
+  - E-W direction (4 frames): braced bays between Columns 3C-3D, 3E-3F, 4C-4D, and 4E-4F (i.e., bays C-D and E-F, on Lines 3 and 4).
+  - N-S direction (4 frames): braced bays between Columns 3C-4C, 3D-4D, 3E-4E, and 3F-4F (i.e., bay 3-4, on Lines C, D, E, and F).
+- Vertical configuration: two-story-X bracing, stacked up the height. The four frames are identical in brace size/configuration, with minor differences in beam and column sizes.
+- All framing outside the core is gravity-only (simple connections).
+- Building Member Sizing Grouped by the two-story-X brace modules: 1-2, 3-4, 5-6; story 7 separate or 7-8 for the penthouse
+- Braces are HSS, ASTM A1085.
+- Base fixity - all pinned
+- Penthouse level: frame the penthouse level and run the X bracing to the top. At the penthouse level, in the E-W braced frame, add bracing to the unbraced bay that sits between the two braced bays 
+
+## Brace Connections (SCBF, per AISC 341)
+- Brace-to-frame gusset plates (ASTM A36) with a "2t" linear fold-line clearance (t = gusset thickness) to permit out-of-plane brace buckling.
+- Gusset-to-beam and gusset-to-column welds designed by the Uniform Force Method (UFM).
+- Brace and frame member width-to-thickness ratios: highly ductile limits per AISC 341 Table D1.1.

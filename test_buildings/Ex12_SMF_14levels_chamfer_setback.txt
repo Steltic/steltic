@@ -1,0 +1,63 @@
+Structural System - Special Steel Moment Frame (SMF), perimeter
+Frame type - Perimeter SMF with prequalified RBS connections; one 45-degree chamfered corner (skewed moment frame line) + upper-level setback
+Number of stories - 14 (Levels 1-9 full plan; Levels 10-14 setback plan)
+Story heights - First story 17 ft; typical upper stories 13 ft; total height 186 ft
+Analysis procedure - MRSA (3D model mandatory: skewed frame + setback); SDC D
+Design standards - AISC 360, AISC 341, AISC 358, ASCE 7
+
+## Material Properties
+- W-shapes: **ASTM A992**, **Fy = 50 ksi**
+- Doubler/continuity plates: **ASTM A572 Grade 50**
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf (composite office floor + superimposed) |
+| Cladding Load | 18 psf (curtain wall, all faces including chamfer) |
+| Floor Live Load | 50 psf office + 15 psf partitions; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) at Level 9 setback roof terrace and Level 14 main roof |
+| Level 9 terrace | add 30 psf superimposed dead (pavers) on setback roof area |
+
+## Seismic Design Data
+- SDS = 1.05 g, SD1 = 0.58 g, Site Class C, Risk Category II, Ie = 1.0
+- SMF: R = 8, Cd = 5.5, Omega_0 = 3; no height limit
+- Vertical geometric irregularity (Type 3) at Level 10 setback; check stiffness/mass irregularities from model
+
+## Wind Design Data
+- V = 115 mph, Exposure B. Drift-controlled design expected; check both wind H/450 (10-yr) and seismic 2.0% story drift.
+
+## Building Plan Geometry (CHAMFERED CORNER + SETBACK)
+  - Column Grid (orthogonal base grid):
+      - X-Axis: Grids 1 to 6 (5 bays @ 28'-0" = 140'-0")
+      - Y-Axis: Grids A to F (5 bays @ 28'-0" = 140'-0")
+  - CHAMFER (all levels): the southwest corner column at Grid 1/A is OMITTED. A skewed column line runs from Grid 2/A to Grid 1/B (45-degree face, length = 28 x sqrt(2) = 39'-7 5/8"). One intermediate column at the chamfer midpoint (call it Grid CH1, at coordinates x = 14'-0", y = 14'-0" from the theoretical 1/A corner).
+  - LEVELS 1-9: full (chamfered) plan.
+  - LEVELS 10-14 (SETBACK): floor plate reduces to Grids 1-4 / C-F (84' x 84'), i.e. the tower shifts to the NORTHWEST quadrant; roof of the remainder at Level 9 becomes a terrace. Note the chamfer zone is NOT in the setback tower (tower is rectangular).
+  - Elevations: Level 9 terrace roof at 121'-0"; Level 14 main roof at 186'-0".
+  - Story Heights: Level 1: 17'-0"; Levels 2-14: 13'-0".
+
+## SMF Frame Locations (RBS, AISC 358)
+Levels 1-9 (perimeter of full plan):
+  - Grid A: moment bays 2-3, 3-4, 4-5 (3 bays)
+  - Grid F: moment bays 2-3, 3-4, 4-5 (3 bays)
+  - Grid 1: moment bays B-C, C-D, D-E (3 bays)
+  - Grid 6: moment bays B-C, C-D, D-E (3 bays)
+  - CHAMFER FRAME: skewed moment frame along the chamfer face, 2 bays (Grid 2/A to CH1, CH1 to Grid 1/B). Participates in BOTH X and Y directions (resolve by direction cosines, 45 degrees).
+Levels 10-14 (perimeter of setback tower, Grids 1-4 / C-F):
+  - Grid 1: moment bays C-D, D-E (continuous from below)
+  - Grid 4: moment bays C-D, D-E (NEW frame line - columns continue to foundation as gravity columns below Level 10; moment connections Levels 10-14 only)
+  - Grid C: moment bays 1-2, 2-3
+  - Grid F: moment bays 1-2, 2-3 (continuous from below)
+
+## SMF Requirements (AISC 341 E3, AISC 358)
+- RBS: 50% flange reduction target; dimensions a, b, c per AISC 358 Chapter 5 (agent to set)
+- Strong-column/weak-beam at all joints including the two chamfer-frame joints (biaxial check at Grid 2/A and Grid 1/B corner columns, which receive orthogonal AND skewed beams - use built-up box or heavy W14 with side plates if needed)
+- Panel zones per AISC 360 J10-11/J10-12; doubler plates as required; continuity plates aligned with beam flanges
+- Beam bracing at Lb <= 0.086 ry E/Fy; no bracing within RBS protected zone
+- SMF beams W27-W36; SMF columns W14 or built-up box at skew junctions
+
+## Member Sizing Rules
+- One SMF beam size per frame line per story; columns change every 2 stories, splices 4 ft above floor
+- Gravity framing: one beam + one column size per story (agent to determine)
+- Base fixity: SMF columns fixed; gravity pinned. Gravity connections pinned.

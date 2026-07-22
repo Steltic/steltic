@@ -1,0 +1,47 @@
+Structural System - Special Concentrically Braced Frame (SCBF).
+Frame type - Perimeter/core SCBF above a column-free retail concourse - one braced line is DISCONTINUOUS at Level 3 and its overturning is carried by a TRANSFER TRUSS/GIRDER to offset columns below (in-plane discontinuity in the vertical LFRS).
+Number of stories - 12
+Story heights - Levels 1-2 (retail concourse): 18 ft; Levels 3-12: 12 ft 6 in. Roof at 161 ft.
+Analysis procedure - MRSA; SDC D. Vertical Type 4 (in-plane discontinuity of LFRS) at Level 3.
+Design standards - AISC 360-22, AISC 341-22, ASCE 7-22.
+
+## Material Properties
+- W-shapes (columns, HBE/transfer girders, chords): ASTM A992, Fy = 50 ksi
+- HSS braces: ASTM A500 Grade C, Fy = 50 ksi
+- Gusset / connection plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. LW concrete on 3 in. composite deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 80 psf typical floor; 110 psf at the Level-3 transfer level (thicker slab + transfer framing) |
+| Cladding Load | 15 psf |
+| Floor Live Load | 50 psf office (Levels 3-12); 100 psf retail (Levels 1-2); reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.55 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- SCBF: R = 6, Cd = 5, Omega_0 = 2
+- Height 161 ft > 160 ft SCBF SDC D limit? Structural height h_n measured from the BASE - confirm base at grade; if h_n slightly exceeds the Table 12.2-1 limit, the agent must FLAG it and (per 12.2.5.4) either use a permitted exception or note the limit is exceeded (do not silently pass).
+- Vertical irregularity Type 4: the Grid C braced line stops at Level 3 and does not continue to grade; its shear/overturning transfers through a Level-3 transfer truss to Grid B/D columns offset ~30 ft.
+
+## Wind Design Data
+- V = 110 mph, Exposure B. Seismic governs; check drift under 10-yr service wind.
+
+## Building Plan Geometry (RECTANGLE with a DISCONTINUOUS BRACED LINE)
+- Overall: 150'-0" (X) x 120'-0" (Y), uniform all levels.
+- Column Grid: X = Grids 1-6 (5 bays @ 30'-0"); Y = Grids A-E (4 bays @ 30'-0").
+- SCBF braced bays (two-story-X):
+    - X-direction: Grid A (2-3) and Grid E (4-5), Levels 1-12 (continuous to grade).
+    - Y-direction: Grid 1 (B-C) and Grid 6 (C-D), Levels 1-12 (continuous to grade).
+    - DISCONTINUOUS LINE: Grid C (3-4) braced bay runs Levels 3-12 only; at Level 3 its column loads/overturning are picked up by a story-deep TRANSFER TRUSS spanning Grids 2-5 on Grid C, bearing on Grid 2 and Grid 5 columns (retail wants Grids 3-4 column-free at concourse).
+
+## SCBF + Transfer Design Requirements
+- AISC 341 F2: brace expected strength (RyFyAg tension, 1.1RyPn compression), capacity-limited beams/columns/gussets, brace KL/r and width-thickness ductility, two-story-X special provisions.
+- TRANSFER ELEMENTS (Sec. 12.3.3.3): the Level-3 transfer truss, its chords/diagonals, and the Grid 2 & Grid 5 columns supporting the discontinuous braced line MUST be designed for the OVERSTRENGTH (Omega_0 = 2) load combinations - not the un-amplified analysis force. Report the transferred axial/shear.
+- Collector at Level 3 dragging the discontinued line's shear into the transfer truss: design with Omega_0.
+
+## Member Sizing Rules
+- One brace size per story per braced bay; braces change every 2 stories, never smaller below.
+- SCBF columns change every 2 stories; splices 4 ft above floor. Transfer-truss members sized as one group.
+- SCBF column bases fixed; gravity columns and gravity connections pinned.

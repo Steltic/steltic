@@ -1,0 +1,45 @@
+Structural System - Ordinary Concentrically Braced Frame (OCBF) perimeter braced bays + steel roof deck diaphragm.
+Frame type - Single-story big-box retail / warehouse: perimeter OCBF braced bays, interior gravity columns, long-span roof joists/girders, BARE STEEL ROOF DECK (flexible diaphragm).
+Number of stories - 1 (tall clear height)
+Story heights - Single story, 32 ft eave height (clear ~30 ft).
+Analysis procedure - ELF; SDC C. FLEXIBLE diaphragm - distribute lateral force to braced lines by TRIBUTARY AREA (not relative stiffness). Determine wind vs seismic per direction (wind expected to govern).
+Design standards - AISC 360-22, AISC 341-22 (OCBF, Sec. F1), SDI/AISI for the deck diaphragm, ASCE 7-22.
+
+## Material Properties
+- W-shapes / HSS columns and braces: A992 / A500 Grade C, Fy = 50 ksi
+- Open-web steel joists + joist girders: SJI (roof framing)
+- Roof deck: 1 1/2 in. wide-rib bare steel roof deck (Type B), diaphragm per SDI - NO concrete fill (FLEXIBLE diaphragm)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 20 psf roof (deck, joists, insulation, roofing, MEP) |
+| Collateral | 5 psf (sprinklers, ceiling) |
+| Roof Live Load | 20 psf (Lr) |
+| Snow | Ground snow pg = 40 psf; flat-roof pf, drift at parapets and any roof-mounted screens; unbalanced/sliding as applicable |
+
+## Seismic Design Data
+- SDS = 0.45 g, SD1 = 0.20 g, Site Class D, Risk Category II, Ie = 1.0, SDC C
+- OCBF: R = 3.25, Cd = 3.25, Omega_0 = 2; no height limit at SDC C
+- Rigid vs flexible diaphragm: the bare steel deck roof is a FLEXIBLE diaphragm (ASCE 7-22 Sec. 12.3.1.1 / 12.3.1.3) - lateral force goes to the braced lines by TRIBUTARY AREA; the deck spans as a deep horizontal beam (chords = perimeter members; collectors drag to braces).
+
+## Wind Design Data
+- Basic wind speed V = 115 mph, Exposure C. Building is large-footprint, low, LIGHT -> WIND GOVERNS the LFRS strength and roof anchorage.
+- Check: MWFRS in each direction; C&C on roof zones; NET ROOF UPLIFT (0.6D + 0.6W or 0.9D + 1.0W) vs the 20-25 psf dead - uplift anchorage (joist-to-girder, girder-to-column, column base, brace-to-base) governs in both senses.
+- Enclosure classification (enclosed vs partially enclosed) if large door openings; state assumption.
+
+## Building Plan Geometry (LARGE SINGLE-STORY RECTANGLE)
+- Overall: 300'-0" (X) x 200'-0" (Y), single story. Aspect ratio and diaphragm span are the point.
+- Column Grid: X = 6 bays @ 50'-0"; Y = 4 bays @ 50'-0". Interior columns are gravity-only (pinned).
+- OCBF braced bays: 2 per line, on all four perimeter walls (Grids 1, 7 for Y-load; Grids A, E for X-load).
+- Roof: flat with 3 ft parapet; RTU screen wells (snow-drift sources).
+
+## OCBF + Diaphragm Design Requirements
+- FLEXIBLE-diaphragm distribution: compute braced-line shears by tributary width (half-bay to each side), NOT by stiffness; the roof deck diaphragm shear (plf), chord force (M/depth), and collector drag to each braced bay must be designed (deck panel shear per SDI, chord = spandrel/edge member).
+- OCBF per AISC 341 F1: braces and connections for the amplified seismic load (Omega_0) OR the R=3.25 provisions; KL/r and width-thickness ductility limits for OCBF.
+- Roof uplift: design all roof-to-support and column-base/brace-base connections for NET WIND UPLIFT.
+- Snow drift at parapets and screen wells per ASCE 7-22 Ch. 7.
+
+## Member Sizing Rules
+- One joist/joist-girder size per bay type; one perimeter (chord/collector) member size per line; one column size.
+- Braces: one size per braced bay. All column bases pinned unless uplift/overturning requires a moment base (state).

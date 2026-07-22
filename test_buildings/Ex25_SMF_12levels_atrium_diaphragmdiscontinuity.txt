@@ -1,0 +1,44 @@
+Structural System - Special Steel Moment Frame (SMF), perimeter + one interior line.
+Frame type - Perimeter SMF; a large multi-story ATRIUM creates a big floor opening (diaphragm discontinuity) through Levels 2-7.
+Number of stories - 12
+Story heights - Level 1: 16 ft; Levels 2-12: 13 ft. Roof at 159 ft.
+Analysis procedure - MRSA; SDC D. Horizontal irregularity Type 3 (diaphragm discontinuity) at the atrium levels.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22.
+
+## Material Properties
+- SMF W-shapes, chord/collector members: ASTM A992, Fy = 50 ksi
+- Connection / continuity / doubler plates: ASTM A572 Grade 50
+- Floor system: composite - 3 1/4 in. NW concrete on 3 in. composite deck
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 85 psf (composite floor + superimposed) |
+| Cladding Load | 18 psf (curtain wall, incl. atrium skylight framing at roof) |
+| Floor Live Load | 50 psf office + 15 psf partitions; 100 psf atrium-edge balconies/corridors; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 1.00 g, SD1 = 0.58 g, Site Class D, Risk Category II, Ie = 1.0, SDC D
+- SMF: R = 8, Cd = 5.5, Omega_0 = 3; no height limit
+- HORIZONTAL IRREGULARITY TYPE 3 (diaphragm discontinuity): the atrium opening at Levels 2-7 removes > 50% of the enclosed diaphragm area over the atrium bays (and the open area exceeds 50% of the gross floor area at those levels along the atrium line). Screen and CLASSIFY; apply the consequences (25% increase to diaphragm/collector connection forces per Sec. 12.3.3.4; force transfer AROUND the opening).
+
+## Wind Design Data
+- V = 112 mph, Exposure B. Seismic governs; check drift under 10-yr service wind.
+
+## Building Plan Geometry (RECTANGLE with a LARGE INTERIOR ATRIUM OPENING)
+- Overall: 168'-0" (X) x 120'-0" (Y), uniform footprint all levels.
+- Column Grid: X = Grids 1-7 (6 bays @ 28'-0"); Y = Grids A-E (4 bays @ 30'-0").
+- ATRIUM OPENING: at Levels 2-7 the floor is OPEN over Grids 3-5 / B-D (56' x 60') - no slab, no framing (skylit atrium). Levels 1, 8-12 are full floors. The Level-8 floor is the atrium "lid."
+- SMF: perimeter all four faces + one interior N-S line at Grid 4 above Level 8 (Grid 4 is interrupted at the atrium below).
+- Roof: flat; glazed skylight over the atrium footprint (framed, lightweight).
+
+## SMF + Diaphragm-Discontinuity Design Requirements
+- Model the floor opening (present sets omit the atrium bays at Levels 2-7). Design the diaphragm to transfer story shear AROUND the opening: the sub-diaphragm segments each side, the chords along the opening edges (tension/compression = M/depth), and the COLLECTORS that drag shear across the reduced net section to the frames.
+- Apply the Type 3 25% increase (Sec. 12.3.3.4) to diaphragm-to-collector CONNECTION forces at the opening.
+- Check the reduced-width diaphragm segments beside the atrium for in-plane shear; verify the Level-8 transfer/"lid" diaphragm where the interior Grid 4 frame reconnects.
+- AISC 341 F: SCWB, panel-zone, RBS per A358 for the SMF.
+
+## Member Sizing Rules
+- One SMF beam size per level per frame; SMF columns change every 2 stories, never smaller below; splices 4 ft above floor.
+- Atrium-edge chords/collectors sized as their own group. SMF bases fixed; gravity columns pinned.

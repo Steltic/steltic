@@ -1,0 +1,47 @@
+Structural System - DUAL SYSTEM: Special Moment Frames (perimeter) + Special Concentrically Braced Frame core. Slender residential tower - WIND-GOVERNED.
+Frame type - Continuous SCBF core; perimeter SMF (>= 25% of V). Tall and slender (high aspect ratio) on a coastal high-wind site.
+Number of stories - 18
+Story heights - Level 1: 18 ft; Levels 2-18: 10 ft 6 in. Roof at 196.5 ft.
+Analysis procedure - MRSA for seismic; DYNAMIC (flexible-structure) wind procedure for wind. SDC C -> WIND governs LFRS strength AND serviceability.
+Design standards - AISC 360-22, AISC 341-22, AISC 358-22, ASCE 7-22 (Ch. 26-27 MWFRS, incl. flexible-structure gust effect).
+
+## Material Properties
+- SMF + SCBF W-shapes: ASTM A992, Fy = 50 ksi
+- HSS/built-up braces: ASTM A500 Grade C / A572, Fy = 50 ksi
+- Floor system: composite - 2 1/2 in. NW concrete on 2 in. deck (residential)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Dead Load | 70 psf (residential composite floor + superimposed) |
+| Cladding Load | 20 psf (unitized curtain wall) |
+| Floor Live Load | 40 psf residential; 100 psf lobby/amenity Level 1; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr) |
+
+## Seismic Design Data
+- SDS = 0.45 g, SD1 = 0.20 g, Site Class D, Risk Category II, Ie = 1.0, SDC C (MODERATE seismic)
+- Dual SMF + SCBF: R = 7, Cd = 5.5, Omega_0 = 2.5
+- At SDC C and this slenderness, WIND (not seismic) is expected to govern LFRS strength - the agent must run both and prove which governs each direction.
+
+## Wind Design Data (GOVERNING HAZARD)
+- Basic wind speed V = 140 mph (coastal, Risk Cat II), Exposure D (open water-adjacent).
+- Building is SLENDER: plan 90'-0" x 60'-0", height 196.5 ft -> aspect ratio ~3.3 (X) / ~2.2... in the WEAK plan direction (60 ft) H/B ~ 3.3; treat as a FLEXIBLE structure if fundamental frequency n1 < 1 Hz.
+- Compute the fundamental frequency; if n1 < 1 Hz use the FLEXIBLE-structure GUST-EFFECT FACTOR Gf (ASCE 7-22 Sec. 26.11.5), NOT the rigid Gf = 0.85.
+- Design the LFRS for MWFRS wind (both directions + torsional cases 26.9/27.3), and check OVERTURNING/foundation uplift from wind.
+- SERVICEABILITY: across-wind occupant-comfort ACCELERATION (1-yr and 10-yr MRI) vs a residential limit ~15-18 milli-g; and overall drift H/400-H/500 (10-yr). Across-wind/vortex-shedding may govern the upper-floor sizes.
+
+## Building Plan Geometry (SLENDER RECTANGLE)
+- Overall: 90'-0" (X) x 60'-0" (Y), uniform all levels (regular plan; slenderness is the point).
+- Column Grid: X = 3 bays @ 30'-0"; Y = 2 bays @ 30'-0".
+- SCBF core: two braced bays each direction at the central core (Grids 2-3 / B-C). Perimeter SMF: all four faces.
+
+## Dual + Wind-Governed Design Requirements
+- Prove the governing hazard PER DIRECTION with numbers (wind base shear + overturning vs seismic).
+- If wind governs strength, size the LFRS for wind but STILL apply the seismic DUCTILE DETAILING (SDC C dual: SCBF F2 + SMF/IMF detailing as required) - strength from wind, detailing from seismic.
+- Flexible-structure gust effect factor Gf from the computed n1, damping ratio (state assumption ~1.5-2% for serviceability, ~2.5% strength).
+- Occupant-comfort acceleration check reported with the assumed damping and MRI.
+- SMF resists >= 25% of the seismic V at every level (dual-system rule) even though wind governs.
+
+## Member Sizing Rules
+- SCBF core braces per story (change every 2 stories, never smaller below); one SMF beam per level per frame; columns change every 2 stories; splices 4 ft above floor.
+- SCBF + SMF bases fixed; gravity columns pinned.

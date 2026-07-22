@@ -1,0 +1,68 @@
+Structural System - Steel Special Moment Frame (SMF) with prequalified Reduced Beam Section (RBS) connections
+Frame type - Perimeter SMF
+Number of stories - 7
+Story heights - First story 22 ft 4 in; typical upper stories (2-7) 13 ft 4 in; roof at 102 ft 4 in
+Analysis procedure - Equivalent Lateral Force for preliminary design (MRSA may be required for final per ASCE 7 Table 12.6-1); SDC D
+Design standards - AISC 360, AISC 341, AISC 358, ASCE 7 
+
+## Material Properties
+- Wide-flange sections: **ASTM A992, Grade 50**
+- HSS: **ASTM A1085, Grade 50**
+- Plates: **ASTM A36**
+- Floor concrete: f'c = 3 ksi, lightweight; all other concrete: f'c = 4 ksi, normal weight
+- Floors: 3 1/4 in. lightweight concrete over composite metal deck
+
+## Seismic Design Parameters
+- Risk Category II
+- SDS = 1.0 g, SD1 = 0.6 g
+- Seismic Design Category: D
+- Steel SMF (ASCE 7 Table 12.2-1): R = 8, Overstrength Omega0 = 3, Cd = 5.5
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 68 psf (deck, beams, girders, fireproofing, ceiling, MEP, partitions) |
+| Roof Dead Load | 55 psf (roofing, insulation, deck, beams, girders, fireproofing, ceiling, MEP) |
+| Cladding Load | 25 psf of wall area (exterior wall cladding) |
+| Floor Live Load | 50 psf (office); reducible per IBC / ASCE 7 |
+| Roof Live Load | 25 psf |
+
+## Building Plan Geometry (text rendering of Figure 9.2-1)
+- Rectangular plan: 177 ft 4 in long (E-W, Gridlines A-H) by 127 ft 4 in wide (N-S, Gridlines 1-6).
+- 25 ft bays each way: 7 bays E-W (A-H) and 5 bays N-S (1-6); 1 ft 2 in slab overhang beyond the column lines at each edge (7 x 25 + 2 x 1'-2" = 177'-4"; 5 x 25 + 2 x 1'-2" = 127'-4").
+- Column grid: 8 lines (A-H) x 6 lines (1-6) = 48 columns. North is toward Gridline 1.
+- Building section (Figure 9.2-1): first story 22 ft 4 in, six upper stories at 13 ft 4 in
+- Elevators and stairs occupy the central three bays (the core).
+
+### Moment-Frame Layout (text rendering of Figures 9.2-1 / 9.2-2)
+- Special moment frames are on the building perimeter, on Gridlines A, H, 1, and 6.
+- Five bays of moment frame on each line:
+  - Lines A and H (N-S edges, 5 bays each, Gridlines 1-6): all 5 bays are moment-resisting.
+  - Lines 1 and 6 (E-W edges, 7 bays each, Gridlines A-H): 5 interior bays of the 7 bays are moment-resisting
+- Align the corner columns with the SMRF frame in the N-S direction.
+- All interior framing is gravity-only (simple connections).
+- Beam-to-column moment connections use prequalified Reduced Beam Section (RBS) per AISC 358.
+
+## Member Sizing (agent to determine specific sizes in the W categories below; section designations are the design output)
+- Use W14 for non-perimeter columns, all non-perimeter columns in the building are one size
+- Both SMF and non-SMF beams will be W21 (except the first floor which is W24), all beams on each storey are one size, beam sizes will vary on every storey
+- Use W24 for SMF columns and vary sizes up the building according to:
+Story	SMF Columns	
+1	A
+2	A
+3	A
+4	B
+5	B
+6	C
+7	D
+
+- Column splices at two-story intervals; column unbraced length = clear story height.
+- Base fixity - all bases fixed
+- Aim for max drift 1.75 to 2.0% (allowable story drift 0.020 h_sx, ASCE 7 Table 12.12-1, Risk Category II).
+
+## Panel Zone Design in the SMF frames
+- Joint panel zones designed per AISC 360, Equations J10-11 and J10-12; doubler plates where required.
+- Continuity plates aligned with beam flanges.
+
+## Moment Connections
+- Prequalified Reduced Beam Section (RBS) per AISC 358.

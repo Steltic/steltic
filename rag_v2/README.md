@@ -25,6 +25,17 @@ Collections the agent queries: `engineering_standards_A360` (primary spec),
 `engineering_standards_A303`, `steel_design_examples` (worked examples), plus OpenSees docs
 (`opensees_docs`-style collections) and `opensees_buildings_3d` (validated reference builds).
 
+## Downloadable OpenSees databases
+
+The five OpenSees collections (`opensees_buildings_3d`, `opensees_examples`,
+`opensees_building_templates`, `openseespy_documentation`, `opensees_documentation`) are published
+as `.jsonl.gz` dumps on the repo's [Releases page](https://github.com/Steltic/steltic/releases).
+Each dump carries its vectors AS-IS (embedded with **nomic-embed-text**, 768-dim) — nothing is
+re-embedded on load, but your query server must embed queries with the same model for the vectors
+to match. Load into a local Qdrant with:
+
+    venv/bin/python load_opensees.py osdump/*.jsonl.gz
+
 ## Scripts
 
 - `chunk_v2.py` — clause-aware chunking of specification text (keeps equations with their clause,

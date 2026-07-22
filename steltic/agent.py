@@ -548,6 +548,10 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
     if resume and conv_path.exists():
         try:
             messages = json.loads(conv_path.read_text(encoding="utf-8"))
+            for m in messages:              # heal empty assistant turns saved by older versions (provider 400s)
+                c = m.get("content")
+                if m.get("role") == "assistant" and (isinstance(c, str) and not c.strip()):
+                    m["content"] = None if m.get("tool_calls") else "(empty turn)"
             if brief:                       # a NEW instruction -> continue the SAME design interactively
                 messages.append({"role": "user", "content":
                     brief + "\n\n(Apply this change to the existing design: edit jobs/" + building +
@@ -630,7 +634,13 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
         if li or lo:
             cum_in += li; cum_out += lo
             yield {"type": "usage", "last_in": li, "last_out": lo, "cum_in": cum_in, "cum_out": cum_out}
-        assistant = {"role": "assistant", "content": out["content"]}
+        # Some providers (e.g. Moonshot/Kimi) reject assistant messages whose content is an EMPTY
+        # string ("must not be empty"). OpenAI's own API emits null content on tool-call turns, so
+        # mirror that; an empty turn with no tool calls gets a placeholder (it stays in history
+        # when the nudge below pushes past it).
+        _c = out["content"]
+        assistant = {"role": "assistant",
+                     "content": _c if (_c or "").strip() else (None if out["tool_calls"] else "(empty turn)")}
         if out["tool_calls"]:
             assistant["tool_calls"] = out["tool_calls"]
         messages.append(assistant)

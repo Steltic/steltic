@@ -57,17 +57,33 @@ Steltic binds to 127.0.0.1 and has **no authentication** — don't expose the po
 under your OS user-data dir (e.g. `%LOCALAPPDATA%\Steltic`, `~/.local/share/Steltic`); override
 with `DATA_DIR`.
 
-## Engineering-standards RAG (optional)
+## Engineering-standards, OpenSees & design-examples RAG (highly recommended)
 
-The agent can ground every capacity in retrieved AISC clauses via a RAG server. Three options:
+The hosted version of Steltic at [stelticai.com](https://stelticai.com) grounds the agent with RAG
+vector databases of AISC 360, 341 and 358 (2022), the AISC Steel Construction Manual Design
+Examples (V16.0, 168 worked examples), an examples database of validated OpenSees models, and two
+databases of the OpenSees documentation. The specifications and design examples ground the LLM in
+the current procedures; the OpenSees databases help it build the model — and when OpenSees throws
+errors, resolve them. Steltic's performance has been validated **with** these databases and will
+likely reduce without them.
 
-1. **None (default).** Leave `RAG_API_URL` empty — the agent relies on its own cited AISC knowledge.
-   Good models do respectably; grounded runs are better.
-2. **Bring your own server.** Set `RAG_API_URL` (+ optional `RAG_API_TOKEN`) to any server exposing
-   the small API described in [rag_v2/README.md](rag_v2/README.md), built from your own licensed
-   copies of the standards. The `rag_v2/` scripts are a starter kit for chunking + ingestion.
-3. **Hosted Steltic RAG.** A maintained, pre-built standards RAG. To get access, use the contact
-   details at [stelticai.com](https://stelticai.com).
+For copyright reasons the AISC-derived databases (360/341/358 and the Design Examples) are **not**
+included in this project. The OpenSees databases are freely downloadable from this repo's
+[Releases page](https://github.com/Steltic/steltic/releases) as portable `.jsonl.gz` dumps
+(pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant).
+
+Three options:
+
+1. **None (default — not recommended).** Leave `RAG_API_URL` empty — the agent relies on its own
+   cited AISC knowledge. Good models do respectably; grounded runs are better.
+2. **Bring your own server.** Run any server exposing the small API described in
+   [rag_v2/README.md](rag_v2/README.md): load the downloadable OpenSees databases, and build the
+   standards collections from your own licensed copies with the `rag_v2/` chunking + ingestion
+   starter kit. Then put the connection in the environment (or a `.env` next to where you launch):
+   `RAG_API_URL=http://your-server:8080/query` and, if your server enforces one, `RAG_API_TOKEN=...`.
+3. **Hosted Steltic RAG.** The maintained, pre-built full set (specs + design examples + OpenSees).
+   To get access, use the contact details at [stelticai.com](https://stelticai.com), then set the
+   provided `RAG_API_URL` + `RAG_API_TOKEN` in your environment.
 
 ## Repo map
 

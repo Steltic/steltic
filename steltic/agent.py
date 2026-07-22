@@ -68,7 +68,7 @@ TOOL_SPECS = [
           {"building": {"type": "string", "description": "building name -> jobs/<name>/"}}, []),
     _spec("search_engineering_standards",
           "Search the engineering RAG. Collections: engineering_standards_A360 (primary spec), "
-          "engineering_standards_A341 (seismic), engineering_standards_A358 (connections), engineering_standards_A303, "
+          "engineering_standards_A341 (seismic), engineering_standards_A358 (connections), "
           "and steel_design_examples (AISC worked examples -- query this ALONGSIDE A360 for each member/connection and "
           "mirror the example's method). When you know the exact provision, pass clause or chapter for a pinpoint lookup. "
           "Returns a 'disabled' note if no RAG is configured -- then rely on your own cited AISC knowledge.",

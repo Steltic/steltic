@@ -22,13 +22,15 @@ Optional `Authorization: Bearer $RAG_API_TOKEN`. Response: a JSON object with a 
 
 Collections the agent queries: `engineering_standards_A360` (primary spec),
 `engineering_standards_A341` (seismic), `engineering_standards_A358` (connections),
-`engineering_standards_A303`, `steel_design_examples` (worked examples), plus OpenSees docs
-(`opensees_docs`-style collections) and `opensees_buildings_3d` (validated reference builds).
+`steel_design_examples` (worked examples), `opensees_buildings_3d` (validated reference builds),
+`opensees_building_templates`, `openseespy_documentation` and `opensees_documentation`.
+Your server should return an **empty `results` list** (not an error) for a collection it doesn't
+have — a non-2xx response makes the agent pause the run as "RAG unreachable".
 
-## Downloadable OpenSees databases
+## Downloadable databases
 
-The five OpenSees collections (`opensees_buildings_3d`, `opensees_examples`,
-`opensees_building_templates`, `openseespy_documentation`, `opensees_documentation`) are published
+Five collections (`steel_design_examples`, `opensees_buildings_3d`, `opensees_building_templates`,
+`openseespy_documentation`, `opensees_documentation`) are published
 as `.jsonl.gz` dumps on the repo's [Releases page](https://github.com/Steltic/steltic/releases).
 Each dump carries its vectors AS-IS (embedded with **nomic-embed-text**, 768-dim) — nothing is
 re-embedded on load, but your query server must embed queries with the same model for the vectors

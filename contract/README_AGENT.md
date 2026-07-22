@@ -33,13 +33,10 @@ Embeddings are Nomic; phrase queries naturally (the retriever was built with a
 |---|---|---|
 | **`engineering_standards_A360`** | AISC 360-22 *Specification* (normative provisions + equations) | **Primary grounding** for every steel member/connection limit state |
 | `engineering_standards_A341` | AISC 341 *Seismic Provisions* | Seismic detailing/system requirements (SMF/SCBF/EBF/BRBF/dual), R-system rules |
-| `engineering_standards_AS100` (+ AS400/AS240/AS310/…) | AISI cold-formed steel | Only if cold-formed members are involved |
 | `engineering_standards_A358` | AISC 358 prequalified moment connections | Moment-connection detailing |
-| `engineering_standards_A303` | AISC 303 Code of Standard Practice | Tolerances (e.g. out-of-plumb 1/500 used in stability) |
 | **`steel_design_examples`** | AISC Design Examples (worked problems + answers) | Worked numeric examples & answer keys to mirror your calc |
 | **AISC Q&A database** (`aisc_qa_database/`, ingest as needed) | Our original Q&A solutions grounded in A360 | Extra worked, spec-grounded examples per chapter |
 | **`opensees_buildings_3d`** ← THIS LIBRARY | 40 validated 3D steel building models (MF/CBF/dual/EBF/BRBF/SPSW/podium/…; 1–40 storeys; SDC B–E; wind; irregularities) | **Retrieve the nearest whole-building model** to start from |
-| `opensees_examples` | 22 Ziemian 2D benchmark frames, validated vs published | 2D frame-level second-order behaviour + the proven modelling recipe |
 | `opensees_building_templates` | 2D parametric MF/CBF covering set + the AISC III-1 flagship | Parametric lateral-frame methodology, ASCE 7 ELF/RS/wind worked at building scale |
 | `openseespy_documentation`, `opensees_documentation` | OpenSeesPy/OpenSees command reference | Correct API for `rigidDiaphragm`, `mass`, `eigen`, `responseSpectrumAnalysis`, transforms, elements |
 | `bgscm16_steel_textbook`, `structural_analysis`, `statics_textbook`, `mechanics`, `materials` | Textbooks | Background theory when a provision/behaviour is unclear |
@@ -55,7 +52,7 @@ SD1, SDC, R) and wind (V, Exposure). These drive the `cfg` and every RAG query.
 **Phase 1 - Build the cfg + your builder.** Compose a `cfg` dict (Section 5 schema), using the engine's
 ready-made archetypes `engine3d.CFG` (B02..B40) as templates for realistic geometry/sections, and write
 `cfg["custom_build"] = f` to build the model -- read `example_build.py` for a complete worked reference AND retrieve
-at least one similar validated building from the examples RAG (`collection="opensees_buildings_3d"`, or `opensees_examples`;
+at least one similar validated building from the examples RAG (`collection="opensees_buildings_3d"`;
 if unavailable, proceed from `example_build.py`). Copy the structure (columns, girders in BOTH directions on every level,
 varied sections by group, rigid vs pinned joints via `add_beam(..., releases=...)`). Set each column's `strong_dir` from
 YOUR frame layout -- NOT example_build.py's placeholder -- and confirm strong-axis-in-plane in your RESOLVED FRAMING

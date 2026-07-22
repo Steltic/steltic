@@ -67,10 +67,13 @@ the current procedures; the OpenSees databases help it build the model — and w
 errors, resolve them. Steltic's performance has been validated **with** these databases and will
 likely reduce without them.
 
-For copyright reasons the AISC-derived databases (360/341/358 and the Design Examples) are **not**
-included in this project. The OpenSees databases are freely downloadable from this repo's
+For copyright reasons the vector databases of AISC 360, 341 and 358 are **not** open-sourced in
+this project. The rest are freely downloadable from this repo's
 [Releases page](https://github.com/Steltic/steltic/releases) as portable `.jsonl.gz` dumps
-(pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant).
+(pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant):
+`steel_design_examples` (168 original worked Q&A covering the AISC Design Examples scope),
+`opensees_buildings_3d` (40 validated 3D building models), `opensees_building_templates`, and the
+two OpenSees documentation sets.
 
 Three options:
 

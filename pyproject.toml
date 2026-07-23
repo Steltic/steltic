@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steltic"
-version = "0.1.1"
+version = "0.1.2"
 description = "Free, local AISC 360/341 steel-design agent: your LLM + OpenSees + stamped-style reports"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE", "DISCLAIMER.md"]
-requires-python = ">=3.10"
+# <3.13: openseespy ships compiled binaries built for CPython <=3.12 (its Windows wheel is
+# mis-tagged as universal and fails at import with "DLL load failed" on newer interpreters).
+requires-python = ">=3.10,<3.13"
 authors = [{ name = "Steltic" }]
 keywords = ["structural-engineering", "AISC", "steel-design", "opensees", "llm", "agent"]
 classifiers = [

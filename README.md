@@ -26,7 +26,9 @@ uv tool install steltic
 steltic                      # starts on http://127.0.0.1:8000 and opens your browser
 ```
 
-Or with pipx: `pipx install steltic`. Or from a checkout:
+Or with pipx: `pipx install steltic`. Steltic needs **Python 3.10–3.12** (openseespy's compiled
+binaries don't support newer interpreters yet) — uv picks a compatible one automatically; with
+pipx/pip, point them at a 3.12 interpreter. Or from a checkout:
 
 ```bash
 git clone <this repo> && cd steltic

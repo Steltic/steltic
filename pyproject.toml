@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steltic"
-version = "0.1.2"
+version = "0.1.3"
 description = "Free, local AISC 360/341 steel-design agent: your LLM + OpenSees + stamped-style reports"
 readme = "README.md"
 license = "MIT"
@@ -26,11 +26,17 @@ dependencies = [
     "httpx>=0.27",
     "itsdangerous>=2.1",
     "python-multipart>=0.0.9",
+    # Engine deps are CORE, not an extra: most users run the no-Docker subprocess executor, and a
+    # bare install that can't run OpenSees or render reports is a broken first experience.
+    "openseespy",
+    "numpy",
+    "scipy",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
-# For EXECUTOR=subprocess (no Docker): the engine runs in this same environment.
-engine = ["openseespy", "numpy", "scipy", "matplotlib"]
+# Backwards-compat alias (engine deps are now core); kept so `steltic[engine]` keeps working.
+engine = []
 
 [project.urls]
 Homepage = "https://stelticai.com"

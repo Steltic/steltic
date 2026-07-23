@@ -28,7 +28,9 @@ steltic                      # starts on http://127.0.0.1:8000 and opens your br
 
 Or with pipx: `pipx install steltic`. Steltic needs **Python 3.10–3.12** (openseespy's compiled
 binaries don't support newer interpreters yet) — uv picks a compatible one automatically; with
-pipx/pip, point them at a 3.12 interpreter. Or from a checkout:
+pipx/pip, point them at a 3.12 interpreter. The install includes the full engine
+(openseespy/numpy/scipy/matplotlib, ~400MB) so designs run out of the box without Docker. Or from
+a checkout:
 
 ```bash
 git clone <this repo> && cd steltic

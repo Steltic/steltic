@@ -51,6 +51,17 @@ the 36 built-in example briefs — and click **Design building**.
 Offline smoke test: set Model to `MOCK` — it drives the whole pipeline (sandbox, engine, OpenSees,
 report) with no LLM.
 
+**Windows note:** if launching fails with *"Application Control policy has blocked this file"* or
+*"os error 4551"*, Windows **Smart App Control** is blocking uv's downloaded (unsigned) Python.
+Fix: install the signed python.org build and point uv at it —
+
+```powershell
+winget install Python.Python.3.12       # then open a new terminal
+uv tool uninstall steltic
+$env:UV_PYTHON_PREFERENCE = "only-system"
+uv tool install --python 3.12 steltic
+```
+
 ## Sandbox
 
 The agent's Python only ever executes in a sandbox. `EXECUTOR` (env / `.env`) picks the mode:

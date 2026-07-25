@@ -79,7 +79,7 @@ this project. The rest are freely downloadable from this repo's
 `opensees_buildings_3d` (40 validated 3D building models), `opensees_building_templates`, and the
 two OpenSees documentation sets.
 
-Three options:
+Two options:
 
 1. **None (default — not recommended).** Leave `RAG_API_URL` empty — the agent relies on its own
    cited AISC knowledge. Good models do respectably; grounded runs are better.
@@ -88,9 +88,6 @@ Three options:
    standards collections from your own licensed copies with the `rag_v2/` chunking + ingestion
    starter kit. Then put the connection in the environment (or a `.env` next to where you launch):
    `RAG_API_URL=http://your-server:8080/query` and, if your server enforces one, `RAG_API_TOKEN=...`.
-3. **Hosted Steltic RAG.** The maintained, pre-built full set (specs + design examples + OpenSees).
-   To get access, use the contact details at [stelticai.com](https://stelticai.com), then set the
-   provided `RAG_API_URL` + `RAG_API_TOKEN` in your environment.
 
 ## Repo map
 

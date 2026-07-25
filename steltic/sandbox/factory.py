@@ -9,13 +9,19 @@ def _docker():
 
 def _sub(log=print):
     # The subprocess executor runs the engine in THIS interpreter's environment -- verify the
-    # engine deps are importable NOW so a broken install fails loudly at boot, not mid-design.
-    import importlib.util
-    missing = [m for m in ("openseespy", "numpy", "scipy", "matplotlib")
-               if importlib.util.find_spec(m) is None]
-    if missing:
-        log(f"[sandbox] WARNING: missing engine packages: {', '.join(missing)} -- runs WILL fail. "
-            f"Fix: uv tool install --force steltic   (or: pip install {' '.join(missing)})")
+    # engine deps actually IMPORT now (present is not enough: openseespy's compiled module can
+    # fail to load on an unsupported interpreter), so a broken install fails loudly at boot.
+    problems = []
+    for m in ("openseespy.opensees", "numpy", "matplotlib"):
+        try:
+            __import__(m)
+        except Exception as e:
+            problems.append(f"{m} ({type(e).__name__}: {str(e)[:90]})")
+    if problems:
+        log("[sandbox] WARNING: engine packages broken or missing -- runs WILL fail:")
+        for p in problems:
+            log(f"[sandbox]   - {p}")
+        log("[sandbox] Fix: uv tool uninstall steltic && uv tool install --python 3.12 steltic")
     return SubprocessExecutor(config.STEEL_ENGINE)
 
 

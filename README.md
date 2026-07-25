@@ -24,13 +24,15 @@ browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory,
 With [uv](https://docs.astral.sh/uv/) (recommended — no Python setup needed):
 
 ```bash
-uv tool install steltic
+uv tool install --python 3.12 steltic
 steltic                      # starts on http://127.0.0.1:8000 and opens your browser
 ```
 
-Or with pipx: `pipx install steltic`. Steltic needs **Python 3.10–3.12** (openseespy's compiled
-binaries don't support newer interpreters yet) — uv picks a compatible one automatically; with
-pipx/pip, point them at a 3.12 interpreter. The install includes the full engine
+The `--python 3.12` matters: openseespy (the analysis engine) ships compiled binaries for
+**Python 3.10–3.12 only**, and uv ignores the package's upper Python bound — without the flag it
+may install onto a newer interpreter where the engine can't load (Steltic will tell you and refuse
+to start). uv downloads 3.12 automatically if you don't have it. Or with pipx (which respects the
+bound): `pipx install --python 3.12 steltic`. The install includes the full engine
 (openseespy/numpy/scipy/matplotlib, ~400MB) so designs run out of the box without Docker. Or from
 a checkout:
 

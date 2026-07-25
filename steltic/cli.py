@@ -22,6 +22,19 @@ def _load_dotenv(path: pathlib.Path):
 
 
 def main():
+    import sys
+    # HARD GUARD: openseespy ships compiled binaries for CPython 3.10-3.12 only (its Windows pyd
+    # links python312.dll). pyproject pins requires-python <3.13, but uv IGNORES upper-bound caps,
+    # so an install can land on a newer interpreter and fail cryptically mid-design. Fail loud NOW.
+    if sys.version_info >= (3, 13):
+        v = sys.version.split()[0]
+        print(f"[steltic] Python {v} is not supported: openseespy (the analysis engine) ships "
+              "compiled binaries for Python 3.10-3.12 only, and designs would fail mid-run.")
+        print("[steltic] Fix (one time):")
+        print("[steltic]   uv tool uninstall steltic")
+        print("[steltic]   uv tool install --python 3.12 steltic")
+        raise SystemExit(1)
+
     ap = argparse.ArgumentParser(prog="steltic", description="Steltic -- local AISC steel-design agent")
     ap.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1; do NOT expose publicly)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))

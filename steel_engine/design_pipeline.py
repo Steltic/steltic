@@ -27,15 +27,24 @@ def combos(cfg):
     NF = len(cfg["heights"]); Bx = cfg["NX"]*cfg["SX"]; By = cfg["NY"]*cfg["SY"]
     T, *_ = E.modal(cfg, min(3*NF, 12)); _, V, Tu, Ta, kk, Fx, W = E.elf(cfg, T[0])
     Ev = 0.2*SDS
-    Lf = 1.0 if cfg.get("L_floor", 50.0) > 100.0 else 0.5   # ASCE 7-22 §2.3.6: L factor 0.5 when Lo<=100 psf
+    # ASCE 7-22 §2.3.1 Exception 1 / §2.3.6 Exception 1: companion live factor 0.5 only where
+    # Lo <= 100 psf AND the occupancy is not a garage or place of public assembly (else 1.0).
+    # cfg['garage'] / cfg['public_assembly'] are optional, default False.
+    Lf = 1.0 if (cfg.get("L_floor", 50.0) > 100.0 or cfg.get("garage", False)
+                 or cfg.get("public_assembly", False)) else 0.5
     Om0 = s.get("Om0", 2.0)
+    # roof load is snow when declared (E.floor_roofLrS returns S, else Lr). ASCE 7-22 factors:
+    # principal 1.0S / 1.6Lr (combo 3a); companion 0.3S / 0.5Lr (combos 2a/4a); seismic 0.15S (§2.3.6).
+    snow = float(cfg.get("snow", 0) or 0)
+    rl = "S" if snow > 0 else "Lr"
+    fR_pr, fR_co = (1.0, 0.3) if snow > 0 else (1.6, 0.5)
     # cases are 6-tuples: (label, fD, fL, fLr, lateral, col_only). col_only cases (Om0 overstrength)
     # are applied to columns only (capacity-protected members).
     cases = []
     cases.append(("1.4D", 1.4, 0.0, 0.0, {}, False))
-    cases.append(("1.2D+1.6L+0.5Lr", 1.2, 1.6, 0.5, {}, False))
-    cases.append(("1.2D+1.6Lr+0.5L", 1.2, 0.5, 1.6, {}, False))  # ASCE 7-22 combo 3: 1.6(Lr or S) governs
-                                                                 # roof/Lr-controlled members (L companion 0.5)
+    cases.append((f"1.2D+1.6L+{fR_co}{rl}", 1.2, 1.6, fR_co, {}, False))
+    cases.append((f"1.2D+{fR_pr}{rl}+{Lf}L", 1.2, Lf, fR_pr, {}, False))  # ASCE 7-22 combo 3a: 1.6Lr or
+                                                                 # 1.0S governs roof-controlled members
     def Elat(dirn, sgn, acc, fac):
         lat = {}
         for k in range(1, NF+1):
@@ -44,12 +53,13 @@ def combos(cfg):
             mz = acc*0.05*B*(fx if dirn == "X" else fy)
             lat[k] = (fac*sgn*fx, fac*sgn*fy, fac*sgn*mz)
         return lat
-    fS = 0.2 if cfg.get("snow", 0) > 0 else 0.0
+    fS = 0.15 if snow > 0 else 0.0                      # §2.3.6 combo 6 companion snow = 0.15S
+    _sS = "+0.15S" if snow > 0 else ""
     # standard seismic (rho E), both dirs, +/-, +/- accidental torsion
     for dirn in ("X", "Y"):
         for sgn in (1, -1):
             for acc in (1, -1):
-                cases.append((f"(1.2+0.2SDS)D+rhoE{dirn}{'+' if sgn>0 else '-'}t{'+' if acc>0 else '-'}+L+0.2S",
+                cases.append((f"(1.2+0.2SDS)D+rhoE{dirn}{'+' if sgn>0 else '-'}t{'+' if acc>0 else '-'}+{Lf}L{_sS}",
                               1.2+Ev, Lf, fS, Elat(dirn, sgn, acc, rho), False))
                 cases.append((f"(0.9-0.2SDS)D+rhoE{dirn}{'+' if sgn>0 else '-'}t{'+' if acc>0 else '-'}",
                               0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, acc, rho), False))
@@ -59,7 +69,7 @@ def combos(cfg):
     if E.is_braced(cfg):
         for dirn in ("X", "Y"):
             for sgn in (1, -1):
-                cases.append((f"(1.2+0.2SDS)D+Om0*E{dirn}{'+' if sgn>0 else '-'}+L+0.2S [col]",
+                cases.append((f"(1.2+0.2SDS)D+Om0*E{dirn}{'+' if sgn>0 else '-'}+{Lf}L{_sS} [col]",
                               1.2+Ev, Lf, fS, Elat(dirn, sgn, 0, Om0), True))
                 cases.append((f"(0.9-0.2SDS)D+Om0*E{dirn}{'+' if sgn>0 else '-'} [col]",
                               0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, 0, Om0), True))
@@ -68,7 +78,8 @@ def combos(cfg):
             wf = E.wind_forces(cfg, dirn)
             for sgn in (1, -1):
                 latW = {k: (sgn*wf[k], 0.0, 0.0) if dirn == "X" else (0.0, sgn*wf[k], 0.0) for k in wf}
-                cases.append((f"1.2D+1.0W{dirn}{'+' if sgn>0 else '-'}+L+0.5Lr", 1.2, 0.5, 0.5, latW, False))
+                cases.append((f"1.2D+1.0W{dirn}{'+' if sgn>0 else '-'}+{Lf}L+{fR_co}{rl}",
+                              1.2, Lf, fR_co, latW, False))
                 cases.append((f"0.9D+1.0W{dirn}{'+' if sgn>0 else '-'}", 0.9, 0.0, 0.0, latW, False))
     return cases
 
@@ -248,23 +259,9 @@ def design(name, outdir=None):
             num = sum(Fxq[i] for i in range(k, NFq + 1)); den = sum(wlev[i] for i in range(k, NFq + 1))
             Fpx[k] = min(max(num / den * wlev[k], 0.2 * SDSq * Ieq * wlev[k]), 0.4 * SDSq * Ieq * wlev[k])
         Fp_max = max(Fpx.values())
-        if pir.get("reentrant") or pir.get("setback"):
-            Om0q = float(cfg["seis"].get("Om0", 2.5) or 2.5)
-            bump = 1.25 if pir.get("reentrant") else 1.0
-            pkg["connections"].append({
-                "id": "collector-irregularity-lines", "type": "collector / drag strut (SEEDED - REQUIRED)",
-                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Om0": Om0q,
-                           "increase_12_3_3_4": bump,
-                           "P_basis_kip": round(bump * Om0q * Fp_max * 0.5, 0)},
-                "design_basis": "SEEDED because the footprint screen found %s: collectors on the "
-                                "re-entrant/setback/transfer lines are a REQUIRED deliverable. Design "
-                                "with the OVERSTRENGTH combinations (ASCE 7-22 12.10.2.1)%s. Refine the "
-                                "line share from your diaphragm geometry; fill limit_state/cited/"
-                                "capacity/DC like any other connection." % (
-                                    "/".join(k for k in ("reentrant", "setback") if pir.get(k)),
-                                    " + the 25%% Type-2 increase (12.3.3.4)" if pir.get("reentrant") else ""),
-                "limit_state": None, "cited": None, "capacity": {}, "DC": None})
-        # story-stiffness soft-story screen (both directions) + torsion ratio
+        # story-stiffness soft-story screen (both directions) + torsion ratio -- computed BEFORE the
+        # collector seeding so a Type 1 torsional irregularity (TIR screen > 1.2) can trigger the
+        # 12.3.3.5 25% increase there
         sxq = E.static_lateral(cfg, Fxq, "X"); syq = E.static_lateral(cfg, Fxq, "Y")
         def _kratio(s_):
             dr = s_[2]
@@ -278,9 +275,37 @@ def design(name, outdir=None):
                ("Type 1b EXTREME soft story (PROHIBITED SDC E/F, 12.3.3.1)"
                 if min(kx, ky) < 0.60 or min(kx3, ky3) < 0.70 else "Type 1a soft story"))
         tr = max(sxq[4], syq[4])
-        tcls = ("none" if tr <= 1.2 else ("Type 1b EXTREME torsional (PROHIBITED SDC E/F)" if tr > 1.4
-                else "Type 1a torsional"))
+        # 7-22 Table 12.3-1/-1a: SINGLE Type 1 torsional irregularity keyed to the TIR with
+        # cumulative tiers >1.2 / >1.4 / >1.6 (no 1a/1b split, no SDC E/F prohibition). The engine
+        # ratio is a per-story DRIFT-based screen (the Eq. 12.3-2 TIR basis; static_lateral).
+        tcls = ("none" if tr <= 1.2 else
+                ("Type 1 torsional, TIR screen %.2f (>1.6 tier)" % tr if tr > 1.6 else
+                 "Type 1 torsional, TIR screen %.2f (>1.4 tier)" % tr if tr > 1.4 else
+                 "Type 1 torsional, TIR screen %.2f (>1.2 tier)" % tr))
         Ax = round(min((tr / 1.2) ** 2, 3.0), 2) if tr > 1.2 else 1.0
+        # 12.3.3.5 (SDC D-F): 25% diaphragm-force increase for horizontal Type 1 (TIR>1.2),
+        # 2 (re-entrant), 3, 4 (out-of-plane offset) or vertical Type 3. Type 4 is not auto-screened
+        # here -- declare it via the collector design if present.
+        tors_trig = tr > 1.2
+        if pir.get("reentrant") or pir.get("setback") or tors_trig:
+            Om0q = float(cfg["seis"].get("Om0", 2.5) or 2.5)
+            bump = 1.25 if (pir.get("reentrant") or tors_trig) else 1.0
+            pkg["connections"].append({
+                "id": "collector-irregularity-lines", "type": "collector / drag strut (SEEDED - REQUIRED)",
+                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Om0": Om0q,
+                           "increase_12_3_3_5": bump,
+                           "P_basis_kip": round(bump * Om0q * Fp_max * 0.5, 0)},
+                "design_basis": "SEEDED because the screen found %s: collectors on the "
+                                "re-entrant/setback/transfer lines are a REQUIRED deliverable. Design "
+                                "with the OVERSTRENGTH combinations (ASCE 7-22 12.10.2.1)%s. Refine the "
+                                "line share from your diaphragm geometry; fill limit_state/cited/"
+                                "capacity/DC like any other connection." % (
+                                    "/".join(k for k, on in (("reentrant", pir.get("reentrant")),
+                                                             ("setback", pir.get("setback")),
+                                                             ("torsional TIR>1.2", tors_trig)) if on),
+                                    " + the 25%% increase (12.3.3.5: Type 1 torsional / Type 2 "
+                                    "re-entrant / Type 4)" if bump > 1.0 else ""),
+                "limit_state": None, "cited": None, "capacity": {}, "DC": None})
         pkg["framework_screen"] = {
             "note": "FRAMEWORK-COMPUTED irregularity screen -- the agent RESPONDS to these (classify "
                     "consequences, apply rho/Ax/25% collector increases as required); do not re-derive.",

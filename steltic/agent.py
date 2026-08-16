@@ -397,6 +397,33 @@ def _stream_chat(base_url, api_key, model, messages, max_tok, reasoning=None, ca
             raise LLMHTTPError(f"LLM API {resp.status_code}: {body}", retryable=retryable)
         if r is None:
             raise LLMHTTPError("LLM API 400: could not satisfy the model's parameter requirements", retryable=False)
+        # Stop watchdog (2026-08-12): the per-line cancel check below only runs when the provider
+        # SENDS something -- a model 'thinking' silently leaves the socket open and generation
+        # (and billing) running after Stop. This thread polls the cancel flag every second and
+        # force-closes the response: the provider sees the disconnect and stops, and the reader
+        # below unwinds through UserStop.
+        _watch_done = None
+        if cancel:
+            import threading as _th
+            _watch_done = _th.Event()
+            def _stop_watch():
+                while not _watch_done.wait(1.0):
+                    if cancel():
+                        # socket.shutdown() is the only call that WAKES a reader blocked in
+                        # recv() (close() from another thread does not, POSIX); fall back to
+                        # close() if the transport doesn't expose the socket.
+                        try:
+                            _ns = r.extensions.get("network_stream")
+                            _sock = _ns.get_extra_info("socket") if _ns else None
+                            if _sock is not None:
+                                import socket as _sk
+                                _sock.shutdown(_sk.SHUT_RDWR)
+                        except Exception:
+                            pass
+                        try: r.close()
+                        except Exception: pass
+                        return
+            _th.Thread(target=_stop_watch, daemon=True).start()
         try:
             for line in r.iter_lines():
                 if cancel and cancel():
@@ -437,7 +464,15 @@ def _stream_chat(base_url, api_key, model, messages, max_tok, reasoning=None, ca
                         slot["arguments"] += fn["arguments"]
                 if ch.get("finish_reason"):
                     finish = ch["finish_reason"]
+        except UserStop:
+            raise
+        except Exception:
+            if cancel and cancel():      # reader died because the watchdog closed the socket
+                raise UserStop()
+            raise
         finally:
+            if _watch_done is not None:
+                _watch_done.set()
             r.close()
     _tail = think.flush()                                  # emit any held-back partial-tag tail at stream end
     if _tail and _tail[1]:

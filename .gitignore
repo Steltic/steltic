@@ -27,3 +27,4 @@ build/
 *.bak3
 *.patch
 SCOPING.md
+dist_release/

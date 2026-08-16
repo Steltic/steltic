@@ -311,14 +311,29 @@ def _Llev(cfg, k):
     if by and k in by: return by[k]
     return cfg["L_floor"]
 
+def _is_storage(cfg, k):
+    """Level k is a storage floor: cfg['storage']=True (all floors) or k in cfg['storage_levels']
+    (1-based story indices). Both keys optional, default False/absent."""
+    if cfg.get("storage"): return True
+    lv = cfg.get("storage_levels")
+    return bool(lv) and k in {int(i) for i in lv}
+
 def floor_w(cfg,k):
+    """Effective seismic weight of level k (ASCE 7-22 sec.12.7.2): dead + cladding + 25% of the
+    floor live where the area is storage (item 1) + 15% of the uniform design snow load where the
+    flat-roof snow load pf exceeds 45 psf (item 4)."""
     NF=len(cfg["heights"]); roof=(k==NF)
     d=_Dlev(cfg,k,roof)
     w=d*floor_area_ft2(cfg,k)/1000.0
     th=cfg["heights"][k-1]/12.0
     th=th if not roof else th/2
     w+=cfg["clad"]*perim_ft(cfg,k)*th/1000.0
-    if roof: w+=0.2*cfg.get("snow",0.0)*floor_area_ft2(cfg,k)/1000.0
+    if roof:
+        snow=cfg.get("snow",0.0)
+        if snow>45.0:                          # 12.7.2 item 4: 15% of snow ONLY where pf > 45 psf
+            w+=0.15*snow*floor_area_ft2(cfg,k)/1000.0
+    elif _is_storage(cfg,k):                   # 12.7.2 item 1: >=25% of storage floor live in W
+        w+=0.25*_Llev(cfg,k)*floor_area_ft2(cfg,k)/1000.0
     w+=cfg.get("extra_mass_floors",{}).get(k,0.0)*floor_area_ft2(cfg,k)/1000.0
     return w
 
@@ -372,6 +387,7 @@ def _model_key(cfg):
     sig = (ele, tuple(cfg.get("heights", [])), cfg.get("NX"), cfg.get("NY"), cfg.get("SX"),
            cfg.get("SY"), str(cfg.get("base", "fixed")), cfg.get("D_floor"), cfg.get("D_roof"),
            cfg.get("clad"), cfg.get("L_floor"), cfg.get("Lr"), cfg.get("snow"),
+           bool(cfg.get("storage")), tuple(cfg.get("storage_levels") or ()),   # 12.7.2 storage live in W
            tuple(sorted((cfg.get("extra_mass_floors") or {}).items())),
            tuple(sorted((cfg.get("seis") or {}).items())))
     return hashlib.md5(repr(sig).encode()).hexdigest()
@@ -544,16 +560,53 @@ def static_lateral(cfg,Fx,direction,accidental=False):
     for k in range(1,NF+1): dr.append((disp[k]-prev)/cfg["heights"][k-1]); prev=disp[k]
     ops.reactions()
     Rs=sum(ops.nodeReaction(ntag(i,j,0),di+1) for (i,j) in info["present"][0])
-    # torsion ratio at top floor
-    pts=info["present"][NF]; SXp,SYp=cfg["SX"],cfg["SY"]
-    if direction=="X":
-        ys=[j*SYp for i,j in pts]; ycm=info["cm"][NF][1]
-        dd=[disp[NF]-rz[NF]*(y-ycm) for y in ys]
-    else:
-        xs=[i*SXp for i,j in pts]; xcm=info["cm"][NF][0]
-        dd=[disp[NF]+rz[NF]*(x-xcm) for x in xs]
-    davg=disp[NF]; tratio=max(abs(d) for d in dd)/abs(davg) if abs(davg)>1e-12 else 1.0
+    # Torsional Irregularity Ratio screen (ASCE 7-22 Table 12.3-1 Type 1 / Eq. 12.3-2): ratio of
+    # story DRIFT at the diaphragm edge to the story drift at the centre of mass, worst over ALL
+    # stories (7-22 keys the TIR to story drifts at the ends, not total displacements; with a rigid
+    # diaphragm the CM drift equals the two-edge average, so this is Dmax/Davg).
+    SXp,SYp=cfg["SX"],cfg["SY"]; tratio=1.0; pd_=0.0; pr_=0.0
+    for k in range(1,NF+1):
+        pts=info["present"][k]
+        ddr=disp[k]-pd_; rdr=rz[k]-pr_; pd_=disp[k]; pr_=rz[k]
+        if abs(ddr)<=1e-12: continue
+        if direction=="X":
+            ys=[j*SYp for i,j in pts]; ycm=info["cm"][k][1]
+            edge=max(abs(y-ycm) for y in ys)
+        else:
+            xs=[i*SXp for i,j in pts]; xcm=info["cm"][k][0]
+            edge=max(abs(x-xcm) for x in xs)
+        tratio=max(tratio,(abs(ddr)+abs(rdr)*edge)/abs(ddr))
     return ok,disp,dr,Rs,tratio
+
+
+def sdc_of(cfg):
+    """Seismic Design Category for a cfg: cfg['sdc'] if declared, else derived via the canonical
+    ASCE 7-22 sec.11.6 implementation in preflight.asce_sdc (Tables 11.6-1/-2 incl. the Risk
+    Category IV column and the S1 >= 0.75 -> E/F override)."""
+    from preflight import sdc_of_cfg
+    return sdc_of_cfg(cfg)
+
+
+def _mf_only(cfg):
+    """True when the SFRS is a moment-frame-only system (SMF/IMF/OMF family, not dual): declared
+    cfg['system'] wins; otherwise a model with no braces is taken as moment-frame-only."""
+    sysname = str(cfg.get("system") or "").lower()
+    if sysname:
+        return (any(k in sysname for k in ("smf", "imf", "omf")) or "moment" in sysname) \
+               and "dual" not in sysname
+    return not is_braced(cfg)
+
+
+def drift_allowable(cfg):
+    """(allowable story drift ratio, rho_applied): cfg['drift_limit'] (Table 12.12-1 value,
+    default 0.020), divided by the redundancy factor rho for a moment-frame-only SFRS in SDC
+    D/E/F per ASCE 7-22 sec.12.12.1.1 (Delta <= Delta_a/rho). rho = cfg['rho'], the same value
+    used in the load combinations (default 1.3)."""
+    dl = float(cfg.get("drift_limit", 0.020) or 0.020)
+    if sdc_of(cfg) in ("D", "E", "F") and _mf_only(cfg):
+        rho = float(cfg.get("rho", 1.3) or 1.3)
+        return dl / rho, True
+    return dl, False
 
 
 def _drift_env(cfg, drifts):
@@ -571,7 +624,7 @@ def run(cfg):
     Cs,V,Tu,Ta,kk,Fx,W=elf(cfg,T[0])
     sx=static_lateral(cfg,Fx,"X"); sy=static_lateral(cfg,Fx,"Y")
     mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2])
-    Cd=cfg["seis"]["Cd"]; Ie=cfg["seis"]["Ie"]            # ASCE 7-22 Eq.12.8-15 design drift
+    Cd=cfg["seis"]["Cd"]; Ie=cfg["seis"]["Ie"]            # ASCE 7-22 Eq.12.8-16 design drift
     mdx=Cd*mde_x/Ie; mdy=Cd*mde_y/Ie
     cumX=sum(eX); cumY=sum(eY)
     chk={}
@@ -579,17 +632,20 @@ def run(cfg):
     chk["stability"]=min(w2)>0
     chk["period"]=0.5*Ta<=T[0]<=3*Ta
     chk["modalmass_X"]=cumX>=0.90; chk["modalmass_Y"]=cumY>=0.90
-    dl=cfg.get("drift_limit",0.020)
+    dl,_dlrho=drift_allowable(cfg)   # Table 12.12-1 limit, /rho for MF-only SDC D-F (12.12.1.1)
     chk["drift_X"]=0<mdx<dl; chk["drift_Y"]=0<mdy<dl
     chk["baseshear_X"]=abs(abs(sx[3])-V)<=1e-3*V; chk["baseshear_Y"]=abs(abs(sy[3])-V)<=1e-3*V
     out=dict(T1=T[0],T2=T[1],T3=T[2],Ta=Ta,Cs=Cs,V=V,W=W,Tu=Tu,k=kk,cumX=cumX,cumY=cumY,
              mdx=mdx,mdy=mdy,roofX=sx[1][NF],roofY=sy[1][NF],tratioX=sx[4],tratioY=sy[4])
+    if _dlrho: out["drift_limit_rho"]=dl
     if "RS" in cfg.get("analyses",[]):
+        # ASCE 7-22 sec.12.9.1.4.1: where the modal base shear Vt < V (ELF), scale forces by V/Vt
+        # -- i.e. the MRSA design base shear is the FULL 100% of V (the 7-16 85% floor is deleted).
         VrsX=rs_baseshear(cfg,T,eX,eY,Mtot,"X"); VrsY=rs_baseshear(cfg,T,eX,eY,Mtot,"Y")
         out["VrsX"]=VrsX; out["VrsY"]=VrsY
-        out["VrsX_scaled"]=max(VrsX,0.85*V); out["VrsY_scaled"]=max(VrsY,0.85*V)
-        chk["rs_X_ge_85pct"]=out["VrsX_scaled"]>=0.85*V-1e-6
-        chk["rs_Y_ge_85pct"]=out["VrsY_scaled"]>=0.85*V-1e-6
+        out["VrsX_scaled"]=max(VrsX,1.00*V); out["VrsY_scaled"]=max(VrsY,1.00*V)
+        chk["rs_X_ge_100pct"]=out["VrsX_scaled"]>=1.00*V-1e-6
+        chk["rs_Y_ge_100pct"]=out["VrsY_scaled"]>=1.00*V-1e-6
     if cfg.get("torsion_check"):
         sxa=static_lateral(cfg,Fx,"X",accidental=True)
         out["tratioX_acc"]=sxa[4]                          # B4: advisory (irregularity + Ax handled in report Ch.2)
@@ -615,8 +671,11 @@ D=dict(D_floor=75.0,D_roof=60.0,clad=15.0,L_floor=50.0)
 def seis(SDS,SD1,S1,R,Ct,x,Cu,Ie=1.0,Cd=None,Om0=None):
     # Cd, Om0 (overstrength) per ASCE 7-22 Table 12.2-1, defaulted by R for the common steel
     # SFRS here (SMF/dual R8/R7, SCBF R6, IMF R4.5, OCBF R3.25, "not detailed" R3). Systems whose
-    # Cd/Om0 differ from the R-default (EBF, BRBF, special plate shear wall) pass them explicitly.
+    # Cd/Om0 differ from the R-default (EBF, BRBF) pass them explicitly. A special plate shear
+    # wall (the ONLY R=7 steel system with Cd=6 in Table 12.2-1) defaults to its tabulated
+    # Om0 = 2.0 (row B.27), not the R=7 dual-system 2.5.
     if Cd  is None: Cd ={8:5.5,7:5.5,6:5.0,4.5:4.0,3.25:3.25,3:3.0}.get(R,R)
+    if Om0 is None and R==7 and Cd==6.0: Om0=2.0   # SPSW: Table 12.2-1 Om0 = 2.0
     if Om0 is None: Om0={8:3.0,7:2.5,6:2.0,4.5:3.0,3.25:2.0,3:3.0}.get(R,2.5)
     return dict(SDS=SDS,SD1=SD1,S1=S1,R=R,Ct=Ct,x=x,Cu=Cu,Ie=Ie,Cd=Cd,Om0=Om0,TL=8.0)
 def Lplan(k,NX,NY): return {(i,j) for i in range(NX+1) for j in range(NY+1) if not (i>NX//2 and j>NY//2)}
@@ -865,8 +924,9 @@ def run_one(name):
     else: FxX=Fx; FxY=Fx; Vx=Vy=V
     sx=static_lateral(cfg,FxX,"X"); sy=static_lateral(cfg,FxY,"Y")
     _cr_tr=max(sx[4],sy[4])                                # B5: centric-load torsion ratio (~1.0 if symmetric)
-    mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2]); cumX=sum(eX); cumY=sum(eY); dl=cfg.get("drift_limit",0.020)
-    # ASCE 7-22 Eq. 12.8-15: design story drift = Cd*delta_elastic/Ie (seismic only; wind drift not amplified)
+    mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2]); cumX=sum(eX); cumY=sum(eY)
+    dl,_dlrho=drift_allowable(cfg)   # Table 12.12-1 limit, /rho for MF-only SDC D-F (12.12.1.1)
+    # ASCE 7-22 Eq. 12.8-16: design story drift = Cd*delta_elastic/Ie (seismic only; wind drift not amplified)
     Cd=cfg["seis"]["Cd"]; Ie=cfg["seis"]["Ie"]; amp=1.0 if gov=="wind" else Cd/Ie
     mdx=amp*mde_x; mdy=amp*mde_y
     chk={}
@@ -886,9 +946,10 @@ def run_one(name):
     chk["model_declared"]=_decl_ok; chk["model_consistent"]=_cons_ok
     if _mmsg: extra["model_warning"]=_mmsg
     if "RS" in cfg.get("analyses",[]):
+        # 7-22 sec.12.9.1.4.1: MRSA forces scale to the FULL ELF base shear V (Vt < V -> x V/Vt)
         VrsX=rs_baseshear(cfg,T,eX,eY,Mtot,"X"); VrsY=rs_baseshear(cfg,T,eX,eY,Mtot,"Y")
         extra["VrsX/V"]=VrsX/V; extra["VrsY/V"]=VrsY/V
-        chk["rs_X"]=max(VrsX,0.85*V)>=0.85*V-1e-6; chk["rs_Y"]=max(VrsY,0.85*V)>=0.85*V-1e-6
+        chk["rs_X"]=max(VrsX,1.00*V)>=1.00*V-1e-6; chk["rs_Y"]=max(VrsY,1.00*V)>=1.00*V-1e-6
     if cfg.get("torsion_check"):
         if NF>=30:
             tr=sx[4]
@@ -897,12 +958,15 @@ def run_one(name):
             if NF>=18: tr=sxa[4]
             else:
                 sya=static_lateral(cfg,FxY,"Y",accidental=True); tr=max(sxa[4],sya[4])
-        # B4: torsional irregularity is ADVISORY, not a pass/fail gate. ASCE 7-22 permits Type 1a/1b in
-        # SDC<=D with amplified accidental torsion Ax (sec.12.8.4.3); the report Ch.2 renders the screen.
+        # B4: torsional irregularity is ADVISORY, not a pass/fail gate. ASCE 7-22 Table 12.3-1 has a
+        # SINGLE Type 1 keyed to the Torsional Irregularity Ratio (TIR, Eq. 12.3-2) with cumulative
+        # tiers >1.2/>1.4/>1.6 (Table 12.3-1a); Ax per sec.12.8.4.3. static_lateral computes the
+        # ratio from per-story DRIFTS at the diaphragm edge (the 7-22 TIR basis).
         extra["torsion_acc"]=tr
-        extra["torsion_irregularity"]=("none (<1.2)" if tr<1.2 else "Type 1a torsional (1.2-1.4)"
-                                       if tr<1.4 else "Type 1b extreme torsional (>=1.4)")
-        extra["torsion_Ax"]=round(min(max((tr/1.2)**2,1.0),3.0),2)
+        extra["torsion_irregularity"]=("none (TIR screen <1.2)" if tr<1.2 else
+                                       "Type 1 torsional, TIR screen %.2f (>1.2 tier)"%tr if tr<1.4 else
+                                       "Type 1 torsional, TIR screen %.2f (>1.4 tier%s)"%(tr,"; also >1.6" if tr>1.6 else ""))
+        extra["torsion_Ax"]=round(min(max((tr/1.2)**2,1.0),3.0),2)   # Eq. 12.8-15
         if _cr_tr>1.15:                                    # B5: centre of rigidity offset from centre of mass
             extra["cr_offset_warning"]=("centric-load torsion ratio %.2f > 1.15: the lateral system's centre "
                 "of rigidity is offset from the centre of mass (asymmetric brace/frame layout), inducing "
@@ -950,11 +1014,14 @@ def _demo():
         print("  %s"%('ALL PASS' if r['allp'] else 'FAIL: '+','.join(fails)))
 
 def kz_exposure(zft,exp):
+    """Velocity pressure exposure coefficient Kz = 2.41*(z/zg)^(2/alpha) per ASCE 7-22
+    Table 26.10-1 note 1, with the Table 26.11-1 terrain constants (B: alpha=7.5, zg=3280 ft;
+    C: 9.8, 2460; D: 11.5, 1935); z floored at 15 ft."""
     z=max(zft,15.0)
-    if exp=="D": zg,al=700.0,11.5
-    elif exp=="B": zg,al=1200.0,7.0
-    else: zg,al=900.0,9.5
-    return 2.01*(z/zg)**(2.0/al)
+    if exp=="D": zg,al=1935.0,11.5
+    elif exp=="B": zg,al=3280.0,7.5
+    else: zg,al=2460.0,9.8
+    return 2.41*(z/zg)**(2.0/al)
 def wind_forces(cfg,direction):
     w=cfg["wind"]; exp=w.get("exposure","C"); NF=len(cfg["heights"]); zlev=zlevels(cfg)
     F={}
@@ -965,7 +1032,10 @@ def wind_forces(cfg,direction):
         xs=[_xy_in(cfg,i,j)[0] for i,j in P]; ys=[_xy_in(cfg,i,j)[1] for i,j in P]
         width=(max(ys)-min(ys))/12 if direction=="X" else (max(xs)-min(xs))/12
         zmid=(zlev[k-1]+zlev[k])/2/12; Kz=kz_exposure(zmid,exp)
-        qz=0.00256*Kz*w.get("Kzt",1.0)*w.get("Kd",0.85)*w["V"]**2
+        # ASCE 7-22 Eq. 26.10-1: qz = 0.00256*Kz*Kzt*Ke*V^2 (Ke optional cfg wind key, default 1.0).
+        # Kd belongs to the design-pressure equation (Eq. 27.3-1); it is multiplied here in the same
+        # product for numerical convenience only.
+        qz=0.00256*Kz*w.get("Kzt",1.0)*w.get("Ke",1.0)*w["V"]**2*w.get("Kd",0.85)
         p=qz*w.get("G",0.85)*w.get("Cpnet",1.3); h=cfg["heights"][k-1]/12; th=h if k<NF else h/2
         F[k]=p*width*th/1000.0
     return F

@@ -313,16 +313,16 @@ def _design_basis_issues(cfg, name=None, pkg=None):
         _sp=(pkg.get("framework_screen") or {}).get("plan") or {}
         if any(_sp.get(k) for k in ("reentrant","setback","nonparallel")):
             pir={k: bool(_sp.get(k)) for k in ("reentrant","setback","nonparallel")}
-    analyses=[str(a).upper() for a in (cfg.get("analyses") or [])]
-    irr=[k for k in ("reentrant","setback","nonparallel") if pir.get(k)]
-    if irr and sdc_high and "RS" not in analyses:
-        out.append("MODAL RESPONSE SPECTRUM (MRSA) required by ASCE 7-22 Table 12.6-1 (%s, SDC D+) -- add 'RS' to "
-                   "cfg['analyses']; ELF alone is not permitted for this irregularity"%", ".join(irr))
+    # NOTE: ASCE 7-22 deleted the 7-16 Table 12.6-1 analysis-procedure matrix; sec.12.6 permits ELF
+    # for ALL structures, so an irregular SDC D+ building no longer FAILS for lacking 'RS'. The
+    # MRSA-recommended advisory is rendered in the report (Ch.2 irregularity screen) instead.
     dl=float(cfg.get("drift_limit",0.020) or 0.020)
+    _mfrho=(" (for a moment-frame-only SFRS in SDC D-F the allowable is further divided by rho, "
+            "12.12.1.1 -- the engine drift gates apply this)")
     if Ie>=1.5 and dl>0.0101:
-        out.append("Risk Category IV (Ie=%.2f): allowable story drift is 0.010 h_sx (Table 12.12-1) -- set cfg['drift_limit']=0.010"%Ie)
+        out.append("Risk Category IV (Ie=%.2f): allowable story drift is 0.010 h_sx (Table 12.12-1) -- set cfg['drift_limit']=0.010"%Ie+_mfrho)
     elif Ie>=1.25 and dl>0.0151:
-        out.append("Risk Category III (Ie=%.2f): allowable story drift is 0.015 h_sx (Table 12.12-1) -- set cfg['drift_limit']=0.015"%Ie)
+        out.append("Risk Category III (Ie=%.2f): allowable story drift is 0.015 h_sx (Table 12.12-1) -- set cfg['drift_limit']=0.015"%Ie+_mfrho)
     if R is not None and float(R)<=3.0:
         out.append("R=%.2f is a 'not specifically detailed for seismic' system -- AISC 341 does NOT apply (no SCWB / "
                    "capacity design); design members & connections to AISC 360 only, and CONFIRM whether wind or seismic governs each direction"%float(R))
@@ -334,10 +334,15 @@ def _design_basis_issues(cfg, name=None, pkg=None):
             or "classification" in str((pkg.get("capacity_design") or {}).get("vertical_irregularity","")))
         if hr>=1.3 and not _screened:
             out.append("story-height ratio %.2f suggests a SOFT/WEAK story -- COMPUTE the story stiffness AND strength "
-                       "ratios and classify (Vert 1a/1b, 5a/5b); an EXTREME soft/weak story (1b/5b) is PROHIBITED in SDC D-F (12.3.3.1)"%hr)
+                       "ratios and classify (7-22 Vert 1a/1b stiffness, 4a/4b strength); extreme soft story (1b) and "
+                       "weak stories (4a/4b) are PROHIBITED in SDC E/F only (12.3.3.1)"%hr)
         elif hr>=1.3 and _screened:
             _ss=(pkg.get("framework_screen") or {}).get("soft_story") or {}
-            if "EXTREME" in str(_ss.get("classification","")) and float(s.get("SDS",0) or 0)>=0.75:
+            try:
+                from preflight import sdc_of_cfg as _sdcf; _sdc_ef=_sdcf(cfg) in ("E","F")
+            except Exception:
+                _sdc_ef=float(s.get("S1",0) or 0)>=0.75
+            if "EXTREME" in str(_ss.get("classification","")) and _sdc_ef:
                 out.append("framework screen classifies an EXTREME soft story (Type 1b) -- PROHIBITED in SDC E/F "
                            "(12.3.3.1): stiffen the story or document why the classification does not govern")
     _dia = str(cfg.get("diaphragm","rigid")).lower()
@@ -359,7 +364,7 @@ def _design_basis_issues(cfg, name=None, pkg=None):
         has_coll=any(isinstance(c,dict) and "collector" in (str(c.get("id",""))+str(c.get("type",""))).lower() for c in conns)
         if not has_coll:
             out.append("re-entrant/setback present but NO collector in calc_package -- collectors are a REQUIRED deliverable "
-                       "(design with Omega_0 on the re-entrant/transfer lines, 12.3.3.4/12.10.2.1), not 'delegated to the drawings'")
+                       "(design with Omega_0 on the re-entrant/transfer lines, 12.3.3.5/12.10.2.1), not 'delegated to the drawings'")
     return out
 
 
@@ -438,7 +443,7 @@ def _transfer_issues(cfg, name, pkg):
         txt=[]; _gather_text([pkg.get("capacity_design"), pkg.get("connections")],txt)
         blob=" ".join(t for t in txt if isinstance(t,str)).lower()
         if "transfer" not in blob and "backstay" not in blob:
-            out.append("footprint SETBACK detected -- design the TRANSFER/backstay diaphragm chords/collectors and supporting members for Omega_0 (12.3.3.3) and report the backstay force")
+            out.append("footprint SETBACK detected -- design the TRANSFER/backstay diaphragm chords/collectors and supporting members for Omega_0 (7-22 12.3.3.4, discontinuous-element support) and report the backstay force")
     return out
 
 def _nonparallel_issues(cfg, pkg):

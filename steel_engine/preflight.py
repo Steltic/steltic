@@ -1,7 +1,43 @@
 """preflight.py -- R22 pre-analysis cfg linter. Cheap, engine-free checks run BEFORE the first
 OpenSees solve so a mis-declared cfg is caught in seconds, not after a full pipeline run.
 Returns a list of (severity, message); severity in {"ERROR","WARN"}. Non-blocking by design --
-pipeline.design_and_report prints the findings and puts them in its return dict."""
+pipeline.design_and_report prints the findings and puts them in its return dict.
+
+Also hosts the CANONICAL Seismic Design Category function asce_sdc() (ASCE 7-22 sec.11.6) --
+engine-free so engine3d.py and report.py both import THIS implementation instead of keeping
+divergent copies."""
+
+
+def asce_sdc(SDS, SD1, S1=0.0, risk_cat="II"):
+    """Seismic Design Category per ASCE 7-22 sec.11.6: the WORSE of Table 11.6-1 (SDS) and
+    Table 11.6-2 (SD1), with the Risk Category IV column, after the S1 override:
+    S1 >= 0.75 -> SDC E for Risk Category I-III, F for Risk Category IV."""
+    rc4 = str(risk_cat).strip().upper() in ("IV", "4")
+    if S1 is not None and float(S1) >= 0.75:
+        return "F" if rc4 else "E"
+    def _tab(x, rows):                       # rows: (upper_bound, SDC for RC I-III, SDC for RC IV)
+        for thr, c123, c4 in rows:
+            if float(x) < thr:
+                return c4 if rc4 else c123
+        return "D"                           # top row of both tables: D for every Risk Category
+    c1 = _tab(SDS, [(0.167, "A", "A"), (0.33, "B", "C"), (0.50, "C", "D")])   # Table 11.6-1
+    c2 = _tab(SD1, [(0.067, "A", "A"), (0.133, "B", "C"), (0.20, "C", "D")])  # Table 11.6-2
+    return max(c1, c2)
+
+
+def risk_cat_from_Ie(Ie):
+    """Risk Category inferred from the seismic importance factor (Table 1.5-2)."""
+    Ie = float(Ie or 1.0)
+    return "IV" if Ie >= 1.5 else ("III" if Ie >= 1.25 else "II")
+
+
+def sdc_of_cfg(cfg):
+    """SDC for a cfg: explicit cfg['sdc'] wins, else derived from cfg['seis'] via asce_sdc()."""
+    if cfg.get("sdc"):
+        return str(cfg["sdc"]).strip().upper()
+    s = cfg.get("seis") or {}
+    return asce_sdc(float(s.get("SDS", 0) or 0), float(s.get("SD1", 0) or 0),
+                    float(s.get("S1", 0) or 0), risk_cat_from_Ie(s.get("Ie", 1.0)))
 
 # ASCE 7-22 Table 12.2-1 anchor values for the common steel SFRS (R, Cd, Om0, SDC-D height ft)
 _SYS = {
@@ -66,6 +102,15 @@ def check(cfg):
         say("ERROR", "Ie=%.2f (RC IV) but drift_limit=%.3f -- Table 12.12-1 requires 0.010" % (Ie, dl))
     elif 1.2 <= Ie < 1.5 and dl > 0.0151:
         say("ERROR", "Ie=%.2f (RC III) but drift_limit=%.3f -- Table 12.12-1 requires 0.015" % (Ie, dl))
+    # moment-frame-only SFRS in SDC D-F: allowable drift is Delta_a/rho (ASCE 7-22 sec.12.12.1.1);
+    # the engine applies the division in its drift gates -- flag it so the reduced target is expected
+    _mf_only = (any(k in sysname for k in ("smf", "imf", "omf")) or "moment" in sysname) \
+               and "dual" not in sysname
+    if _mf_only and sdc_of_cfg(cfg) in ("D", "E", "F"):
+        _rho = float(cfg.get("rho", 1.3) or 1.3)
+        say("WARN", "moment-frame-only SFRS in SDC %s: allowable story drift is drift_limit/rho = "
+                    "%.4f/%.2f = %.4f (12.12.1.1) -- the engine drift gates apply this division"
+                    % (sdc_of_cfg(cfg), dl, _rho, dl / _rho))
     # ---- analyses vs R=3 ----
     if R and R <= 3.0 and "341" in str(cfg.get("system", "")):
         say("WARN", "R<=3: AISC 341 does NOT apply -- design to AISC 360 only and prove wind-vs-seismic")
@@ -93,6 +138,11 @@ def check(cfg):
         v = cfg.get(k)
         if isinstance(v, (int, float)) and v > 400:
             say("WARN", "%s=%g psf is unusually high -- confirm units (psf)" % (k, v))
+    _Lf = cfg.get("L_floor")
+    if isinstance(_Lf, (int, float)) and _Lf >= 125 and not cfg.get("storage") \
+            and not cfg.get("storage_levels"):
+        say("WARN", "floor live suggests storage occupancy -- 12.7.2 requires >=25%% of storage live "
+                    "in W; set cfg['storage'] (all floors) or cfg['storage_levels'] (L_floor=%g psf)" % _Lf)
     # ---- Tier A/B consultancy guards (EDGE_CASE_SWEEP) ----
     arch = (str(cfg.get("arch", "")) + " " + str(cfg.get("system", ""))).lower()
     if any(k in arch for k in ("gable", "pitch", "slope", "monoslope", "sloped")):

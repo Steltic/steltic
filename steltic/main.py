@@ -294,12 +294,34 @@ async def run(request: Request):
     sync_gen = gen()
 
     async def agen():
-        # Disconnect = Stop. If the browser closes the SSE stream, the running generator must be
-        # closed from here: that injects GeneratorExit at its suspended yield, aborts any in-flight
-        # provider call (no runaway token spend), and runs the loop's save handlers.
-        from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+        # Disconnect = Stop: the RUNNING instance must notice a dead client itself and tear the
+        # run down (cancel flag -> the agent's provider-stream watchdog severs the LLM call).
+        # KEEPALIVE (2026-08-22): during silent stretches (model thinking, long OpenSees runs)
+        # the old loop only checked is_disconnected() when the agent yielded -- a tab that died
+        # mid-silence left the run burning tokens indefinitely. Now every 20 s of silence we
+        # emit an SSE comment ping (the frontend's stall watchdog feeds on it) AND re-check the
+        # connection, so a dead client stops the run within ~20 s no matter what the agent is
+        # doing. The ping is a comment block -- SSE parsers ignore it.
+        from starlette.concurrency import run_in_threadpool
+        import asyncio
+        _SENT = object()
         try:
-            async for chunk in iterate_in_threadpool(sync_gen):
+            while True:
+                task = asyncio.ensure_future(run_in_threadpool(next, sync_gen, _SENT))
+                dead = False
+                while True:
+                    done, _ = await asyncio.wait({task}, timeout=20.0)
+                    if done:
+                        break
+                    yield ": ping\n\n"
+                    if await request.is_disconnected():
+                        dead = True
+                        break
+                if dead:
+                    break                    # thread still in next(); finally tears down via flag
+                chunk = task.result()
+                if chunk is _SENT:
+                    break
                 yield chunk
                 if await request.is_disconnected():
                     break

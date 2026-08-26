@@ -4,6 +4,7 @@ const show = (el, on) => el.classList.toggle("hidden", !on);
 let attachedImages = [];   // {name,type,data_url,size} staged image attachments (sent to the model)
 let backupBlob = null, backupUrl = null, backupBuilding = null, reportUrl = null, modelUrl = null;   // in-browser copy of the unified zip (serves Download/View AND restores Continue)
 let reasonLine = null;     // streaming line for the Model reasoning box
+let stallResumes = 0;      // auto-reconnects after a silent-stream stall (max 2 per run)
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { credentials: "same-origin", ...opts });
@@ -183,6 +184,7 @@ function setRunning(on) {
 }
 
 async function startRun(resume, _retry) {
+  if (!resume) stallResumes = 0;
   const building = ($("building").value || "Project").trim();
   const brief = $("brief").value.trim();
   if (!resume && !brief) { $("runStatus").textContent = "enter a brief first"; return; }
@@ -217,9 +219,21 @@ async function startRun(resume, _retry) {
     finishRun("failed"); return;
   }
   const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  // Stall watchdog (2026-08-22): the server pings every ~20 s of silence, so 75 s with NO bytes
+  // means the stream is dead even though the socket never errored; a stalled read() otherwise
+  // waits forever while the run keeps going server-side.
+  const _read = async () => {
+    const p = reader.read();
+    let t;
+    try {
+      return await Promise.race([p, new Promise((_, rej) => {
+        t = setTimeout(() => { p.catch(() => {}); rej(new Error("__stall__")); }, 75000);
+      })]);
+    } finally { clearTimeout(t); }
+  };
   try {
     while (true) {
-      const { value, done } = await reader.read(); if (done) break;
+      const { value, done } = await _read(); if (done) break;
       buf += dec.decode(value, { stream: true });
       let i;
       while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -230,6 +244,20 @@ async function startRun(resume, _retry) {
       }
     }
   } catch (e) {
+    if (e && e.message === "__stall__") {
+      try { runController.abort(); } catch (_) {}
+      if (stallResumes < 2) {
+        stallResumes++;
+        logLine("status", "· connection stalled — reconnecting and resuming automatically…");
+        $("runStatus").textContent = "connection stalled — resuming…";
+        setTimeout(() => startRun(true), 1000);
+        finishRun("reconnecting…"); return;
+      }
+      logLine("err", "✖ connection lost mid-run (stream stalled)");
+      logLine("status", "· your progress IS saved — click Continue to resume from where it stopped");
+      backupWithRetry(building, [1500, 6000]);
+      finishRun("connection lost"); return;
+    }
     if (e.name !== "AbortError") {
       logLine("err", "✖ connection lost mid-run: " + e);
       logLine("status", "· your progress IS saved — click Continue to resume from where it stopped");

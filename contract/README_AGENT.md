@@ -113,7 +113,8 @@ primitives (`modal`, `elf`, `static_lateral`, `rs_baseshear`) directly.
 - Optional: `governing="wind"` + `wind={V,exposure,...}`; `snow` (psf);
   `extra_mass_floors={level:psf}`; `skew` (parallelogram), `xcoords`/`ycoords`
   (non-uniform grid); `torsion_check`, `dual_check`, `softstorey_check`,
-  `drift_limit`; `D_floor`,`D_roof`,`clad`,`L_floor`.
+  `drift_limit`; `D_floor`,`D_roof`,`clad`,`L_floor`; `drift_relief_16_1_2` (ONLY when the Nonlinear
+  module hands it back — ASCE 7-22 §16.1.2, Risk Category I–III; see *Feedback from the Nonlinear module* in AGENT_START).
 
 Ready-made layout/plan helpers: `perim_braces`, `core_braces` (wide braced core),
 `core1` (single-bay core, for dual), `tors3` (eccentric→torsion), `weak1` (open

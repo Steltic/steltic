@@ -39,6 +39,77 @@ def sdc_of_cfg(cfg):
     return asce_sdc(float(s.get("SDS", 0) or 0), float(s.get("SD1", 0) or 0),
                     float(s.get("S1", 0) or 0), risk_cat_from_Ie(s.get("Ie", 1.0)))
 
+
+# ---------------------------------------------------------------------------------------------
+# ASCE 7-22 sec.16.1.2 drift relief -- cfg['drift_relief_16_1_2']
+#
+# "Where a nonlinear response history analysis (Chapter 16) is performed, ... the drift limits of
+# sec.12.12.1 need not apply" -- for Risk Category I, II and III only. The Nonlinear module (SNL)
+# writes this block when it hands a Chapter-16-verified design back for a lighter, drift-relaxed
+# re-design; the agent copies it verbatim into cfg and sets cfg['drift_limit'] to 'linear_target'.
+# The relief never applies to Risk Category IV (Ie >= 1.5), and the relaxed linear target may never
+# exceed the Chapter 16 mean-drift limit itself. Every finding here is mirrored in consistency.py.
+# ---------------------------------------------------------------------------------------------
+RELIEF_KEY = "drift_relief_16_1_2"
+RELIEF_REQUIRED = ("nlrha_mean_drift", "nlrha_limit", "linear_target")
+
+
+def drift_relief(cfg):
+    """The cfg['drift_relief_16_1_2'] block as a dict, or None when absent."""
+    r = cfg.get(RELIEF_KEY) if isinstance(cfg, dict) else None
+    return r if isinstance(r, dict) and r else None
+
+
+def relief_active(cfg):
+    """True when a well-formed 16.1.2 relief block is present AND the Risk Category permits it."""
+    r = drift_relief(cfg)
+    if r is None:
+        return False
+    Ie = float((cfg.get("seis") or {}).get("Ie", 1.0) or 1.0)
+    if Ie >= 1.5:
+        return False
+    try:
+        return all(float(r.get(k)) > 0 for k in RELIEF_REQUIRED)
+    except (TypeError, ValueError):
+        return False
+
+
+def relief_findings(cfg):
+    """(severity, message) findings for a cfg that carries the 16.1.2 relief block."""
+    out = []
+    r = drift_relief(cfg)
+    if r is None:
+        return out
+    s = cfg.get("seis") or {}
+    Ie = float(s.get("Ie", 1.0) or 1.0)
+    dl = float(cfg.get("drift_limit", 0.020) or 0.020)
+    if Ie >= 1.5:
+        out.append(("ERROR", "cfg['%s'] present but Ie=%.2f (Risk Category IV): ASCE 7-22 16.1.2 keeps the "
+                             "12.12.1 drift limits for RC IV -- remove the relief block and design to Table "
+                             "12.12-1 (0.010)" % (RELIEF_KEY, Ie)))
+        return out
+    missing = [k for k in RELIEF_REQUIRED if not isinstance(r.get(k), (int, float)) or float(r.get(k)) <= 0]
+    if missing:
+        out.append(("ERROR", "cfg['%s'] is missing %s -- the relief must record the Chapter 16 result it rests "
+                             "on (SNL writes these; do not invent them)" % (RELIEF_KEY, missing)))
+        return out
+    lim16 = float(r["nlrha_limit"]); tgt = float(r["linear_target"]); mean16 = float(r["nlrha_mean_drift"])
+    if dl > lim16 + 1e-9:
+        out.append(("ERROR", "drift_limit=%.4f exceeds the Chapter 16 mean-drift limit %.4f recorded in cfg['%s'] "
+                             "-- a linear target above the 16.4.1.2 limit is not a relief, it is a mistake"
+                             % (dl, lim16, RELIEF_KEY)))
+    if abs(dl - tgt) > 1e-6:
+        out.append(("WARN", "drift_limit=%.4f differs from the relief's linear_target=%.4f -- set cfg['drift_limit'] "
+                            "to the target the Nonlinear module derived, or record why it changed" % (dl, tgt)))
+    if mean16 > lim16:
+        out.append(("ERROR", "cfg['%s'] records a Chapter 16 mean drift %.4f ABOVE its limit %.4f -- the relief "
+                             "rests on an analysis that did not pass 16.4.1.2" % (RELIEF_KEY, mean16, lim16)))
+    out.append(("WARN", "ASCE 7-22 16.1.2 drift relief in force (Risk Category %s): Table 12.12-1 need not apply; "
+                        "linear design target %.4f from the Chapter 16 result (mean MCE_R drift %.4f vs %.4f). "
+                        "The final design must be re-verified by a Chapter 16 analysis before issue."
+                        % (risk_cat_from_Ie(Ie), tgt, mean16, lim16)))
+    return out
+
 # ASCE 7-22 Table 12.2-1 anchor values for the common steel SFRS (R, Cd, Om0, SDC-D height ft)
 _SYS = {
     "smf":  (8.0, 5.5, 3.0, None), "imf": (4.5, 4.0, 3.0, 35.0),
@@ -98,9 +169,13 @@ def check(cfg):
     # ---- Risk-Category drift limit ----
     Ie = float(s.get("Ie", 1.0) or 1.0)
     dl = float(cfg.get("drift_limit", 0.020) or 0.020)
+    relief = drift_relief(cfg)
+    if relief is not None:
+        for sev, msg in relief_findings(cfg):
+            say(sev, msg)
     if Ie >= 1.5 and dl > 0.0101:
         say("ERROR", "Ie=%.2f (RC IV) but drift_limit=%.3f -- Table 12.12-1 requires 0.010" % (Ie, dl))
-    elif 1.2 <= Ie < 1.5 and dl > 0.0151:
+    elif 1.2 <= Ie < 1.5 and dl > 0.0151 and not relief_active(cfg):
         say("ERROR", "Ie=%.2f (RC III) but drift_limit=%.3f -- Table 12.12-1 requires 0.015" % (Ie, dl))
     # moment-frame-only SFRS in SDC D-F: allowable drift is Delta_a/rho (ASCE 7-22 sec.12.12.1.1);
     # the engine applies the division in its drift gates -- flag it so the reduced target is expected

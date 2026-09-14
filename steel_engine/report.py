@@ -782,6 +782,64 @@ def _chapter(n, status=None):
 def _risk_category(Ie):
     return {1.0: "II", 1.25: "III", 1.5: "IV"}.get(round(float(Ie), 2), "II")
 
+
+def _drift_relief_note(cfg):
+    """Chapter 8 paragraph when cfg['drift_relief_16_1_2'] is in force (ASCE 7-22 16.1.2: a Chapter 16
+    analysis relaxes the 12.12.1 drift limits for Risk Category I-III). Empty string otherwise; the
+    RC IV misuse is reported as a preflight/consistency ERROR, and named here so the reader sees it."""
+    try:
+        from preflight import drift_relief, relief_active
+        r = drift_relief(cfg)
+    except Exception:
+        return ""
+    if r is None:
+        return ""
+    Ie = float((cfg.get("seis") or {}).get("Ie", 1.0) or 1.0)
+    if not relief_active(cfg):
+        return ("<p class='note'><b>cfg['drift_relief_16_1_2'] is present but NOT in force</b> "
+                + ("(Risk Category IV, I<sub>e</sub> = %.2f: ASCE 7-22 &sect;16.1.2 keeps the Table 12.12-1 limits)" % Ie
+                   if Ie >= 1.5 else "(block incomplete -- see the preflight findings)")
+                + " &mdash; the Table 12.12-1 limit above governs.</p>")
+    def _f(k, scale=100.0, fmt="%.2f%%"):
+        v = r.get(k)
+        return (fmt % (float(v) * scale)) if isinstance(v, (int, float)) else "&mdash;"
+    table_val = r.get("table_12_12_1") if isinstance(r.get("table_12_12_1"), (int, float)) else (0.015 if Ie >= 1.25 else 0.020)
+    return ("<p class='cnote'><b>ASCE 7-22 &sect;16.1.2 drift relief in force.</b> A Chapter 16 nonlinear response "
+            "history analysis of this building (Nonlinear module job <code>%s</code>%s) gave a suite-mean MCE<sub>R</sub> "
+            "story drift of %s against the &sect;16.4.1.2 limit of %s (verdict: %s). For Risk Category I&ndash;III the "
+            "&sect;12.12.1 limits therefore need not apply; the linear design target was reset to %s of story height "
+            "(the Table 12.12-1 value would be %s). <b>This design is provisional until the Chapter 16 analysis is "
+            "re-run on it and passes &sect;16.4.</b>%s</p>"
+            % (_esc(str(r.get("nlrha_job", "?"))),
+               (" run " + _esc(str(r.get("nlrha_run")))) if r.get("nlrha_run") else "",
+               _f("nlrha_mean_drift"), _f("nlrha_limit"), _esc(str(r.get("nlrha_verdict", "n/a"))),
+               _f("linear_target"), "%.2f%%" % (100.0 * float(table_val)),
+               (" " + _esc(str(r.get("note")))) if r.get("note") else ""))
+
+
+def _design_of_record_rows(root):
+    """Rows for the Chapter 1 basis table when design/design_of_record.json exists (written by the
+    Nonlinear module's feedback loop when the user promotes a verified re-design)."""
+    try:
+        p = os.path.join(root, "design", "design_of_record.json")
+        if not os.path.exists(p):
+            return []
+        d = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return []
+    what = "promoted from feedback loop <code>%s</code> (%s) on %s" % (
+        _esc(str(d.get("loop", "?"))), _esc(str(d.get("loop_title", ""))), _esc(str(d.get("promoted_at", ""))))
+    ver = d.get("verification") or {}
+    vs = "; ".join("%s: %s" % (_esc(str(k)), _esc(str(v))) for k, v in ver.items() if not isinstance(v, (dict, list)))
+    rows = [["Design of record", what + ((" &mdash; " + vs) if vs else "")]]
+    if d.get("supersedes"):
+        rows.append(["Supersedes", _esc(str(d["supersedes"]))])
+    return rows
+
+
+def _esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
 def _sdc(SDS, SD1, S1=0.0, Ie=1.0):
     """Seismic Design Category per ASCE 7-22 sec.11.6 -- delegates to the canonical
     preflight.asce_sdc: worse of Tables 11.6-1/-2 (incl. the Risk Category IV column, RC from Ie),
@@ -789,7 +847,7 @@ def _sdc(SDS, SD1, S1=0.0, Ie=1.0):
     from preflight import asce_sdc, risk_cat_from_Ie
     return asce_sdc(SDS, SD1, S1, risk_cat_from_Ie(Ie))
 
-def _design_basis_codes(cfg, s):
+def _design_basis_codes(cfg, s, root=None):
     seismic = bool(s.get("R"))
     rows = [["International Building Code (IBC)", "adopting code &mdash; confirm locally adopted edition &amp; amendments"],
             ["ASCE/SEI 7-22", "loads &amp; load combinations (gravity, wind Ch.26-31, seismic Ch.11-12, &sect;2.3 LRFD)"],
@@ -809,6 +867,18 @@ def _design_basis_codes(cfg, s):
                    "S<sub>1</sub>&ge;0.75 &rarr; E/F applied; confirm mapped S<sub>1</sub>)</span>"],
                   ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", f"{s['R']} / {s.get('Cd')} / {s.get('Om0')}"],
                   ["Redundancy &rho;", f"{cfg.get('rho', 1.3)}"]]
+        try:
+            from preflight import drift_relief, relief_active
+            _r = drift_relief(cfg)
+            if _r is not None:
+                crows.append(["Story drift limit basis",
+                              ("ASCE 7-22 &sect;16.1.2 relief in force &mdash; linear target %.2f%% from the Chapter 16 result "
+                               "(Nonlinear module job <code>%s</code>)" % (100.0 * float(_r.get("linear_target", 0) or 0), _esc(str(_r.get("nlrha_job", "?")))))
+                              if relief_active(cfg) else
+                              "Table 12.12-1 (a cfg['drift_relief_16_1_2'] block is present but NOT in force &mdash; see Chapter 8)"])
+        except Exception:
+            pass
+    crows += _design_of_record_rows(root)
     w = cfg.get("wind", {})
     if w:
         crows.append(["Basic wind speed V", f"{w.get('V','?')} mph, Exposure {w.get('exposure','?')}"])
@@ -1431,6 +1501,11 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, drX, drY):
         lim, limrho = E.drift_allowable(cfg)   # Table 12.12-1, /rho for MF-only SDC D-F (12.12.1.1)
         dmax = max(max(drX[k]*Cd/Ie, drY[k]*Cd/Ie) for k in range(NF))
         _limlab = f"{lim*100:.2f}%" + (" (&Delta;<sub>a</sub>/&rho;, &sect;12.12.1.1)" if limrho else "")
+        try:
+            from preflight import relief_active as _ra
+            if _ra(cfg): _limlab += " (&sect;16.1.2 relief)"
+        except Exception:
+            pass
         rows.append(["Seismic design drift &le; limit", f"{dmax*100:.2f}% &le; {_limlab}", "PASS" if dmax <= lim else "FAIL"])
         A = (cfg["NX"]*cfg["SX"])*(cfg["NY"]*cfg["SY"])/144.0
         Pu = {k: (1.2+0.2*SDS)*E.floor_w(cfg, k) + 0.5*(cfg.get("L_floor", 0)*A/1000.0 if k < NF else 0) for k in range(1, NF+1)}
@@ -1802,7 +1877,7 @@ def build_report(name, root=None):
 
     # ============================== Chapter 1 — Design basis & codes ==============================
     parts.append(_chapter(1))
-    parts.append(_design_basis_codes(cfg, s))
+    parts.append(_design_basis_codes(cfg, s, root))
     parts.append("<h3>Building description</h3>")
     parts.append(_table(["Item", "Value"], [
         ["Archetype", cfg.get("arch", "")],
@@ -2113,6 +2188,7 @@ def build_report(name, root=None):
                       "&sect;12.12.1.1)" if limrho else " (Table 12.12-1)"))
         parts.append(f"<p>Elastic story drift &delta;<sub>e</sub> amplified to &delta; = C<sub>d</sub>&delta;<sub>e</sub>/I<sub>e</sub> "
                      f"(&sect;12.8.6, C<sub>d</sub>={Cd}, I<sub>e</sub>={Ie}); {_limtxt}.</p>")
+        parts.append(_drift_relief_note(cfg))
         drow = [[k, f"{drX[k-1]*100:.3f}", f"{drX[k-1]*Cd/Ie*100:.3f}", f"{drY[k-1]*100:.3f}",
                  f"{drY[k-1]*Cd/Ie*100:.3f}", "OK" if max(drX[k-1], drY[k-1])*Cd/Ie <= lim else "NG"]
                 for k in range(1, NF+1)]

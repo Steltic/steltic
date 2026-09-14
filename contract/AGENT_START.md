@@ -406,6 +406,40 @@ state. It is **opt-in and never triggered automatically.**
   report**. **ALWAYS WAIT for the user before updating / finalising the report** — do not overwrite the
   report until they confirm. Repeat the loop as long as they want to try alternatives.
 
+## Feedback from the Nonlinear module (SNL) — the three loop briefs
+The Nonlinear module runs the Pushover, the ASCE 7-22 Chapter 16 NLRHA and the DDM on your package and
+can hand a **re-design instruction** back through *Continue*. Such a brief starts with a line
+`=== SNL FEEDBACK LOOP: <drift | resize | mechanism> ===` followed by a machine-derived change set. It
+is NOT an optimisation request from the user — treat it as a **directed re-design**: apply exactly what
+it says, keep everything else identical, re-run `pipeline.design_and_report`, re-derive every affected
+capacity, run `consistency.check`, re-render with `report.build_report`, and finish with the table the
+brief asks for (sizes by group before/after, steel weight before/after, governing D/C, drift vs target).
+The loop reads your `cfg.py`, `design/calc_package.json` and `design/member_schedule.csv` afterwards, so
+those three files must be complete.
+
+- **drift** (ASCE 7-22 §16.1.2 relief, Risk Category I–III only). The brief carries a dict
+  `drift_relief_16_1_2 = {clause, nlrha_job, nlrha_mean_drift, nlrha_limit, nlrha_verdict, linear_target, ...}`.
+  Copy it **verbatim** into `cfg` (a top-level key `cfg["drift_relief_16_1_2"]`) and set
+  `cfg["drift_limit"] = linear_target`. Never invent or edit the Chapter 16 numbers; never apply the relief
+  when `Ie >= 1.5` (preflight reports an ERROR and you must stop and say so). Then lighten the lateral frame
+  — shallower/lighter SMF beams first, then column groups — until the amplified drift C<sub>d</sub>δ<sub>e</sub>/I<sub>e</sub>
+  lands **just under the new target in both directions**, with every strength check, SCWB ratio, panel-zone
+  check and connection still passing. Record the relief in `calc_package["capacity_design"]["drift_relief_16_1_2"]`
+  (the dict plus the new drifts). The relaxed design is provisional until SNL re-runs Chapter 16 on it.
+- **resize** (system role, not member D/C). The brief lists groups as `<role>-<section> at levels [...]:
+  <old> -> <new> (reason)`. Apply every line to the `custom_build` section map exactly (same level set, same
+  role), keep the untouched groups as they are, and do not "improve" other members. After the re-run report
+  any group whose D/C moved above 0.95 or whose SCWB ratio fell below 1.0 — the loop expects you to STOP at
+  the first such failure and say which line caused it rather than silently substituting a different size.
+- **mechanism** (SCWB / panel zones). The brief names storeys where the pushover showed column hinging and
+  asks for a **minimum SCWB ratio** there (e.g. ΣM*pc/ΣM*pb ≥ 1.5 at levels 2–3), and joint groups where the
+  AISC 342 C5.4a.1.a.1(b) panel-zone modifier fired, asking for **doubler plates** (or a heavier column) so that
+  V<sub>PZ</sub>/V<sub>ye</sub> sits within 0.6–0.9. Upsize the column group (or trim beam Z) only where named;
+  record the resulting SCWB ratio **per storey** as a list in `capacity_design["SCWB"]["by_story"]` and the
+  panel-zone result **per joint group** in `capacity_design["panel_zone"]["by_joint"]` (each with `joint`,
+  `Ru_kip`, `phiRn_kip`, `doubler_in`, `V_pz_over_V_ye`). SNL re-runs the pushover with the doubler thickness
+  you record, so the number must be the one you designed.
+
 ## What to deliver (end your run with this)
 - Lateral system + final member sizes (columns, beams, braces).
 - Periods vs Ta; ELF base shear per direction; wind base shear where it governs; which governs.

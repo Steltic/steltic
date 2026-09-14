@@ -104,6 +104,24 @@ Two options:
    starter kit. Then put the connection in the environment (or a `.env` next to where you launch):
    `RAG_API_URL=http://your-server:8080/query` and, if your server enforces one, `RAG_API_TOKEN=...`.
 
+## Feedback from the Nonlinear module (SNL)
+
+The Nonlinear module can hand a re-design back through *Continue* once its Chapter 16 / pushover / DDM run is
+complete (see `steltic_nonlinear/docs/README_feedback.md`). Three things in this repository exist for that:
+
+- `cfg['drift_relief_16_1_2']` — the ASCE 7-22 §16.1.2 relief block SNL writes when a Chapter 16 analysis lets the
+  §12.12.1 drift limits be relaxed (Risk Category I–III only). `steel_engine/preflight.py` and `consistency.py` accept
+  a relaxed `drift_limit` only with a complete block, never for Risk Category IV, and never above the Chapter 16
+  limit; Chapter 8 of the report states the relief and that the design is provisional until Chapter 16 is re-run.
+- `POST /api/restore/<building>?archive=1` — moves an existing job aside as `<building>__<timestamp>` before the
+  restore (what a fresh run already does), so a promoted candidate never silently overwrites a design of record;
+  `viewer_3d.html` is now part of the restore whitelist.
+- `design/design_of_record.json` — written by SNL when the user promotes a verified candidate; the report's Chapter 1
+  basis table shows it. The agent contract (`contract/AGENT_START.md`, *Feedback from the Nonlinear module*) says how
+  the three loop briefs must be applied (`capacity_design.SCWB.by_story`, `capacity_design.panel_zone.by_joint`).
+
+`tests/test_drift_relief.py` covers the rules (`python -m pytest tests -q`).
+
 ## Repo map
 
 `steltic/` FastAPI app + agent loop + sandbox executors · `steel_engine/` OpenSees modelling,

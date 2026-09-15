@@ -17,7 +17,7 @@ browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory,
 > incorrect, and must be independently checked and sealed by a licensed professional engineer before
 > any use for design, construction, or permitting. See [DISCLAIMER.md](DISCLAIMER.md).
 
-## Try the hosted version of Steltic for free using our servers [stelticai.com](https://stelticai.com)
+## For videos and demonstrations see [stelticai.com](https://stelticai.com)
 
 ## Install & run
 

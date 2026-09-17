@@ -352,6 +352,102 @@ MF beam", "interior gravity column", "N-S brace"). Do NOT design members one-by-
    (§12.8.6) and beam vertical deflection (live L/360, total L/240).
 5. **Do NOT read `eval_tests/answer_key/`** — off-limits and blocked.
 
+## HOW TO ASK THE RAG — one document, the exact id, the printed words
+Hard rule 1 says ground every check. This section is *how*, and it is not style advice: nearly every
+"the RAG has nothing on this" in a run log was a query problem, not a corpus problem. One call is one
+question. There is no batching and no plan to submit — you call `search_engineering_standards` and
+the answer comes straight back.
+
+**Pick ONE collection per call.** Route it **material → system → member → loading**, then send that
+one. Firing the same question at all of them is not thoroughness; it is several vague full-text searches
+where one pinpoint lookup would have worked, and it burns the search softcap.
+
+| `collection=` | Document | Ask it for |
+|---|---|---|
+| `engineering_standards_A360` | AISC 360-22 | member limit states, stability, B4.1 slenderness, Ch. J / Ch. K connections |
+| `engineering_standards_A341` | AISC 341-22 | seismic systems, SCWB, protected zones, capacity design (R > 3 only) |
+| `engineering_standards_A358` | AISC 358-22 | prequalified moment connections — one chapter per type |
+| `engineering_standards_ASCE7` | ASCE 7-22 | **Hard rule 2 still stands: loads are computed, not retrieved.** Use this only to read back a printed value you are citing — R / Ω₀ / Cd off Table 12.2-1 is the usual one — never to generate loads |
+| `steel_design_examples` | Worked examples | sequence and method only — **not authoritative**. If an example and the spec disagree, the spec wins |
+| `opensees_buildings_3d` · `openseespy_documentation` · `opensees_documentation` | Modelling | API and whole-building references (R21), never design values |
+
+Send the **collection string exactly as spelled above** — Chapter 13's grounding verification counts
+those literal strings out of your activity log, so `AISC_360_22` in the `collection` argument is
+grounding work that the report will score as MISSING. The `AISC_360_22`-style *stem* is what comes
+back in each hit's `source` field; that is for citing, not for asking.
+
+**Exact id, not a sentence.** The `clause` argument is the pinpoint: the server looks it up as an
+exact equation id (when it is shaped like one), then as an exact section id, then as an exact table
+id, and returns the hit with one neighbouring chunk attached. A sentence gets none of that.
+
+```
+good:  search_engineering_standards("nominal flexural strength, compact I-shape",
+                                    collection="engineering_standards_A360", clause="F2-1")
+bad:   search_engineering_standards("AISC 360-22 Equation F2-1 Mn for compact I-shapes")
+```
+
+The bad one fails in a way that looks like success: `360-22` is shaped exactly like an equation id,
+the id you actually meant never reaches the equation index, and you get back whatever full text
+ranked highest. `clause` takes the **id alone** — `F2-1`, `F2.2`, `B4.1a`, `D1.3` — with no document
+name, no "Equation", no prose. `chapter` (`F`, `E`, `J`) only narrows; it is not a substitute for the
+id, and on its own it will not find anything a plain search would have missed.
+
+**Spec words, not chat.** "Lateral-torsional buckling", not "bends sideways". The corpus expands the
+usual abbreviations (LTB, SCWB, RBS, Ω₀, φ), but what is indexed is the **printed** text, so printed
+phrasing wins: the PDF says *"Steel special moment frames"*, not "Special steel moment frames".
+
+**An equation on its own is not enough to compute with.** Every equation you will actually evaluate
+needs three more things before you may use it: its **"where:" variable definitions**, its
+**applicability limits**, and its **exceptions**. This tool has no neighbour-width knob — an exact-id
+lookup brings one neighbouring chunk, a full-text search brings none — so ask for them as their own
+calls rather than inferring them. `F2-1` gives you Mn for yielding and nothing else; the unbraced-length
+conditions under which it governs, and the compactness that put you in F2 rather than F3, are in
+the surrounding section and in **Table B4.1a**. `clause="F2"` + `clause="F2-1"` +
+`clause="B4.1a"` is three cheap, exact calls and beats one query for "all of Chapter F".
+
+**Id traps — these are real, and a "better" guess is always wrong.**
+- **Whitmore** is AISC 360 **commentary J4.4**. **J4.3 is block shear** — different check.
+- AISC 358 **Chapter 5 has no 5.8**. The RBS procedure is **5.7** (e.g. `clause="5.7"`, `eq 5.7-4`).
+  DuraFuse is a different chapter — `eq 15.6-1`.
+- AISC 341 has **no standard F2-1**. Expected brace tension is **F2.6c prose**; the 2t/8t gusset
+  detail is the commentary figure **C-F2.18**.
+- AISC 341 **D1.3 is Protected Zones**. **D4.1 is H-piles**, not bracing.
+- ASCE 7 full-text for Table 12.2-1 tends to rank 12.8-2 / 12.14-1 / 12.3-3 above it. If you need
+  R / Ω₀ / Cd, ask for the **table by id** — `clause="12.2-1"` — not by description.
+- Commentary carries a **`C-` prefix** on many equation and figure ids (`C-F2.18`, `C26.5-5`).
+  Provisions and commentary are different documents: never quote a `C-` id as if it were the standard,
+  and never invent a standard counterpart for one.
+- Example chunks use the **`_p1` family** (`E.9_p1`, `F.1-1A_p1`). A bare `F.1` is an example id and
+  must not be treated as spec F9.1.
+
+**One empty result is NOT evidence of absence.** The tool no longer takes your first miss at face
+value: it retries without your `clause`/`chapter` filter, then as an exact-id lookup, then with the
+query reworded through the corpus's own synonym layer, then across every document — and if that last
+one hits, it tells you which document actually answered, which is **not** the one you asked for, so
+cite accordingly and check it governs. Read what comes back:
+
+- **`not_found_kind: "no_specification_index"`** — there is no specification corpus on this machine at
+  all. Every spec query will return nothing however it is worded. **Stop searching the specifications.**
+  This says nothing whatever about AISC 360/341/358.
+- **`not_found_kind: "document_not_in_corpus"`** — that document was never converted here. The reply
+  names the documents that *are* indexed; if one of those governs instead, ask it.
+- **`not_found_kind: "term_absent_from_document"`** — the corpus holds the document and the term is
+  genuinely not in it. Only this one is a statement about the standard. Re-word **once** in printed
+  phrasing, or ask for the parent section, then accept it.
+
+The first two are `corpus_gap: true`. Treating a corpus gap as an absence is how a design gets run
+from memory while its report records that the corpus was searched — do not do it.
+
+**Designing from memory is a last resort, and it is DECLARED.** If a value you need is genuinely not
+retrievable, you may fall back on your own knowledge of the standard — but then you say so, in the
+report, in those words: which value, which clause you believe it comes from, and that it was **not**
+verified against the corpus. A quiet fallback is the failure mode this whole section exists to
+prevent. Never invent a clause number, an equation id, a table id or a φ/Ω value to close the gap.
+
+**These rules are locked to the editions in the stem table** — AISC 360-22, 341-22, 358-22, ASCE/SEI
+7-22. Every trap above is edition-specific. If the corpus is ever rebuilt on a different edition,
+**re-verify each one before reusing it**.
+
 ## CONNECTIONS — design these by reasoning (AISC 360 Ch. J / Ch. K, AISC 341, AISC 358 prequalified connections)
 The analysis model does not include connection detail; the engine gives you the **demands**
 (`connection_demands.csv`: beam-end moment & shear, brace axial, base/splice reactions). For

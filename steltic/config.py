@@ -59,5 +59,10 @@ RAG_API_TOKEN = os.environ.get("RAG_API_TOKEN", "")  # bearer token, sent on eve
 RAG_TOP_K          = int(os.environ.get("RAG_TOP_K", "5"))          # chunks per RAG search
 RAG_KEEP_RECENT    = int(os.environ.get("RAG_KEEP_RECENT", "0"))    # 0 = OFF (recommended w/ provider caching). >0 = keep N recent RAG results full, stub older
 RAG_SEARCH_SOFTCAP = int(os.environ.get("RAG_SEARCH_SOFTCAP", "20"))  # after this many searches, nudge the agent to stop searching and derive
+# The corpus's own alias layer (indexes/aliases.json: synonym_groups + eq_id_aliases), used by the
+# search tool's escalation ladder to re-word a query that found nothing. It ships with the corpus,
+# not with us, so by default we look for it beside the workspace the RAG server was pointed at; set
+# this when the corpus lives somewhere else. Absent, the rewording rung is simply skipped.
+RAG_ALIASES_FILE   = os.environ.get("RAG_ALIASES_FILE", "")
 # Spec (AISC/ASCE) RAG results are ALWAYS saved to jobs/<name>/rag/<slug>.txt and, once a design completes,
 # evicted from the saved conversation to a file pointer (agent._evict_all_rag) so optimisation runs don't bloat.

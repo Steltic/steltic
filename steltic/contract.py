@@ -29,7 +29,8 @@ term. The dynamic-model gravity, the static-model tributary gravity and the seis
 SAME building -- consistency.check compares them.
   * Build via run_python:  import pipeline; pipeline.design_and_report(name, cfg)  -- it computes the model, ASCE 7-22 \
 loads, the P-Delta DEMAND envelope, the figures and the HTML report. It computes NO AISC 360/341 capacity.
-  * YOU derive every member/connection capacity and D/C: query the RAG with search_engineering_standards (pass clause=<code> e.g. F2, or chapter=<letter>, when you know the exact provision), apply the cited \
+  * YOU derive every member/connection capacity and D/C: query the RAG with search_engineering_standards UNDER THE \
+RETRIEVAL POLICY below (an exact id per call when you know the provision; full text only to navigate), apply the cited \
 clause to the demands, and write limit_state / cited / capacity / DC into jobs/<name>/design/calc_package.json. \
 PAIR each A360 member/connection query with a `steel_design_examples` query (collection="steel_design_examples") for the \
 matching worked example, and mirror its check SEQUENCE -- the method, not its numbers. A condensed worked building \
@@ -48,6 +49,40 @@ mode_figures / deformed_shape_figure / section_color_figure / appendix_case_figu
 """
 
 
+RETRIEVAL_POLICY = """
+===== RETRIEVAL POLICY (mandatory -- how every search_engineering_standards call is written) =====
+This is the query policy the Query file manager is built for (steltic_grokbot skills/Skill_querying_PACKAGED.md).
+The tool applies it to whatever you send and records the form it sent; write it that way yourself.
+
+1. ONE document per call, by canonical stem: doc="AISC_360_22" | "AISC_341_22" | "AISC_358_22" |
+   "AISC_342_22" | "ASCE_41_23". Never search all documents blindly. Material -> system -> member ->
+   loading -> method -> the one document that governs.
+2. EXACT ID WHEN KNOWN. type="exact_section" | "exact_equation" | "exact_table", query = the id ALONE:
+     {"type":"exact_equation","doc":"AISC_360_22","query":"F2-1","purpose":"Mn yielding"}
+     {"type":"exact_section","doc":"AISC_341_22","query":"E3.4a","purpose":"SCWB moment ratio"}
+     {"type":"exact_table","doc":"AISC_360_22","query":"B4.1a","purpose":"compactness limits"}
+   Not a sentence. Not the document name. Not "Equation F2-1 Mn for compact I-shapes".
+3. FULL TEXT ONLY TO NAVIGATE: type="fts", query = the standard's own printed words, one idea, no
+   sentence, no ids mixed in ("lateral-torsional buckling compact I-shaped members", not "how does the
+   beam bend sideways"). Read the ids it returns, then ask for them EXACTLY in the next call.
+4. One provision per call: provision, definition, equation, limits, table, procedure -- each its own
+   call. For every equation you will compute from, also fetch its "where:" variables (context_neighbors=1),
+   its applicability and its exceptions.
+5. Waves: (1) navigation + the core provisions -> (2) definitions, limits and the cross-references the
+   results name -> (3) digit-by-digit verification of every factor that entered the calculation.
+6. Id formats: AISC 360 section F2.2 · eq F2-1 · table B4.1a. AISC 341 section E3.4a · table D1.1b ·
+   D1.3 Protected Zones (D4.1 is H-piles). AISC 358 section 5.7 · eq 5.7-4 (there is no 5.8) ·
+   Chapter 15 DuraFuse eq 15.6-1. Commentary ids carry a C- prefix (C-F2.18); want_commentary stays
+   false unless you need intent, and a commentary excerpt never supplies a design value.
+7. Never invent an id. found:false is an honest answer: narrow a query that was too broad, or ask for
+   the parent section; do not fill the gap from memory. Every number in the calculation comes from a
+   verbatim excerpt returned this session -- cite document, edition, provision|commentary, section,
+   eq/table id and printed page.
+8. Pair each AISC 360 member/connection check with a steel_design_examples query (collection=
+   "steel_design_examples", type="fts") and mirror the example's check SEQUENCE, never its numbers.
+"""
+
+
 def _read(name: str) -> str:
     p = config.CONTRACT_DIR / name
     try: return p.read_text(encoding="utf-8", errors="replace")
@@ -56,6 +91,7 @@ def _read(name: str) -> str:
 
 def system_contract() -> str:
     return (_read("AGENT_START.md")
+            + "\n\n" + RETRIEVAL_POLICY
             + "\n\n===== WORKFLOW GUIDE (README_AGENT) =====\n" + _read("README_AGENT.md")
             + "\n\n===== AISC 360-22 TABLE OF CONTENTS (use for clause-anchored RAG queries) =====\n"
             + _read("AISC360_TOC.md")

@@ -67,16 +67,27 @@ TOOL_SPECS = [
     _spec("new_activity_log", "Start a fresh activity log for a design run (call ONCE first).",
           {"building": {"type": "string", "description": "building name -> jobs/<name>/"}}, []),
     _spec("search_engineering_standards",
-          "Search the engineering RAG. Collections: engineering_standards_A360 (primary spec), "
-          "engineering_standards_A341 (seismic), engineering_standards_A358 (connections), "
-          "and steel_design_examples (AISC worked examples -- query this ALONGSIDE A360 for each member/connection and "
-          "mirror the example's method). When you know the exact provision, pass clause or chapter for a pinpoint lookup. "
-          "Returns a 'disabled' note if no RAG is configured -- then rely on your own cited AISC knowledge.",
-          {"query": {"type": "string"},
+          "Retrieve a provision from the standards corpus (Query file manager) UNDER THE RETRIEVAL POLICY: "
+          "one document per call, an EXACT id when you know the provision (type=exact_section|exact_equation|"
+          "exact_table and query=the id ALONE, e.g. F2, F2-1, B4.1a), and a full-text query (type=fts) only to "
+          "NAVIGATE to an id -- in the standard's own printed words, one idea, no sentences. "
+          "Good: {type:'exact_equation', doc:'AISC_360_22', query:'F2-1'}. "
+          "Bad: {query:'AISC 360-22 Equation F2-1 Mn for compact I-shapes'}. "
+          "Documents: AISC_360_22 (members, connections), AISC_341_22 (seismic), AISC_358_22 (prequalified "
+          "moment connections), AISC_342_22 / ASCE_41_23 (existing buildings); collection=steel_design_examples "
+          "for AISC worked examples (query ALONGSIDE A360 for each member/connection and mirror the example's "
+          "method). Returns a 'disabled' note if no RAG is configured -- then rely on your own cited AISC knowledge.",
+          {"query": {"type": "string", "description": "for exact types: the id only. For fts: printed spec terminology, one idea."},
+           "type": {"type": "string", "enum": ["exact_section", "exact_equation", "exact_table", "fts"],
+                    "description": "exact_section (F2, E3.4a, 5.7) / exact_equation (F2-1, E3-4, 5.7-4) / exact_table (B4.1a, D1.1b, J3.2) / fts (navigation only)"},
+           "doc": {"type": "string", "description": "canonical document stem: AISC_360_22, AISC_341_22, AISC_358_22, AISC_342_22, ASCE_41_23. One per call."},
+           "purpose": {"type": "string", "description": "why you need it, a few words (goes in the provenance)"},
+           "want_commentary": {"type": "boolean", "description": "default false (provisions). true only for intent/background; commentary never supplies a design value."},
+           "context_neighbors": {"type": "integer", "description": "0-2: widen when an equation needs its surrounding 'where:' list"},
            "collection": {"type": "string",
-                          "description": "default engineering_standards_A360; use steel_design_examples for worked examples"},
-           "clause": {"type": "string", "description": "optional: restrict to an exact AISC clause code, e.g. F2, E3, J3.6 -- use when you know the provision"},
-           "chapter": {"type": "string", "description": "optional: restrict to a whole chapter, e.g. F, E, J"},
+                          "description": "legacy alias of doc (engineering_standards_A360 ...); steel_design_examples for worked examples"},
+           "clause": {"type": "string", "description": "legacy: an exact id sent with a sentence. Prefer type + query=id."},
+           "chapter": {"type": "string", "description": "optional: narrow an fts query to a chapter, e.g. F, E, J"},
            "top_k": {"type": "integer", "description": "chunks to return (default 3, max 5)"}},
           ["query"]),
     _spec("run_python",
@@ -314,7 +325,11 @@ def dispatch(tool, args, ws, executor):
         return ws.search_engineering_standards(args.get("query", ""),
                                                args.get("collection", "engineering_standards_A360"),
                                                args.get("top_k", config.RAG_TOP_K),
-                                               args.get("clause", ""), args.get("chapter", ""))
+                                               args.get("clause", ""), args.get("chapter", ""),
+                                               type=args.get("type", ""), doc=args.get("doc", ""),
+                                               want_commentary=bool(args.get("want_commentary", False)),
+                                               context_neighbors=args.get("context_neighbors"),
+                                               purpose=args.get("purpose", ""))
     return {"error": f"unknown tool '{tool}'"}
 
 
@@ -838,8 +853,10 @@ def _tool_title(name, args):
     if name == "run_python":
         return f"run_python · {_code_label(a.get('code',''))}"
     if name == "search_engineering_standards":
-        coll = (a.get("collection") or "engineering_standards_A360").replace("engineering_standards_", "")
+        coll = (a.get("doc") or a.get("collection") or "engineering_standards_A360").replace("engineering_standards_", "")
         flt = "".join(f" [{k}={a[k]}]" for k in ("clause", "chapter") if a.get(k))
+        if a.get("type"):                                   # the policy form: `exact_equation F2-1`
+            return f"search {coll} {a['type']} ‹{(a.get('query') or '')[:64]}›{flt}"
         return f"search {coll} ‹{(a.get('query') or '')[:64]}›{flt}"
     if name == "write_file":   return f"write_file {a.get('path','')}"
     if name == "read_file":    return f"read_file {a.get('path','')}"
@@ -872,6 +889,8 @@ def _result_preview(name, result):
         if result.get("disabled"): return "RAG disabled — using cited AISC knowledge"
         res = result.get("results") if isinstance(result.get("results"), list) else None
         bits = [f"{len(res) if res is not None else 0} hits"]
+        if result.get("policy"):                             # what actually went to the QFM
+            bits.append("sent as " + str(result["policy"])[:120])
         cl = result.get("clauses_found") or []
         if cl: bits.append("clauses " + ", ".join(cl[:6]))
         if result.get("saved"): bits.append("saved " + result["saved"])

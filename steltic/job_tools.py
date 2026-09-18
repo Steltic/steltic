@@ -265,12 +265,44 @@ class JobWorkspace:
             self.log("search_engineering_standards", d + f" top_k={top_k}: {query}", f"{n} hits")
             return out
 
+        # A rung that comes back with one marginal chunk is not an answer; it is the ladder stopping
+        # one rung too early. The first run after the contract told the agent to name exact ids sent
+        # a nine-term query at AISC 360-22, matched a single chunk straddling the E7/F2 boundary, and
+        # reported success -- the F2.2 lateral-torsional clause it wanted was never reached. So a
+        # rung is accepted on ENOUGH hits; below that it is remembered and the ladder keeps climbing,
+        # and the best rung seen is what gets returned if nothing better turns up.
+        ENOUGH = 3
+        best: dict = {}
+
+        def consider(out, eff_coll: str, label: str, sent_q: str = ""):
+            """-> the finished result when this rung is good enough, else None (keep climbing)."""
+            n = len(((out or {}).get("results")) or [])
+            if not n:
+                return None
+            if n >= ENOUGH:
+                return finish(out, eff_coll, label, sent_q=sent_q)
+            if n > len(((best.get("out") or {}).get("results")) or []):
+                best.update(out=out, coll=eff_coll, label=label, sent=sent_q)
+            return None
+
+        def best_or_none():
+            """The thin rung we kept, once every rung has been tried."""
+            if not best:
+                return None
+            out = best["out"]
+            out["thin"] = (f"Every attempt was thin; this is the best of {len(trail)}, from "
+                           f"{best['label']}, with {len(out.get('results') or [])} hit(s). Treat it as a "
+                           "lead rather than an answer -- if it does not contain the provision, ask again "
+                           "with the exact printed clause id and the words the standard itself uses.")
+            return finish(out, best["coll"], best["label"], sent_q=best.get("sent") or "")
+
         # ---- rung 1: exactly what was asked for -------------------------------------------------
         out, halt = attempt("rung1 as-asked", query, collection, clause, chapter)
         if halt:
             return dict(RAG_HALT)
-        if out and (out.get("results") or []):
-            return finish(out, collection, "rung1 as-asked")
+        done = consider(out, collection, "rung1 as-asked")
+        if done is not None:
+            return done
         # An unknown collection name is the agent's mistake, not a corpus gap: escalating it would
         # send four more queries to a collection the server has never heard of. Say so and stop.
         if out and "unknown collection" in str(out.get("note") or "").lower():
@@ -288,8 +320,9 @@ class JobWorkspace:
             out, halt = attempt("rung2 no-filter", query, collection)
             if halt:
                 return dict(RAG_HALT)
-            if out and (out.get("results") or []):
-                return finish(out, collection, "rung2 no-filter")
+            done = consider(out, collection, "rung2 no-filter")
+            if done is not None:
+                return done
 
         # ---- rung 3: the exact-id lookup ---------------------------------------------------------
         # The server runs exact_equation / exact_section / exact_table itself the moment `clause` is
@@ -299,16 +332,18 @@ class JobWorkspace:
             out, halt = attempt(f"rung3 exact-id {cid}", query, collection, cid, chapter)
             if halt:
                 return dict(RAG_HALT)
-            if out and (out.get("results") or []):
-                return finish(out, collection, f"rung3 exact-id {cid}")
+            done = consider(out, collection, f"rung3 exact-id {cid}")
+            if done is not None:
+                return done
 
         # ---- rung 4: reword through the corpus's own alias layer ---------------------------------
         for rq in self._reworded(query):
             out, halt = attempt("rung4 alias-reworded", rq, collection, "", chapter)
             if halt:
                 return dict(RAG_HALT)
-            if out and (out.get("results") or []):
-                return finish(out, collection, "rung4 alias-reworded", sent_q=rq)
+            done = consider(out, collection, "rung4 alias-reworded", sent_q=rq)
+            if done is not None:
+                return done
 
         # ---- rung 5: drop the document filter ----------------------------------------------------
         # An empty collection makes the server search every specification it holds; for the OpenSees
@@ -319,10 +354,17 @@ class JobWorkspace:
             out, halt = attempt("rung5 any-document", query, wide, "", "")
             if halt:
                 return dict(RAG_HALT)
-            if out and (out.get("results") or []):
-                return finish(out, wide, "rung5 any-document")
+            done = consider(out, wide, "rung5 any-document")
+            if done is not None:
+                return done
 
-        # ---- the ladder is exhausted: say which kind of nothing this is --------------------------
+        # ---- the ladder is exhausted ------------------------------------------------------------
+        # A thin rung still beats nothing: hand back the best one, labelled as thin, rather than
+        # telling the agent the provision is absent when a chunk of it was actually found.
+        thin = best_or_none()
+        if thin is not None:
+            return thin
+        # Nothing anywhere: say which kind of nothing this is.
         return self._not_found(query, collection, trail)
 
     # ---------------- the escalation ladder's parts ----------------

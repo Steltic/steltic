@@ -574,6 +574,41 @@ def _archive_report(ws, building):
         pass
 
 
+def _heal_tool_calls(tool_calls):
+    """Every tool_call that enters the history must carry arguments that parse as a JSON OBJECT.
+
+    OpenAI's own endpoint is lenient, but a provider behind OpenRouter validates the whole
+    conversation on every call: Together (2026-09-20) refused a run with
+    `400 Invalid JSON in tool call arguments: '{'` -- the model's previous turn had been cut off
+    after the opening brace, the turn was appended as it came, and the 400 (not retryable) ended
+    the run. Saved in conversation.json, that turn also broke every Continue after it.
+
+    A malformed call keeps its id and name, its arguments become `{}`, and the raw text comes back
+    keyed by call id so the caller answers the call with an error instead of running it with
+    arguments the model never finished. An empty arguments string is a legitimate no-argument call.
+    """
+    bad = {}
+    for tc in tool_calls or []:
+        fn = tc.get("function") or {}
+        raw = fn.get("arguments")
+        if isinstance(raw, dict):
+            fn["arguments"] = json.dumps(raw)
+            continue
+        raw = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
+        if not raw.strip():
+            fn["arguments"] = "{}"
+            continue
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            continue
+        bad[tc.get("id")] = raw
+        fn["arguments"] = "{}"
+    return bad
+
+
 def _save_conv(path, messages):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -602,6 +637,8 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                 c = m.get("content")
                 if m.get("role") == "assistant" and (isinstance(c, str) and not c.strip()):
                     m["content"] = None if m.get("tool_calls") else "(empty turn)"
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    _heal_tool_calls(m["tool_calls"])   # a cut-off call saved by an older version would 400 forever
             if brief:                       # a NEW instruction -> continue the SAME design interactively
                 messages.append({"role": "user", "content":
                     brief + "\n\n(Apply this change to the existing design: edit jobs/" + building +
@@ -689,12 +726,16 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
         # mirror that; an empty turn with no tool calls gets a placeholder (it stays in history
         # when the nudge below pushes past it).
         _c = out["content"]
+        malformed = _heal_tool_calls(out["tool_calls"])   # a call the model never finished: {} in the history, an error as its result
         assistant = {"role": "assistant",
                      "content": _c if (_c or "").strip() else (None if out["tool_calls"] else "(empty turn)")}
         if out["tool_calls"]:
             assistant["tool_calls"] = out["tool_calls"]
         messages.append(assistant)
         truncated = out["finish_reason"] == "length"
+        if malformed:
+            yield {"type": "status", "text": "%d tool call(s) arrived with arguments that are not valid JSON%s -- not run; the model is asked to repeat them"
+                   % (len(malformed), " (the turn was cut off at the token limit)" if truncated else "")}
         final_text = (out["content"] or "").strip()
         if not out["tool_calls"]:
             if (truncated or not final_text) and stuck < 5:     # cut off OR an EMPTY turn -- never mistake it for 'done'
@@ -765,7 +806,14 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                    "code": ((args.get("code", "") or "")[:200] if nm == "run_python" else "")}
             _t0 = time.time()
             try:
-                result = dispatch(nm, args, ws, executor)
+                if tc["id"] in malformed:        # never run a call whose arguments the model did not finish
+                    _raw = malformed[tc["id"]]
+                    result = {"error": "the arguments of this %s call were not valid JSON (%d chars%s) -- the call was NOT run. "
+                                       "Repeat it with complete arguments%s." % (nm, len(_raw), ", cut off at the token limit" if truncated else "",
+                                                                                 "; write less per call (e.g. a shorter file, in parts)" if truncated else ""),
+                              "arguments_head": _raw[:160]}
+                else:
+                    result = dispatch(nm, args, ws, executor)
             except Exception as _de:             # a tool crash must NEVER kill the run (this lost user data)
                 try:
                     ws.log(nm, "tool crashed", f"{type(_de).__name__}: {_de}"[:180])

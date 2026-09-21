@@ -228,43 +228,6 @@ async def example_brief(which: str):
 
 
 # ---------------- run (SSE) ----------------
-def _revision_brief(review_md: str, notes: str = "") -> str:
-    """The instruction that turns a review into a revision of the design record.
-
-    The Nonlinear module's Review tab reads what the run measured and looks every clause it cites up
-    in the Query file manager's corpus -- the licensed PDFs on this PC. A citation that came back
-    with a page number was READ; one the review marks (UNVERIFIED) came from the model's memory.
-    That distinction is the whole value here, so it is spelled out and the agent is told to promote
-    only the first kind. Nothing is auto-verified: a clause nobody found stays flagged.
-    """
-    out = [
-        "REVISE THE DESIGN RECORD AGAINST THE REVIEW BELOW.",
-        "",
-        "The review was written from this run's measured results by the Nonlinear module's Review",
-        "tab. Every clause it cites WITH a page number was retrieved from the licensed specification",
-        "on this PC through the standards corpus; a clause it marks (UNVERIFIED) was not found and",
-        "was cited from memory.",
-        "",
-        "What to do:",
-        "1. Apply the corrections the review asks for, and only those. Do not redesign anything it",
-        "   does not raise.",
-        "2. Where the review cites a clause with a page number, adopt that citation in the report --",
-        "   including in place of any value you had flagged as needing verification. That is the",
-        "   point of this step: those numbers have now been read from the standard.",
-        "3. A clause the review marks (UNVERIFIED) STAYS flagged. Do not promote it, and do not",
-        "   invent a page for it.",
-        "4. Where the review disagrees with the report, say so explicitly rather than silently",
-        "   changing the number.",
-        "5. Regenerate report.html and add a short section 'Revision against review' listing what",
-        "   changed, what citation each change now rests on, and what remains unverified and why.",
-        "",
-    ]
-    if notes.strip():
-        out += ["The engineer added:", notes.strip(), ""]
-    out += ["--- REVIEW (review.md, written by the Nonlinear module) ---", "", review_md.strip(), ""]
-    return "\n".join(out)
-
-
 @app.post("/api/run")
 async def run(request: Request):
     body = await request.json()
@@ -272,20 +235,6 @@ async def run(request: Request):
     brief = (body.get("brief") or "").strip()
     resume = bool(body.get("resume"))
     images = _clean_images(body.get("images"))
-    # "Revise reports with Review report" (the Design tab's button). The two modules meet only in
-    # the shared project folder: the Nonlinear module's Review tab writes review.md there, and this
-    # continues THIS design's conversation with it. HR Steel never calls the other module.
-    if body.get("revise_from_review"):
-        rv = JOBS_DIR / building / "review.md"
-        if not rv.is_file():
-            raise HTTPException(409, "no review.md in project '%s'. Run the Nonlinear module's Review tab "
-                                     "on this project first -- it writes review.md, review.html and "
-                                     "review_transcript.json into the project folder." % building)
-        review_md = rv.read_text(encoding="utf-8", errors="replace").strip()
-        if not review_md:
-            raise HTTPException(409, "review.md in project '%s' is empty -- re-run the Review tab." % building)
-        brief = _revision_brief(review_md, brief)
-        resume = True                      # a revision continues the design it revises
     if not brief and not resume:
         raise HTTPException(400, "brief required")
     creds = session.get_creds()

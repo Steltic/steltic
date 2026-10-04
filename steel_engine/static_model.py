@@ -488,6 +488,11 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
         _cache_save(cache_dir, gkey + "|grav", genv)
     # ---- seismic/wind envelope (keyed on lateral sections + mass): disk cache ----
     skey = _seis_key(cfg, nseg, floor_system, lat_sig)
+    # the lateral load patterns themselves (per-direction forces, Ax, CM offsets, MRSA scaling) are part
+    # of the key, so a changed seismic/wind pattern never re-uses a stale envelope (hr-seismic)
+    skey += _hashlib.md5(repr([(c[0], c[1], c[2], c[3], sorted((k, tuple(round(x, 6) for x in v))
+                                                               for k, v in c[4].items()), c[5]) for c in seis]
+                              ).encode()).hexdigest()[:12]
     senv = _cache_load(cache_dir, skey + "|seis")
     if senv is None:
         senv = {}

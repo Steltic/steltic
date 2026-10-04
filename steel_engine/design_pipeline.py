@@ -23,16 +23,19 @@ from design_post import run_case   # analysis/demand extraction only (no capacit
 
 # ---------- build the LRFD combination set ----------
 def combos(cfg):
-    s = cfg["seis"]; SDS = s["SDS"]; rho = cfg.get("rho", 1.3)
-    NF = len(cfg["heights"]); Bx = cfg["NX"]*cfg["SX"]; By = cfg["NY"]*cfg["SY"]
-    T, *_ = E.modal(cfg, min(3*NF, 12)); _, V, Tu, Ta, kk, Fx, W = E.elf(cfg, T[0])
+    s = cfg["seis"]; SDS = s["SDS"]
+    NF = len(cfg["heights"])
+    # Seismic forces and factors PER DIRECTION (engine3d.seismic_design_forces): each direction's own
+    # period (HR-01) and R/Cd/Omega0/rho (ASCE 7-22 12.2.2, HR-02), forces at the centre of mass (HR-31),
+    # accidental torsion 0.05*B*Ax with the actual plan dimension and Ax of 12.8.4.3 (HR-08/19), and the
+    # 12.9.1.4-scaled MRSA story forces when 'RS' is requested (HR-23).
+    SF = E.seismic_design_forces(cfg)
     Ev = 0.2*SDS
     # ASCE 7-22 §2.3.1 Exception 1 / §2.3.6 Exception 1: companion live factor 0.5 only where
     # Lo <= 100 psf AND the occupancy is not a garage or place of public assembly (else 1.0).
     # cfg['garage'] / cfg['public_assembly'] are optional, default False.
     Lf = 1.0 if (cfg.get("L_floor", 50.0) > 100.0 or cfg.get("garage", False)
                  or cfg.get("public_assembly", False)) else 0.5
-    Om0 = s.get("Om0", 2.0)
     # roof load is snow when declared (E.floor_roofLrS returns S, else Lr). ASCE 7-22 factors:
     # principal 1.0S / 1.6Lr (combo 3a); companion 0.3S / 0.5Lr (combos 2a/4a); seismic 0.15S (§2.3.6).
     snow = float(cfg.get("snow", 0) or 0)
@@ -46,13 +49,9 @@ def combos(cfg):
     cases.append((f"1.2D+{fR_pr}{rl}+{Lf}L", 1.2, Lf, fR_pr, {}, False))  # ASCE 7-22 combo 3a: 1.6Lr or
                                                                  # 1.0S governs roof-controlled members
     def Elat(dirn, sgn, acc, fac):
-        lat = {}
-        for k in range(1, NF+1):
-            if dirn == "X": fx, fy = Fx[k], 0.3*Fx[k]; B = By
-            else:           fx, fy = 0.3*Fx[k], Fx[k]; B = Bx
-            mz = acc*0.05*B*(fx if dirn == "X" else fy)
-            lat[k] = (fac*sgn*fx, fac*sgn*fy, fac*sgn*mz)
-        return lat
+        # fac = "rho" | "Om0" -> that factor of EACH direction (principal and 30 % companion use their own
+        # direction's forces and factor); see engine3d.lateral_pattern
+        return E.lateral_pattern(cfg, dirn, sgn, acc, fac)
     fS = 0.15 if snow > 0 else 0.0                      # §2.3.6 combo 6 companion snow = 0.15S
     _sS = "+0.15S" if snow > 0 else ""
     # standard seismic (rho E), both dirs, +/-, +/- accidental torsion
@@ -60,9 +59,9 @@ def combos(cfg):
         for sgn in (1, -1):
             for acc in (1, -1):
                 cases.append((f"(1.2+0.2SDS)D+rhoE{dirn}{'+' if sgn>0 else '-'}t{'+' if acc>0 else '-'}+{Lf}L{_sS}",
-                              1.2+Ev, Lf, fS, Elat(dirn, sgn, acc, rho), False))
+                              1.2+Ev, Lf, fS, Elat(dirn, sgn, acc, "rho"), False))
                 cases.append((f"(0.9-0.2SDS)D+rhoE{dirn}{'+' if sgn>0 else '-'}t{'+' if acc>0 else '-'}",
-                              0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, acc, rho), False))
+                              0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, acc, "rho"), False))
     # AISC 341 capacity design (simplified): braced-frame COLUMNS designed for the overstrength
     # seismic load Em = Om0*QE (ASCE 7-22 §12.4.3.2). No accidental torsion needed here.
     # E.is_braced() detects braces from cfg['braces'] OR brace elements in a custom_build model (P1).
@@ -70,9 +69,9 @@ def combos(cfg):
         for dirn in ("X", "Y"):
             for sgn in (1, -1):
                 cases.append((f"(1.2+0.2SDS)D+Om0*E{dirn}{'+' if sgn>0 else '-'}+{Lf}L{_sS} [col]",
-                              1.2+Ev, Lf, fS, Elat(dirn, sgn, 0, Om0), True))
+                              1.2+Ev, Lf, fS, Elat(dirn, sgn, 0, "Om0"), True))
                 cases.append((f"(0.9-0.2SDS)D+Om0*E{dirn}{'+' if sgn>0 else '-'} [col]",
-                              0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, 0, Om0), True))
+                              0.9-Ev, 0.0, 0.0, Elat(dirn, sgn, 0, "Om0"), True))
     if cfg.get("wind"):
         for dirn in ("X", "Y"):
             wf = E.wind_forces(cfg, dirn)
@@ -250,45 +249,45 @@ def design(name, outdir=None):
         pir = {}
     try:
         NFq = len(cfg["heights"])
-        Tq, w2q, eXq, eYq, Mtq = E.modal(cfg, min(3 * NFq, 12))
-        Csq, Vq, Tuq, Taq, kq, Fxq, Wq = E.elf(cfg, Tq[0])
+        SFq = E.seismic_design_forces(cfg)          # per-direction forces + factors (HR-01/02/23)
         wlev = {k: E.floor_w(cfg, k) for k in range(1, NFq + 1)}
         SDSq = float(cfg["seis"].get("SDS", 1.0)); Ieq = float(cfg["seis"].get("Ie", 1.0))
-        Fpx = {}
-        for k in range(1, NFq + 1):
-            num = sum(Fxq[i] for i in range(k, NFq + 1)); den = sum(wlev[i] for i in range(k, NFq + 1))
-            Fpx[k] = min(max(num / den * wlev[k], 0.2 * SDSq * Ieq * wlev[k]), 0.4 * SDSq * Ieq * wlev[k])
+        Fpx_d = {}
+        for dq in ("X", "Y"):
+            Fxq = SFq[dq]["Fx"]; Fpx_d[dq] = {}
+            for k in range(1, NFq + 1):
+                num = sum(Fxq[i] for i in range(k, NFq + 1)); den = sum(wlev[i] for i in range(k, NFq + 1))
+                Fpx_d[dq][k] = min(max(num / den * wlev[k], 0.2 * SDSq * Ieq * wlev[k]), 0.4 * SDSq * Ieq * wlev[k])
+        Fpx = {k: max(Fpx_d["X"][k], Fpx_d["Y"][k]) for k in range(1, NFq + 1)}
         Fp_max = max(Fpx.values())
-        # story-stiffness soft-story screen (both directions) + torsion ratio -- computed BEFORE the
-        # collector seeding so a Type 1 torsional irregularity (TIR screen > 1.2) can trigger the
-        # 12.3.3.5 25% increase there
-        sxq = E.static_lateral(cfg, Fxq, "X"); syq = E.static_lateral(cfg, Fxq, "Y")
-        def _kratio(s_):
+        # story-stiffness soft-story screen (each direction with ITS OWN ELF forces) + the ONE torsion
+        # result (engine3d.torsion_summary: TIR with accidental torsion at the actual edges, Ax from
+        # displacements, Eq. 12.3-2 / 12.8-15) -- computed BEFORE the collector seeding so a Type 1
+        # torsional irregularity (TIR > 1.2) can trigger the 12.3.3.5 25% increase there
+        sxq = E.static_lateral(cfg, SFq["X"]["F_elf"], "X"); syq = E.static_lateral(cfg, SFq["Y"]["F_elf"], "Y")
+        def _kratio(s_, Fxq):
             dr = s_[2]
             Vst = [sum(Fxq[i] for i in range(k, NFq + 1)) for k in range(1, NFq + 1)]
             K = [abs(Vst[k - 1] / dr[k - 1]) if abs(dr[k - 1]) > 1e-12 else 1e9 for k in range(1, NFq + 1)]
             r1 = K[0] / K[1] if NFq >= 2 else 9.9
             r3 = K[0] / (sum(K[1:4]) / max(len(K[1:4]), 1)) if NFq >= 4 else r1
             return round(r1, 2), round(r3, 2)
-        kx, kx3 = _kratio(sxq); ky, ky3 = _kratio(syq)
+        kx, kx3 = _kratio(sxq, SFq["X"]["F_elf"]); ky, ky3 = _kratio(syq, SFq["Y"]["F_elf"])
         cls = ("none" if min(kx, ky) >= 0.70 and min(kx3, ky3) >= 0.80 else
                ("Type 1b EXTREME soft story (PROHIBITED SDC E/F, 12.3.3.1)"
                 if min(kx, ky) < 0.60 or min(kx3, ky3) < 0.70 else "Type 1a soft story"))
-        tr = max(sxq[4], syq[4])
+        TSq = E.torsion_summary(cfg)
+        tr = TSq["TIR"]
         # 7-22 Table 12.3-1/-1a: SINGLE Type 1 torsional irregularity keyed to the TIR with
-        # cumulative tiers >1.2 / >1.4 / >1.6 (no 1a/1b split, no SDC E/F prohibition). The engine
-        # ratio is a per-story DRIFT-based screen (the Eq. 12.3-2 TIR basis; static_lateral).
-        tcls = ("none" if tr <= 1.2 else
-                ("Type 1 torsional, TIR screen %.2f (>1.6 tier)" % tr if tr > 1.6 else
-                 "Type 1 torsional, TIR screen %.2f (>1.4 tier)" % tr if tr > 1.4 else
-                 "Type 1 torsional, TIR screen %.2f (>1.2 tier)" % tr))
-        Ax = round(min((tr / 1.2) ** 2, 3.0), 2) if tr > 1.2 else 1.0
+        # cumulative tiers >1.2 / >1.4 / >1.6 (no 1a/1b split, no SDC E/F prohibition).
+        tcls = TSq["classification"]
+        Ax = TSq["Ax_max"]
         # 12.3.3.5 (SDC D-F): 25% diaphragm-force increase for horizontal Type 1 (TIR>1.2),
         # 2 (re-entrant), 3, 4 (out-of-plane offset) or vertical Type 3. Type 4 is not auto-screened
         # here -- declare it via the collector design if present.
         tors_trig = tr > 1.2
         if pir.get("reentrant") or pir.get("setback") or tors_trig:
-            Om0q = float(cfg["seis"].get("Om0", 2.5) or 2.5)
+            Om0q = max(float(SFq["X"]["Om0"]), float(SFq["Y"]["Om0"]))   # 12.10.2.1, per-direction Om0
             bump = 1.25 if (pir.get("reentrant") or tors_trig) else 1.0
             pkg["connections"].append({
                 "id": "collector-irregularity-lines", "type": "collector / drag strut (SEEDED - REQUIRED)",
@@ -312,9 +311,25 @@ def design(name, outdir=None):
             "plan": {k: bool(v) for k, v in pir.items()},
             "soft_story": {"K1_over_K2": {"X": kx, "Y": ky}, "K1_over_avg3": {"X": kx3, "Y": ky3},
                            "classification": cls, "cite": "ASCE 7-22 Table 12.3-2 (computed)"},
-            "torsion": {"ratio_max": round(tr, 2), "classification": tcls, "Ax": Ax,
-                        "cite": "ASCE 7-22 Table 12.3-1 / 12.8.4.3 (computed)"},
+            "torsion": {"ratio_max": round(tr, 2), "TIR_X": round(TSq["X"]["TIR"], 3),
+                        "TIR_Y": round(TSq["Y"]["TIR"], 3), "classification": tcls, "Ax": Ax,
+                        "Ax_by_level": {d: {k: v for k, v in TSq[d]["Ax"].items()} for d in ("X", "Y")},
+                        "Ax_applied_to_Mta": bool(TSq["amplify"]),
+                        "drift_location": TSq["X"]["drift_location"],
+                        "cite": "ASCE 7-22 Eq. 12.3-2 / Table 12.3-1 / 12.8.4.3 Eq. 12.8-15 / 12.8.6.5 (computed)"},
+            "seismic_by_direction": {d: {kk: (round(v, 4) if isinstance(v, float) else v)
+                                         for kk, v in SFq[d].items() if kk in
+                                         ("T", "Tu", "Ta", "Cs", "V", "k", "R", "Cd", "Om0", "rho", "Ie", "system", "sfrs", "basis")}
+                                     for d in ("X", "Y")},
+            "seismic_demand_basis": SFq["basis"],
+            "mrsa": {d: ({"Vt_kip": round(SFq[d]["rs"]["Vt"], 1), "V_elf_kip": round(SFq[d]["V"], 1),
+                          "force_scale_12_9_1_4_1": round(SFq[d]["rs"]["force_scale"], 4),
+                          "drift_scale_12_9_1_4_2": round(SFq[d]["rs"]["drift_scale"], 4),
+                          "story_forces_scaled_kip": {k: round(v, 1) for k, v in SFq[d]["rs"]["F"].items()}}
+                         if SFq[d]["rs"] else None) for d in ("X", "Y")},
+            "seismic_warnings": SFq.get("warnings", []),
             "Fpx_kip_by_level": {k: round(v, 0) for k, v in Fpx.items()},
+            "Fpx_kip_by_level_dir": {d: {k: round(v, 0) for k, v in Fpx_d[d].items()} for d in ("X", "Y")},
         }
     except Exception as _se:
         pkg["framework_screen"] = {"error": "screen failed: %s" % _se}
@@ -371,9 +386,11 @@ def design(name, outdir=None):
     # ---- design_report.md ----
     with open(os.path.join(outdir, "design_report.md"), "w") as f:
         f.write("# %s - demand summary\n\n" % name)
+        _sx, _sy = E.seis_dir(cfg, "X"), E.seis_dir(cfg, "Y")
         f.write("Archetype: %s; %d storeys; system %s; R=%s, Ie=%s.\n\n"
                 % (cfg["arch"], len(cfg["heights"]), "CBF/dual" if cfg.get("braces") else "moment frame",
-                   cfg["seis"]["R"], cfg["seis"]["Ie"]))
+                   _sx["R"] if _sx["R"] == _sy["R"] else "%s (X) / %s (Y)" % (_sx["R"], _sy["R"]),
+                   cfg["seis"]["Ie"]))
         f.write("- Load combinations run: **%d** (LRFD, P-Delta each).\n" % len(cases))
         f.write("- Members enveloped: **%d** elements.\n" % len(reg))
         f.write("- **Capacities / D-C: derived by the agent from the AISC 360/341 RAG** (not computed by the framework).\n\n")

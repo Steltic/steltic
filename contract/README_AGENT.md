@@ -140,10 +140,15 @@ EBF/BRBF/steel-plate-shear-wall-core.
 
 ## 6. What "validated" means (the sanity-check suite)
 A model is `validated` when ALL pass: equilibrium (ΣR = Σapplied, both dirs);
-stability (lowest eigenvalue > 0); period (T1 within 0.5×–3× of ASCE 7 Ta — bare
-centreline models run flexible); cumulative effective modal mass ≥ 90% each
-direction; max interstorey drift < the ASCE 7 limit; ELF base shear recovered and
-modal (RS) base shear compared with the ELF V and scaled to 100 % V where smaller (ASCE 7-22 §12.9.1.4.1); plus torsion < 1.5 and dual ≥ 25% MF where applicable.
+stability (lowest eigenvalue > 0); period (each direction's dominant-mode T within 0.5×–3× of that
+direction's Ta — bare centreline models run flexible); cumulative effective modal mass ≥ 90% each
+direction; design story drift (each direction's Cd, at the §12.8.6.5 location — the edges for a Type 1
+torsional irregularity in SDC C–F — incl. any AISC 358 RBS factor) < the ASCE 7 limit; ELF base shear
+recovered and the modal (RS) forces handed to the demands scaled to 100 % V (ASCE 7-22 §12.9.1.4.1);
+stability coefficient θ ≤ θmax in both directions (§12.8.7); model_declared / model_consistent (checked
+against the BUILT model), model_complete and beam_deflection; and dual ≥ 25% MF where applicable. The
+torsional irregularity ratio (with accidental torsion, Eq. 12.3-2) is reported with Ax, not gated: a
+Type 1 irregularity changes the drift location, Ax and ρ instead.
 
 ---
 
@@ -343,8 +348,9 @@ nonlinear handling -- no superposition), **envelopes the per-member DEMANDS** (P
 combo), writes the demand package, and builds the report scaffold.
 
 It computes **NO AISC 360 capacity.** There is no coded E3/D2/F2-F6/G2/H1, no App.8 B2, and no
-AISC 341 SCWB check anywhere in this repo (the Ω0 column combinations — and the capacity-limited E_cl
-cases where the pipeline generates them, see pipeline output — are DEMANDS only). For **every** governing member and connection, the B2
+AISC 341 SCWB check anywhere in this repo (the Ω0 column combinations and the capacity-limited E_cl
+cases the pipeline runs for SCBF / EBF / BRBF / SPSW / OCBF V-beams — anything it cannot form is listed as
+NOT EVALUATED in design_report.md — are DEMANDS only). For **every** governing member and connection, the B2
 amplifier, and the seismic capacity-design check, **you** query the AISC 360 / 341 RAG, select the
 governing limit state, implement the exact equation (phi, limits, clause), compute the capacity and
 D/C, cite the Section + equation, and write `limit_state` / `cited` / `capacity` / `DC` into

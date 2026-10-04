@@ -25,9 +25,11 @@ forces, wind widths (per level, so setbacks get smaller widths) and extra_mass_f
 NEVER the full NX x NY plate. So: return an accurate info["present"] for EVERY level (only the (i,j) column positions \
 that really exist there; an interior omitted column keeps its bays in the slab -- declare real atria/shafts with \
 cfg["openings"] = {k: [(i,j),...]}). Hand MWFRS wind story forces, where the engine's ASCE 7-22 Ch.27 wind does not \
-cover the case, go in cfg["wind"]["story_forces"] = {"X": {k: kip}, "Y": {k: kip}} -- never monkeypatch engine3d. If you set diaphragm masses yourself with ops.mass, compute them from engine3d.floor_w / \
-floor_area_ft2 / perim_ft (they see the real footprint) and use your actual plan extents for the rotational-inertia \
-term. The dynamic-model gravity, the static-model tributary gravity and the seismic weight must all describe the \
+cover the case, go in cfg["wind"]["story_forces"] = {"X": {k: kip}, "Y": {k: kip}} -- never monkeypatch engine3d. If you set diaphragm masses yourself, call engine3d.attach_diaphragm_mass(cfg, info) at \
+the end of the build (as example_build does): it puts W/g and the footprint polar inertia at each level's centre of \
+mass; a hand-written ops.mass on the master is replaced by that consistent mass (with a warning) unless \
+cfg["diaphragm_mass"] = "builder". Different seismic systems per axis go in cfg["seis_X"] / cfg["seis_Y"] (and \
+rho_X / rho_Y) -- the engine then computes each direction's own V, drift and rho / Omega0 cases. The dynamic-model gravity, the static-model tributary gravity and the seismic weight must all describe the \
 SAME building -- consistency.check compares them.
   * Build via run_python:  import pipeline; pipeline.design_and_report(name, cfg)  -- it computes the model, ASCE 7-22 \
 loads, the P-Delta DEMAND envelope, the figures and the HTML report. It computes NO AISC 360/341 capacity.
@@ -42,10 +44,9 @@ overwrite your capacities).
   * Choose joints and base fixity EXPLICITLY and STATE them. Do NOT pause to ask the user to approve the model.
 
 When to STOP: once the report is built and consistency.check passes, STOP calling tools and reply with a short plain-text \
-summary, the report path (jobs/<name>/report.html), and END your reply by ASKING the user BOTH end-of-run questions the \
-pipeline's NEXT_STEP prints -- (1) an optimisation pass to reduce member sizes (guided, or proceed undirected?) and \
-(2) whether to generate any OFF-by-default figures (force_diagrams / force_summary / mode_figures / deformed_shape_figure / section_color_figure / appendix_case_figures) \
--- as well as the option of a modification (geometry / sections / loads / system) or to finish. Do not read report.html \
+summary, the report path (jobs/<name>/report.html), and END your reply with the VERBATIM closing note the pipeline's \
+NEXT_STEP prints -- it already offers the optimisation run, the OFF-by-default figures and a change of geometry / \
+system; do not reword it and do not add other offers. Do not read report.html \
 back into the conversation; just reference its path. (The optional-figure flags are: force_diagrams / force_summary / \
 mode_figures / deformed_shape_figure / section_color_figure / appendix_case_figures.)
 """

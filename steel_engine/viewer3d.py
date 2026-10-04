@@ -141,10 +141,14 @@ def _loads(cfg, info, coords, T1):
         pass
     # ---- ELF seismic story forces
     try:
-        Cs, V, Tu, Ta, kk, Fk, Wt = E.elf(cfg, T1)
+        # per direction (HR-01/02): each direction's own period and factors (engine3d.elf_dir)
+        rX = E.elf_dir(cfg, "X"); rY = E.elf_dir(cfg, "Y"); G = rX if rX[1] >= rY[1] else rY
         out["seis"] = {"z": [z[k] for k in range(1, NF + 1)],
-                       "F": [round(Fk[k], 1) for k in range(1, NF + 1)],
-                       "V": round(V, 1), "Cs": round(Cs, 4)}
+                       "X": [round(rX[5][k], 1) for k in range(1, NF + 1)],
+                       "Y": [round(rY[5][k], 1) for k in range(1, NF + 1)],
+                       "F": [round(G[5][k], 1) for k in range(1, NF + 1)],
+                       "V": round(G[1], 1), "Cs": round(G[0], 4),
+                       "VX": round(rX[1], 1), "VY": round(rY[1], 1)}
     except Exception:
         pass
     # ---- static model true tributary gravity (built LAST: build_static wipes the ops domain)
@@ -259,8 +263,8 @@ def _viewer_data(cfg, name, root):
     if umax is not None:
         stats.append(["Max D/C (screening)", "%.2f" % umax])
     if loads.get("seis"):
-        stats.append(["Seismic base shear V", "%.0f k (Cs=%.3f)" %
-                      (loads["seis"]["V"], loads["seis"]["Cs"])])
+        stats.append(["Seismic base shear V X / Y", "%.0f / %.0f k" %
+                      (loads["seis"].get("VX", loads["seis"]["V"]), loads["seis"].get("VY", loads["seis"]["V"]))])
     if loads.get("wind"):
         stats.append(["Wind base shear X / Y", "%.0f / %.0f k" %
                       (sum(loads["wind"]["X"]), sum(loads["wind"]["Y"]))])

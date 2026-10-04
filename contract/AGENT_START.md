@@ -76,15 +76,22 @@ the wrong units.
 ## Gotchas that fail SILENTLY (read this once — they will not error loudly)
 These are the traps that pass every obvious check yet corrupt the result. Most are now auto-handled by the
 framework; this list tells you what it does so you do not fight it.
-- **Braced systems are auto-detected.** The Omega0 capacity-design column combinations and the AISC 341/358
-  grounding now key off *brace elements in the BUILT model* (`engine3d.is_braced`), not just `cfg['braces']`.
+- **Braced systems are auto-detected.** The Omega0 column combinations and the AISC 341/358
+  grounding key off *brace elements in the BUILT model* (`engine3d.is_braced`), not just `cfg['braces']`.
   A `custom_build` that builds its own braces is recognised automatically — you do **not** need to also set
-  `cfg['braces']`. The Omega0 column combinations are generated for the braced columns, but **Omega0 is
-  not by itself the AISC 341 requirement**: SCBF/EBF/BRBF columns, beams and connections need the
-  capacity-limited seismic load effect E_cl (AISC 341-22 F2.3 / F3.3 / F4.3 — the expected brace / link
-  strengths) where it is less than the Omega0 effect only by the 341 exceptions. Where the pipeline
-  generates capacity-limited cases they appear in the combination list (see pipeline output); otherwise
-  derive the E_cl forces yourself and record them in `capacity_design`. (Setting `cfg['braces']` still works.)
+  `cfg['braces']`. Omega0 column cases (axial only, AISC 341-22 D1.4a(b)) are generated for the columns of
+  every braced frame and every R > 3 SFRS (moment frames included), each direction with its own Omega0.
+  **Omega0 is not by itself the AISC 341 requirement**: for SCBF, EBF, BRBF, SPSW (and OCBF V-beams, F1.4a)
+  the pipeline also runs capacity-limited E_cl cases (labelled "capacity-limited, AISC 341-22 F2.3 / F3.3 /
+  F4.3 / F5.3"): the yielding braces / links / webs are replaced by their expected or adjusted strengths,
+  yielding in X and Y together, and the column, beam, splice, base and brace-connection demands include
+  them (expected brace strengths are written into the brace-connection slots). The brace system comes from
+  `cfg['system']` (or `system_X`/`system_Y`, `cfg['brace_system']`); BRB strengths need `cfg['brb']` from the
+  supplier (the defaults are flagged ASSUMED). What the pipeline cannot form — STMF special segments (E4.3),
+  multi-tiered braced frames (F2.3(c)), SPSW tension-field flexure of the boundary elements, braces whose
+  system is not identified — is listed as **NOT EVALUATED** in `design_report.md` and
+  `calc_package['demand_analysis']['not_evaluated']`: derive those E_cl forces yourself and record them in
+  `capacity_design`. (Setting `cfg['braces']` still works.)
 - **`run()` == `run_one()`.** The quick `engine3d.run(cfg)` now reports the SAME gates as the pipeline
   (`model_complete`, `model_declared`/`model_consistent`, `beam_deflection`), so a quick "ALL PASS" can be
   trusted. There is no longer a looser quick check that hides a failing `model_complete`.
@@ -113,7 +120,9 @@ framework; this list tells you what it does so you do not fight it.
   Cp(L/B)·qh, mid-height wall bands of the real building volume (setbacks, split levels, lean-tos), G or the
   flexible Gf (§26.11; give `cfg['wind']['n1']` = 1/T1 for buildings that are not low-rise), the §27.1.5
   16/8 psf minimum and, with `cfg['wind']['roofs'] = {k: {eave_ft, ridge_ft, ridge:'X'|'Y'}}`, gable end walls
-  and roof slopes. `engine3d.wind_detail(cfg, 'X')` shows every number. Cases 2–4 (Fig. 27.3-8) and roof uplift
+  and roof slopes. `engine3d.wind_detail(cfg, 'X')` shows every number. The demand combinations add the MWFRS
+  roof suction (Fig. 27.3-1 roof Cp, `cfg['wind']['roof_uplift']`, default on) in 0.9D+1.0W, so base uplift and
+  roof-member reversal come from the pipeline; component-and-cladding uplift is yours. Cases 2–4 (Fig. 27.3-8)
   are not included: where they or another geometry govern, supply your hand MWFRS story forces with
   `cfg['wind']['story_forces'] = {'X': {k: kip}, 'Y': {k: kip}}` (no monkeypatching needed).
 - **Omitted columns do not punch holes in the slab.** `present` lists column positions; an interior grid node
@@ -323,7 +332,10 @@ fills each):
     in `engineering_standards_A360` Ch. J (+ `engineering_standards_A358` for the prequalified moment
     connection type, `engineering_standards_A341` for seismic forces)**, written as the `connections`
     block. A member-only design is incomplete.
-11. **Foundations interface** — *framework*: column base reactions / uplift (foundation design delegated).
+11. **Foundations interface** — *framework*: column base reactions / uplift enveloped over every combination
+    (incl. roof-uplift wind, Omega0 and E_cl cases) into the `conn-base-*` slots and `connection_demands.csv`;
+    **YOU** design the base plate / anchorage slots (AISC 360 J8/J9, ACI 318 Ch. 17) or waive them with a
+    justification that cites the clause (e.g. anchorage by the foundation engineer); foundation design delegated.
 12. **Drawings, specifications & documentation** — confirmed on the contract documents (out of scope here).
 13. **QA / professional acceptance** — *framework*: the equilibrium / modal / drift / θ scorecard **and
     the grounding verification**, which checks your activity log for the RAG queries your systems
@@ -337,8 +349,9 @@ shows your RAG-derived capacities, connection design, and capacity_design across
 **Tooling does the analysis (you cannot reason these out — they require solving the model):**
 - builds the 3D OpenSees model from a `cfg`, runs modal/eigen, ELF (per direction where declared),
   the response-spectrum base-shear check, and P-Δ second-order analysis of every combination; the
-  stability method applied to the demands (Direct Analysis Method stiffness reduction §C2.3 and notional
-  loads §C2.2b where enabled, or none) is stated in the pipeline output — **see pipeline output**, and
+  stability method applied to the demands (by default the Direct Analysis Method: 0.8EI/EA stiffness
+  reduction with τb per §C2.3 and notional loads §C2.2b; `cfg['dam'] = False` reverts to nominal stiffness)
+  is stated in `design_report.md` and `calc_package['demand_analysis']['dam']` — **see pipeline output**, and
   take K = 1 only when the DAM was applied;
 - on request, runs **any factored load combination you specify** and returns the resulting
   member forces (N, Mz, My, V) per element — see `run_case` below;

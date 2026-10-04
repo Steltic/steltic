@@ -708,7 +708,7 @@ def _consultancy_issues(cfg, pkg):
                     and float((m.get("inputs") or {}).get("length_in") or 0) >= 480 for m in mem)
     if roof_long and "ponding" not in blob:
         out.append("long-span (>=40 ft) roof framing and NO ponding evaluation in calc_package -- "
-                   "check ponding stability/impounded rain (AISC 360-22 App. 2 / ASCE 7-22 Ch. 8: "
+                   "check ponding stability/impounded rain (AISC 360-22 B3.10 / ASCE 7-22 Ch. 8: "
                    "roof slope + secondary drainage head) and record it")
     # A6 footfall vibration: long floor spans or vibration-sensitive occupancy
     floor_long = any(isinstance(m, dict) and (m.get("inputs") or {}).get("role") == "floor"

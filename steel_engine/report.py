@@ -349,12 +349,20 @@ def _case_desc(label, col_only):
         d = "X (E–W)" if "WX" in L else "Y (N–S)"
         upl = " (uplift / overturning case, 0.9D)" if L.startswith("0.9") else ""
         return f"Wind acting in the {d} direction, combined with gravity{upl}."
+    if "Ecl[" in L or "capacity-limited" in L:
+        upl = " on the 0.9D (uplift) gravity case" if L.startswith("(0.9") else ""
+        return ("Capacity-limited seismic load effect E<sub>cl</sub>" + upl + ": the yielding braces / links / "
+                "webs are replaced by their expected (or adjusted) strengths, yielding in X and Y together "
+                "(ASCE 7-22 &sect;12.4.3.2; AISC 341-22 Chapter F, as labelled).")
+    if "OCBF V-beam" in L:
+        return ("OCBF V / inverted-V beams: braces removed and the beam loaded by min(&Omega;<sub>0</sub>E, "
+                "R<sub>y</sub>F<sub>y</sub>A<sub>g</sub>) in tension and 0.3P<sub>n</sub> in compression "
+                "(AISC 341-22 F1.4a(a)).")
     if "Om0" in L:
         d = "X (E–W)" if "EX" in L else "Y (N–S)"
         upl = " on the 0.9D (uplift) gravity case" if L.startswith("(0.9") else ""
-        return (f"Capacity-design (overstrength, \\(\\Omega_0\\)) seismic in the {d} direction{upl} — applied "
-                "to the columns only, so they remain elastic while the braces/beams yield (AISC 341 / "
-                "ASCE 7 §12.4.3).")
+        return (f"Overstrength (\\(\\Omega_0\\)) seismic in the {d} direction{upl} — column axial only "
+                "(ASCE 7-22 §12.4.3; AISC 341-22 D1.4a(b)).")
     if "rhoE" in L:
         d = "X (E–W)" if "EX" in L else "Y (N–S)"
         sense = "positive" if ("EX+" in L or "EY+" in L) else "negative"
@@ -525,7 +533,8 @@ def _wind_section(cfg):
              "story shear. Wall loads are shared between the two diaphragms each wall spans (mid-height "
              "bands of the actual building volume); the bottom half of the lowest storey goes straight to "
              "the foundation. Each level is not less than the §27.1.5 minimum (16 psf walls, 8 psf roof). "
-             "Fig. 27.3-8 Cases 2–4 (eccentric/torsional) and roof uplift are not included here.</p>",
+             "Fig. 27.3-8 Cases 2–4 (eccentric/torsional) are not included here; the MWFRS roof suction "
+             "(Fig. 27.3-1 roof C<sub>p</sub>) is applied in the demand combination 0.9D+1.0W.</p>",
              _table(["Parameter", "Value"], [["Basic wind speed V", f"{w.get('V')} mph"],
                     ["Exposure / Kd / Kzt / Ke", f"{DX['exposure']} / {w.get('Kd',0.85)} / {w.get('Kzt',1.0)} / {w.get('Ke',1.0)}"],
                     ["Mean roof height h", f"{DX['h_ft']:.1f} ft"],
@@ -1906,22 +1915,44 @@ def _floor_serviceability(pkg):
             + _table(["Member", "Section", "Live &delta;", "Limit", "Total &delta;", "Limit", "Camber", "&le; limit"], rows))
 
 def _combo_notes(cfg):
-    s = cfg["seis"]; SDS = s["SDS"]; rho = cfg.get("rho", 1.3); Om0 = s.get("Om0")
+    s = cfg["seis"]; SDS = s["SDS"]
+    def _pd(key, default):
+        # per-direction factor (engine3d.seis_dir, ASCE 7-22 12.2.2); one value when X == Y
+        try:
+            v = {d: E.seis_dir(cfg, d).get(key) for d in ("X", "Y")}
+        except Exception:
+            v = {d: (cfg.get(key) if key == "rho" else s.get(key)) for d in ("X", "Y")}
+        v = {d: (default if x is None else x) for d, x in v.items()}
+        return str(v["X"]) if v["X"] == v["Y"] else "%s (X) / %s (Y)" % (v["X"], v["Y"])
+    rho = _pd("rho", 1.3); Om0 = _pd("Om0", 2.0)
+    dam = cfg.get("dam", True) is not False
     return ("<p>The analysed set is the ASCE 7-22 &sect;2.3 LRFD strength combinations:</p><ul>"
             f"<li><b>Vertical seismic E<sub>v</sub></b> = 0.2&middot;S<sub>DS</sub>D = {0.2*SDS:.2f}D is folded into the "
             f"D factor: seismic combinations use (1.2+0.2S<sub>DS</sub>)D = {1.2+0.2*SDS:.2f}D and "
             f"(0.9&minus;0.2S<sub>DS</sub>)D = {0.9-0.2*SDS:.2f}D.</li>"
-            f"<li><b>Redundancy &rho;</b> = {rho} multiplies the horizontal seismic effect Q<sub>E</sub> (&sect;12.3.4).</li>"
-            f"<li><b>Overstrength &Omega;<sub>0</sub></b> = {Om0}: the <i>columns-only</i> cases apply "
-            "E<sub>m</sub> = &Omega;<sub>0</sub>Q<sub>E</sub> to the capacity-protected columns (&sect;12.4.3) and are "
-            "not applied to other members.</li>"
+            f"<li><b>Redundancy &rho;</b> = {rho} multiplies the horizontal seismic effect Q<sub>E</sub> of its "
+            "direction (&sect;12.3.4).</li>"
+            f"<li><b>Overstrength &Omega;<sub>0</sub></b> = {Om0}: the <i>columns-only</i> [col] cases apply "
+            "E<sub>mh</sub> = &Omega;<sub>0</sub>Q<sub>E</sub> to the columns of every braced frame and every R &gt; 3 "
+            "system, axial only (&sect;12.4.3; AISC 341-22 D1.4a(b)), and are not applied to other members.</li>"
+            "<li><b>Capacity-limited E<sub>cl</sub></b> (&sect;12.4.3.2; AISC 341-22 F2.3 / F3.3 / F4.3 / F5.3, and "
+            "F1.4a(a) for OCBF V-beams): where the system has yielding braces / links / webs, separate cases replace "
+            "them by their expected or adjusted strengths, yielding in X and Y together; their results enter the "
+            "column, beam, splice, base and brace-connection demands. Items the framework cannot form are listed "
+            "as NOT EVALUATED in the demand summary (design_report.md).</li>"
             "<li><b>Directional 100/30</b>: each seismic case carries 100% of F<sub>x</sub> in the loaded direction "
-            "plus 30% in the orthogonal direction (&sect;12.5.3/12.5.4).</li>"
-            "<li><b>Accidental torsion</b> &plusmn;M<sub>t</sub> = &plusmn;0.05B&middot;F<sub>x</sub> (&sect;12.8.4.2) "
-            "is applied in both signs.</li>"
-            "<li><b>Net uplift / overturning</b> is checked by the 0.9D combinations (minimum gravity with lateral).</li>"
+            "plus 30% of the orthogonal direction's own forces and factor, in both signs (&sect;12.5.3/12.5.4).</li>"
+            "<li><b>Accidental torsion</b> &plusmn;M<sub>t</sub> = &plusmn;0.05B&middot;A<sub>x</sub>&middot;F<sub>x</sub> "
+            "(&sect;12.8.4.2/12.8.4.3), with the story forces applied at the centre of mass, in both signs.</li>"
+            "<li><b>Net uplift / overturning</b> is checked by the 0.9D combinations (minimum gravity with lateral); "
+            "0.9D+1.0W includes the MWFRS roof suction (Fig. 27.3-1), and the column-base reactions are enveloped "
+            "over every combination (incl. &Omega;<sub>0</sub> and E<sub>cl</sub>).</li>"
             "<li><b>Second order</b>: every combination is solved independently through a P-&Delta; analysis; "
-            "factored second-order results are never superposed.</li></ul>")
+            "factored second-order results are never superposed. "
+            + ("The strength model uses the Direct Analysis Method (AISC 360-22 C2: 0.8 stiffness reduction with "
+               "&tau;<sub>b</sub> per C2.3, notional loads N<sub>i</sub> = 0.002Y<sub>i</sub> per C2.2b); drift, "
+               "periods and deflections use nominal stiffness.</li></ul>" if dam else
+               "cfg['dam'] = False: nominal stiffness, no notional loads -- not the Direct Analysis Method.</li></ul>"))
 
 def _modal_mass_check(eX, eY):
     cx = sum(eX); cy = sum(eY)
@@ -1936,10 +1967,12 @@ def _stability_basis_note(cfg=None):
     stiffness per C2.3 and notional loads per C2.2b, or the equivalent) -- otherwise Appendix 7."""
     cfg = cfg or {}
     meth = cfg.get("stability_method") or cfg.get("analysis_method")
-    mtxt = ("cfg declares the stability design method <b>%s</b>; the stiffness reductions / notional loads the "
-            "demand pipeline applied are recorded in the pipeline output (design/)" % _esc(meth)) if meth else \
-           ("the stability design method applied by the demand pipeline (Direct Analysis Method stiffness reduction "
-            "and notional loads, or none) is recorded in the pipeline output (design/) &mdash; see pipeline output")
+    dam = cfg.get("dam", True) is not False
+    applied = ("the demand pipeline applied the Direct Analysis Method (AISC 360-22 C2: 0.8 stiffness reduction, "
+               "&tau;<sub>b</sub> per C2.3, notional loads 0.002Y<sub>i</sub> per C2.2b; recorded in "
+               "calc_package demand_analysis.dam)" if dam else
+               "cfg['dam'] = False: the demand pipeline used nominal stiffness without notional loads (not DAM)")
+    mtxt = ("cfg declares the stability design method <b>%s</b>; %s" % (_esc(meth), applied)) if meth else applied
     return ("<p class='cnote'><b>Analysis basis:</b> a second-order P-&Delta; geometric transformation is applied to "
             "the columns under every factored combination (no superposition of factored results); %s. Member "
             "effective length K = 1 is valid only under the Direct Analysis Method of AISC 360-22 &sect;C1/C2 "
@@ -2798,9 +2831,13 @@ def build_report(name, root=None):
             srows = []
             for _ci, combo in enumerate(cases):
                 label, fD, fL, fLr, lat, col_only = combo
-                if col_only:        # Omega0 column-overstrength: column-axial only -> reported in the member schedule (Ch.6)
+                if col_only:        # Omega0 / E_cl cases: member-specific -> reported in the member schedule (Ch.6)
                     if _want_summary:
-                        srows.append([label, "&mdash;", "&Omega;<sub>0</sub> column overstrength (see Ch. 6)", "&mdash;", ""])
+                        _kd = getattr(combo, "kind", "")
+                        _what = ("capacity-limited E<sub>cl</sub> (AISC 341-22 Ch. F; see Ch. 6)" if _kd == "ecl" else
+                                 "OCBF V-beam F1.4a(a) (see Ch. 6)" if _kd == "ecl_ocbf" else
+                                 "&Omega;<sub>0</sub> column overstrength, axial (see Ch. 6)")
+                        srows.append([label, "&mdash;", _what, "&mdash;", ""])
                     continue
                 try:
                     _ckey = (str(label), bool(_want_casefigs))

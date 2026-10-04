@@ -332,7 +332,7 @@ function lateralGroup(kind){
   if (!d) return g;
   const cx = (bmin[0]+bmax[0])/2, cy = (bmin[1]+bmax[1])/2;
   const col = LOAD_COL[kind === 'wind' ? 'wind' : 'seis'];
-  const FXs = kind === 'wind' ? d.X : d.F, FYs = kind === 'wind' ? d.Y : d.F;
+  const FXs = (kind === 'wind' || d.X) ? d.X : d.F, FYs = (kind === 'wind' || d.Y) ? d.Y : d.F;
   const fmax = Math.max(...FXs, ...FYs) || 1;
   d.z.forEach((z,i)=>{
     const lx = MAXD*0.05 + MAXD*0.1*(FXs[i]/fmax);

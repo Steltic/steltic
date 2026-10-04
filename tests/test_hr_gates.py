@@ -305,6 +305,11 @@ def test_gate_stale_and_consistency_issues(tmp_path):
     (jd / "cfg.py").write_text("cfg = {'changed': 1}\n")
     p = _gate(jd)
     assert any("STALE" in x for x in p) and any("OLDER calc_package.json / cfg.py" in x for x in p)
+    # VERIFY: sanity results written while no cfg.py existed (cfg_sha256 None) are not tied to the delivered cfg
+    jd = _job(tmp_path)
+    rp = jd / "design" / "pipeline_results.json"
+    r = json.loads(rp.read_text()); r["cfg_sha256"] = None; rp.write_text(json.dumps(r))
+    assert any("STALE" in x for x in _gate(jd))
     iss = "[capacity_design] 'x' is a symbolic REQUIREMENT, not a COMPUTED check -- substitute"
     assert any(x.startswith("consistency: [capacity_design]") for x in _gate(_job(tmp_path, issues=[iss])))
     w = {"gate_waivers": {"consistency: [capacity_design] 'x'": "a stated supplier criterion, not a check"}}

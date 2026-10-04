@@ -389,16 +389,21 @@ def test_model_gate_reads_the_built_model():
 
 
 def test_theta_formula(monkeypatch):
+    # merged engine: the gate and the report share engine3d.theta_rows; the drift is seismic_drift's
+    # elastic drift at the 12.8.6.5 location and the story shears are each direction's ELF forces
     c = _ecfg(custom_build=_frame())
     Fx = {1: 10.0, 2: 20.0}
-    monkeypatch.setattr(E, "_edge_story_drifts", lambda cfg, F, d: (None, [0.004, 0.002]))
-    th = E.stability_theta(c, Fx, Fx)
+    drift = {"v": [0.004, 0.002]}
+    monkeypatch.setattr(E, "seismic_drift", lambda cfg: {d: {"elastic": list(drift["v"])} for d in ("X", "Y")})
+    monkeypatch.setattr(E, "seismic_design_forces", lambda cfg: {d: {"F_elf": Fx} for d in ("X", "Y")})
+    th = E.stability_theta(c)
     P1 = sum(E.floor_dead(c, k) + 0.5 * 0.4 * E.floor_live(c, k) for k in (1, 2))
     raw = P1 * 0.004 / 30.0
     assert th["X"][0] == pytest.approx(round(raw / (1 + raw), 4), abs=1e-4)
-    assert th["theta_max"] == pytest.approx(max(min(0.5 / 5.5, 0.25), 0.10))        # 0.0909 -> 0.10 floor
-    monkeypatch.setattr(E, "_edge_story_drifts", lambda cfg, F, d: (None, [0.2, 0.002]))
-    assert not E.stability_theta(c, Fx, Fx)["ok"]
+    Cd = E.seis_dir(c, "X")["Cd"]
+    assert th["theta_max"] == pytest.approx(round(max(min(0.5 / Cd, 0.25), 0.10), 4))   # 0.10 floor for Cd >= 5
+    drift["v"] = [0.2, 0.002]
+    assert not E.stability_theta(c)["ok"]
 
 
 def test_dual_share_from_the_analysed_custom_build():

@@ -85,6 +85,8 @@ def test_theta_max_cap_and_beta_lower_bound():
     runs = _fake_runs(cfg, [0.1] * 4, [100.0] * 4, Cd=1.5)
     assert R._theta_rows(cfg, runs, "X")[1] == pytest.approx(0.25)        # capped
     cfg2 = _rect(theta_beta=0.2); cfg2["seis"]["Om0"] = 2.5                # beta >= 1.25/Om0 = 0.5
+    # an explicit Om0 (hr-seismic HR-20: a value still listed in '_auto' is re-derived from the system)
+    cfg2["seis"]["_auto"] = [k for k in (cfg2["seis"].get("_auto") or []) if k != "Om0"]
     runs = _fake_runs(cfg2, [0.1] * 4, [100.0] * 4, Cd=4.0)
     t, tm, b = R._theta_rows(cfg2, runs, "X")
     assert b == pytest.approx(0.5) and tm == pytest.approx(0.25)

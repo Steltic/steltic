@@ -1226,6 +1226,17 @@ def _theta_rows(cfg, runs, d):
     The drifts come from a P-Delta analysis, so theta from Eq. 12.8-18 is divided by (1 + theta)
     before the Eq. 12.8-19 check, as 12.8.7 permits; both values are reported."""
     r = runs[d]
+    if hasattr(E, "theta_rows"):
+        # ONE implementation shared with the stability_theta gate (engine3d.theta_rows); the report passes
+        # its drift profile (the engine's 12.8.6.5 elastic drift x any extra RBS factor found only in the
+        # calc package) and story shears, so Ch. 7, the QA table and the gate agree
+        try:
+            rows, tmax, beta = E.theta_rows(cfg, d, dxe=r["dxe"], V=r["V"], Cd=r.get("Cd"), Ie=r.get("Ie"))
+            ex = runs["exempt"]
+            for x in rows: x["exempt"] = x["exempt"] or (x["s"] in ex)
+            return rows, tmax, beta
+        except Exception:
+            pass
     NF = len(cfg["heights"]); h = cfg["heights"]
     sd = _seis_d(cfg, d); Cd = r["Cd"]; Om0 = float(sd.get("Om0", 3.0) or 3.0)
     beta = max(float(cfg.get("theta_beta", 1.0) or 1.0), 1.25 / Om0)

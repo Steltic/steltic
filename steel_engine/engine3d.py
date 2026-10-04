@@ -2169,62 +2169,76 @@ def build_info_cache(cfg):
 # ---------------------------------------------------------------------------------------------
 # HR-14: story stability coefficient theta (ASCE 7-22 12.8.7) -- a sanity GATE, both directions
 # ---------------------------------------------------------------------------------------------
-def _edge_story_drifts(cfg, Fx, direction):
-    """Per-story drift RATIO at the diaphragm edge with the largest drift (12.8.6 / Table 12.3-1a):
-    |CM drift| + |story rotation| x (largest distance from the CM to a diaphragm node), from a
-    P-Delta static_lateral run (gravity included). Returns (static_lateral result, [ratio per story])."""
-    s = static_lateral(cfg, Fx, direction)
-    NF = len(cfg["heights"]); di = 0 if direction == "X" else 1; z = zlevels(cfg)
-    byz = {}
-    for t in ops.getNodeTags():
-        try:
-            c = ops.nodeCoord(t)
-        except Exception:
-            continue
-        byz.setdefault(round(c[2], 3), []).append((t, c))
-    out = []; pd_ = 0.0; pr_ = 0.0
+def theta_px(cfg):
+    """{level: P contribution} for 12.8.7: 1.0D (floor_dead: dead + cladding + extra) + 0.5L with
+    L = 0.4L0, or 0.8L0 where L0 > 100 psf (12.8.6.1), on the ACTUAL floor area; roof live excluded.
+    No individual load factor exceeds 1.0 (12.8.7)."""
+    NF = len(cfg["heights"]); P = {}
     for k in range(1, NF + 1):
-        m = mtag(k)
-        u = ops.nodeDisp(m, di + 1); rz = ops.nodeDisp(m, 6); cm = ops.nodeCoord(m)
-        pts = [c for (t, c) in byz.get(round(z[k], 3), []) if t != m]
-        edge = max((abs(c[1 - di] - cm[1 - di]) for c in pts), default=0.0)
-        out.append((abs(u - pd_) + abs(rz - pr_) * edge) / cfg["heights"][k - 1])
-        pd_, pr_ = u, rz
-    return s, out
+        if k < NF:
+            L0 = float(_Llev(cfg, k) or 0.0)
+            Lk = (0.8 if L0 > 100.0 else 0.4) * L0 * floor_area_ft2(cfg, k) / 1000.0
+        else:
+            Lk = 0.0
+        P[k] = floor_dead(cfg, k) + 0.5 * Lk
+    return P
 
 
-def stability_theta(cfg, FxX, FxY):
-    """theta per story, both directions (ASCE 7-22 12.8.7). Px = 1.0D + 0.5L with L = 0.4L0
-    (0.8L0 where L0 > 100 psf) on the ACTUAL floor area (12.8.6.1; no load factor > 1.0);
-    Delta_xe = the story drift at the diaphragm EDGE with the largest drift (12.8.6), from P-Delta
-    static analyses under the design story forces; theta = Px*Delta_xe/(Vx*hsx) (Eq. 12.8-18 with
-    Delta = Cd*Delta_xe/Ie), divided by (1+theta) because the analysis already includes P-Delta
-    (12.8.7); theta_max = 0.5/(beta*Cd) <= 0.25 with beta = 1.0 (permitted), not less than 0.10
-    (Eq. 12.8-19). Declared drift-exempt inter-diaphragm offsets are skipped."""
-    NF = len(cfg["heights"]); Cd = float(cfg["seis"]["Cd"])
-    tmax = max(min(0.5 / (1.0 * Cd), 0.25), 0.10)
+def theta_rows(cfg, d, dxe=None, V=None, Cd=None, Ie=None):
+    """ASCE 7-22 12.8.7 stability coefficient per story in direction d -- the ONE implementation behind
+    the stability_theta gate and the report's Chapter 7 / QA table (hr-gates HR-14 + hr-report HR-24):
+        theta = P_x * Delta_xe / (V_x * h_sx)   (Eq. 12.8-18 with Delta = Cd*Delta_xe/Ie)
+      P_x      theta_px (unfactored, 12.8.6.1);
+      Delta_xe the elastic story drift at the 12.8.6.5 location (seismic_drift()[d]['elastic']: CM, or
+               the edges incl. accidental torsion x Ax for Type 1 in SDC C-F; incl. the AISC 358 RBS
+               factor), unless the caller passes dxe (ratios per story);
+      V_x      story shear of that direction's ELF forces (or V);
+      theta / (1 + theta) because the drifts come from a P-Delta analysis (12.8.7);
+      theta_max = 0.5/(beta*Cd_d) <= 0.25, beta = cfg['theta_beta'] (default 1.0, never < 1.25/Omega0_d),
+               not less than 0.10 (Eq. 12.8-19). Declared drift-exempt stories are marked.
+    Returns (rows, theta_max, beta)."""
+    NF = len(cfg["heights"]); h = cfg["heights"]
+    sd = seis_dir(cfg, d)
+    Cd = float(Cd if Cd is not None else (sd.get("Cd", 5.0) or 5.0))
+    Ie = float(Ie if Ie is not None else (sd.get("Ie", 1.0) or 1.0))
+    Om0 = float(sd.get("Om0", 3.0) or 3.0)
+    beta = max(float(cfg.get("theta_beta", 1.0) or 1.0), 1.25 / Om0)
+    tmax = max(min(0.5 / (beta * Cd), 0.25), 0.10)
+    if dxe is None:
+        dxe = [abs(v) for v in seismic_drift(cfg)[d]["elastic"]]
+    if V is None:
+        F = seismic_design_forces(cfg)[d]["F_elf"]
+        V = [sum(F[k] for k in range(s_, NF + 1)) for s_ in range(1, NF + 1)]
     dex = set(int(k) for k in (cfg.get("drift_exempt_stories") or {}))
-    P = []
-    for k in range(1, NF + 1):
-        L0 = floor_live(cfg, k)
-        lf = 0.8 if (k < NF and _Llev(cfg, k) > 100.0) else 0.4
-        P.append(floor_dead(cfg, k) + 0.5 * lf * L0)
-    out = {"theta_max": round(tmax, 4), "beta": 1.0,
-           "basis": "ASCE 7-22 12.8.7 Eq. 12.8-18/-19; Px = D + 0.5(0.4L0) (12.8.6.1); largest-edge story drift; "
-                    "/(1+theta) for the P-Delta analysis; drift-exempt offsets skipped"}
-    worst = 0.0
-    for d, Fx in (("X", FxX), ("Y", FxY)):
-        _s, dr = _edge_story_drifts(cfg, Fx, d); vals = []
-        for k in range(1, NF + 1):
-            Vx = sum(Fx[i] for i in range(k, NF + 1)); Px = sum(P[k - 1:])
-            if k in dex or abs(Vx) < 1e-9:
-                vals.append(None); continue
-            th = Px * abs(dr[k - 1]) / abs(Vx)
-            th = th / (1.0 + th)
-            vals.append(round(th, 4)); worst = max(worst, th)
-        out[d] = vals
-    out["max"] = round(worst, 4)
-    out["ok"] = worst <= tmax + 1e-9
+    P = theta_px(cfg); rows = []
+    for s_ in range(1, NF + 1):
+        Px = sum(P[k] for k in range(s_, NF + 1)); Vx = V[s_ - 1]; dx = abs(dxe[s_ - 1]) * h[s_ - 1]
+        raw = Px * dx / (Vx * h[s_ - 1]) if abs(Vx) > 1e-9 else 0.0
+        rows.append(dict(s=s_, Px=Px, Vx=Vx, h=h[s_ - 1], dxe=dx, Delta=dx * Cd / Ie,
+                         raw=raw, theta=raw / (1.0 + raw), exempt=(s_ in dex)))
+    return rows, tmax, beta
+
+
+def stability_theta(cfg, FxX=None, FxY=None):
+    """Stability-coefficient GATE, both directions (ASCE 7-22 12.8.7) -- theta_rows per direction (the
+    same rows the report prints). FxX / FxY are accepted for backward compatibility and ignored: the
+    story shears are each direction's own ELF forces and the drift is seismic_drift's elastic drift at the
+    12.8.6.5 location (incl. RBS). Returns {'X': [theta|None per story], 'Y': [...], 'theta_max_X/Y',
+    'max' / 'theta_max' (the direction with the largest theta/theta_max), 'ok'}."""
+    out = {"basis": "ASCE 7-22 12.8.7 Eq. 12.8-18/-19; Px = D + 0.5(0.4L0) (12.8.6.1); elastic drift at the "
+                    "12.8.6.5 location (seismic_drift, incl. AISC 358 RBS); each direction's Cd/Omega0; "
+                    "/(1+theta) for the P-Delta analysis; drift-exempt stories skipped"}
+    ok = True; gov = (-1.0, 0.0, 0.10)
+    for d in ("X", "Y"):
+        rows, tmax, beta = theta_rows(cfg, d)
+        vals = [None if r["exempt"] else round(r["theta"], 4) for r in rows]
+        out[d] = vals; out["theta_max_" + d] = round(tmax, 4); out["beta_" + d] = round(beta, 4)
+        w = max([v for v in vals if v is not None] or [0.0])
+        ok = ok and w <= tmax + 1e-9
+        if w / tmax > gov[0]:
+            gov = (w / tmax, w, tmax)
+    out["max"] = round(gov[1], 4); out["theta_max"] = round(gov[2], 4); out["ratio"] = round(gov[0], 4)
+    out["beta"] = out.get("beta_X"); out["ok"] = bool(ok)
     return out
 
 def floor_beam_gaps(cfg, transf="Linear"):

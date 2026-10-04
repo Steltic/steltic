@@ -290,6 +290,17 @@ def design(name, outdir=None):
         else:
             missing.append(t)
         score[t] = (max(env[t]["comp"], env[t]["tens"]) if reg[t][0] in ("col", "brace") else env[t]["Mz"])
+    _R = float(cfg["seis"].get("R", 0) or 0)
+    if _R > 3.0 and E.is_braced(cfg):
+        _sy = _ecl_systems(cfg)
+        if None in _sy:
+            dinfo.setdefault("not_evaluated", []).append(
+                "capacity-limited (Ecl) demands NOT EVALUATED for braces whose AISC 341 system is not "
+                "identified -- declare cfg['system'] (SCBF / OCBF / BRBF / EBF / SPSW) or cfg['brace_system']")
+    if _R > 3.0 and "STMF" in SM._sys_tokens(cfg):
+        dinfo.setdefault("not_evaluated", []).append(
+            "STMF special-segment capacity-limited analysis (AISC 341-22 E4.3) NOT EVALUATED -- the "
+            "agent must derive the expected special-segment strengths and the resulting demands")
     if missing:
         dinfo.setdefault("warnings", []).append(
             "%d element(s) of the dynamic model have no static-model demand (end nodes not matched), e.g. %s"

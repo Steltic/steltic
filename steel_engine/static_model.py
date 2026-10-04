@@ -1645,8 +1645,6 @@ def ecl_plan(cfg, model, desig):
                      "tension diagonal(s) (0.5*Ry*Fy*tw*L*sin2a horizontal) and HBE 1.1*Ry*Mp hinge SHEARS "
                      "2(1.1RyMp)/L on the VBEs; the distributed tension-field flexure of VBE/HBE "
                      "(RyFy*tw*sin^2a, cos^2a) and the HBE hinge MOMENTS are NOT EVALUATED -- add them by hand")
-    if "STMF" in _sys_tokens(cfg):
-        ne.append("STMF special-segment capacity analysis (AISC 341-22 E4.3) NOT EVALUATED")
     return dict(drop=drop, braces=braces, links=links, spsw=spsw, ocbf=ocbf, notes=notes,
                 not_evaluated=ne, desig=desig)
 

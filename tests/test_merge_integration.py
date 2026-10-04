@@ -105,3 +105,13 @@ def test_combinations_use_per_direction_factors_and_flip_the_companion_consisten
     # collector statics use each direction's ELF forces and Omega0
     col = DP.collector_extras(c)
     assert col["Y"][1][1] == pytest.approx(2.0) and col["X"][1][1] == pytest.approx(SF["X"]["Om0"])
+
+
+def test_consistency_requires_the_rbs_declaration_the_package_designs():
+    import consistency as C
+    pkg = {"connections": [{"id": "conn-beam-W24X55", "type": "RBS moment connection (AISC 358 Ch. 5)"}]}
+    c = _cfg()
+    assert any("RBS" in x for x in C._rbs_declaration_issues(c, pkg))
+    c["rbs"] = {"c_over_bf": 0.25}
+    assert C._rbs_declaration_issues(c, pkg) == []
+    assert C._rbs_declaration_issues(_cfg(), {"connections": [{"id": "x", "type": "WUF-W"}]}) == []

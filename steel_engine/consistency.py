@@ -791,6 +791,25 @@ def _record_result(root, name, issues):
         pass                                   # recording must never break the check itself
 
 
+def _rbs_declaration_issues(cfg, pkg):
+    """AISC 358-22 5.7 Step 1: a calc package that designs RBS moment connections must have the RBS drift
+    factor in the ENGINE drift gate, i.e. cfg['rbs'] / cfg['rbs_drift_factor'] (or 'RBS' in the system text).
+    Otherwise the report applies 1.1 on its own and the gate, the report and the package show different
+    drifts (integration of hr-report HR-22 with hr-seismic's seismic_drift)."""
+    try:
+        if not isinstance(cfg, dict) or not re.search(r"\bRBS\b|reduced[- ]beam[- ]section", json.dumps(pkg or {}), re.I):
+            return []
+        import engine3d as _E
+        if any(_E.rbs_drift_factor(cfg, d)[0] > 1.0 for d in ("X", "Y")):
+            return []
+        return ["calc_package designs RBS (reduced beam section) connections but cfg declares no RBS -- the drift "
+                "gate omits the AISC 358-22 5.7 Step 1 factor (up to 1.1 x drift) that the report applies: declare "
+                "cfg['rbs'] = {'c_over_bf': c/bbf, 'dirs': 'X'|'Y'|'XY'} (or True / cfg['rbs_drift_factor']) and re-run "
+                "design_and_report"]
+    except Exception:
+        return []
+
+
 def check(name, root=None, pkg=None, verbose=True):
     """Run the self-consistency check. Returns a list of issue strings ([] == consistent).
     The verdict is also written to design/consistency_result.json (with the hashes of the package
@@ -842,6 +861,7 @@ def check(name, root=None, pkg=None, verbose=True):
     issues += _named_not_computed_issues(pkg)               # R9 named-not-computed
     issues += _system_checks_issues(_dcfg, pkg)             # R9 per-system required checks
     issues += _completeness_issues(pkg)
+    issues += _rbs_declaration_issues(_dcfg, pkg)            # HR-22 x HR-09: one drift for gate/report/package
     _same = _from_disk
     if not _same:
         try:

@@ -302,7 +302,10 @@ def increase_12_2_5_4(cfg, pkg_evidence=None):
     """Evaluate the ASCE 7-22 12.2.5.4 increased height limit for this cfg.
     Evidence comes from cfg['height_increase_12_2_5_4'] (or, in consistency.check, from
     calc_package capacity_design['height_limit']) = {'TIR_max': x, 'max_plane_share_X': a,
-    'max_plane_share_Y': b} -- NUMBERS, neglecting accidental torsion. Returns (ok, why)."""
+    'max_plane_share_Y': b} -- NUMBERS; shares are FRACTIONS of the direction's total seismic force
+    resisted by the most-loaded plane, neglecting accidental torsion (a value > 1 is a plane carrying
+    more than the story force, e.g. with reversed shear on other lines); 'max_plane_share_X_pct'
+    takes a percentage. Returns (ok, why)."""
     ev = pkg_evidence if isinstance(pkg_evidence, dict) else cfg.get(H_INC_KEY)
     if not isinstance(ev, dict):
         return False, ("no 12.2.5.4 evidence: record calc_package capacity_design['height_limit'] (or "
@@ -314,7 +317,13 @@ def increase_12_2_5_4(cfg, pkg_evidence=None):
         return False, ("12.2.5.4 applies only when the SFRS is limited to steel EBF / SCBF / BRBF / SPSW "
                        "(or coupled C-PSW / RC walls); system '%s' is not" % ps["text"])
     tir = _num_or_none(ev.get("TIR_max", ev.get("TIR")))
-    sx = _num_or_none(ev.get("max_plane_share_X")); sy = _num_or_none(ev.get("max_plane_share_Y"))
+    def _share(d):                       # a FRACTION (0.55); '<key>_pct' carries a percentage (55)
+        v = _num_or_none(ev.get("max_plane_share_" + d))
+        if v is None:
+            v = _num_or_none(ev.get("max_plane_share_%s_pct" % d))
+            v = None if v is None else v / 100.0
+        return v
+    sx = _share("X"); sy = _share("Y")
     probs = []
     if tir is None:
         probs.append("TIR_max not given")
@@ -324,13 +333,12 @@ def increase_12_2_5_4(cfg, pkg_evidence=None):
         if v is None:
             probs.append("max_plane_share_%s not given" % d)
         else:
-            v = v / 100.0 if v > 1.0 else v
             if v > 0.60 + 1e-9:
                 probs.append("plane share %s = %.0f%% > 60%% (condition 2)" % (d, v * 100))
     if probs:
         return False, "12.2.5.4 conditions not shown: " + "; ".join(probs)
     return True, "12.2.5.4 conditions shown (TIR %.2f <= 1.4; plane share X %.0f%%, Y %.0f%% <= 60%%)" % (
-        tir, (sx if sx <= 1 else sx / 100) * 100, (sy if sy <= 1 else sy / 100) * 100)
+        tir, sx * 100, sy * 100)
 
 
 def _height_exception(cfg, key, sdc, hn, nst):

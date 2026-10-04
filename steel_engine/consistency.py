@@ -643,6 +643,8 @@ def _height_limit_evidence(pkg):
         if nk in ("tirmax","tir"): ev["TIR_max"]=float(v)
         if nk in ("maxplanesharex","planesharex"): ev["max_plane_share_X"]=float(v)
         if nk in ("maxplanesharey","planesharey"): ev["max_plane_share_Y"]=float(v)
+        if nk in ("maxplanesharexpct","planesharexpct"): ev["max_plane_share_X"]=float(v)/100.0
+        if nk in ("maxplaneshareypct","planeshareypct"): ev["max_plane_share_Y"]=float(v)/100.0
     if not ev: return None
     try:
         scr=float(((pkg.get("framework_screen") or {}).get("torsion") or {}).get("ratio_max"))

@@ -164,6 +164,17 @@ On the FIRST OpenSees error (build, analysis, or `eigen`), STOP retrying blindly
 - **NG members block completion:** the app refuses your final answer while any member/connection has
   D/C > 1.0 or missing capacities. `consistency.check` NG messages now include a concrete resize hint
   ("try W14X605, next size up"); resize, re-run the pipeline, re-derive.
+- **The completion gate also reads the run's verdict files** (it never runs your cfg): the sanity suite
+  of the LAST `design_and_report` for the CURRENT `cfg.py` (`design/pipeline_results.json`: drift,
+  stability theta <= theta_max (12.8.7), model_declared/model_consistent -- verified against the BUILT
+  model's base fixities and add_beam releases --, model_complete, beam_deflection, dual_25pct) and a
+  PASS of `consistency.check(name)` on the CURRENT package (`design/consistency_result.json`). A check
+  or consistency flag that genuinely does not apply goes in `calc_package['gate_waivers'] =
+  {'<check name>' or 'consistency: <start of the flag>': '<justification>'}`; code limits (drift, theta,
+  the model declaration, Table 12.2-1 system/height limits, an SDC below the derived one,
+  unconservative R/Cd/Om0/Ct/x) cannot be waived. The 12.2.5.4 height increase is shown with numbers in
+  `capacity_design['height_limit'] = {'TIR_max':..,'max_plane_share_X':..,'max_plane_share_Y':..}`; a
+  dual system below a 25 % MF share is cleared by `capacity_design['dual_25pct']` with the MF-only D/Cs.
 - **Tall / performance-based (R18):** above ~240 ft or for a code-alternative PBSD, ELF is not permitted and MRSA is the minimum; a Chapter 16 NONLINEAR response-history verification (MCE, >=11 scaled motions, acceptance criteria) is required. If the framework runs only linear analysis, deliver the MRSA design and explicitly SCOPE the Ch. 16 verification -- never claim MCE performance is verified from a linear run.
 
 

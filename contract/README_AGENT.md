@@ -109,7 +109,13 @@ primitives (`modal`, `elf`, `static_lateral`, `rs_baseshear`) directly.
   `add_beam(tag,n1,n2,sec,releases=...)` (they auto-register the correct transforms — no `register_col_transf` or hand-written `geomTransf` needed). The optimisation
   pass also produces a varied, grouped section schedule.
 - `braces` (a layout function or `None`), `plan` (a footprint function or `None`).
-- `seis = seis(SDS, SD1, S1, R, Ct, x, Cu, Ie)`; `analyses=["ELF","RS"]`.
+- `seis = seis(SDS, SD1, S1, R, Ct, x, Cu, Ie, Cd=, Om0=, system=)`; `analyses=["ELF","RS"]`. Omitted Cd/Om0 come
+  from Table 12.2-1 for `system=` / `cfg['system']` (a loud warning if no system resolves). A different SFRS per
+  axis (ASCE 7-22 §12.2.2): `cfg['seis_Y'] = dict(R=, Cd=, Om0=, Ct=, x=, system=)` (or `seis_X`) and
+  `rho_X` / `rho_Y` -- the engine then computes ELF V, Cs limits, drift (Cd), ρ and Ω₀ cases per direction, each
+  with its own period (the mode with the dominant mass participation in that axis).
+  With 'RS' the demands use the larger of ELF and the §12.9.1.4-scaled MRSA story shears
+  (`cfg['seismic_demand_basis']` = 'envelope' default | 'MRSA' | 'ELF').
 - Optional: `governing="wind"` + `wind={V,exposure,...}`; `snow` (psf);
   `extra_mass_floors={level:psf}`; `skew` (parallelogram), `xcoords`/`ycoords`
   (non-uniform grid); `torsion_check`, `dual_check`, `softstorey_check`,
@@ -213,8 +219,9 @@ where E includes the **vertical term Ev = 0.2·SDS·D** and the **redundancy fac
   do both (100X+30Y and 30X+100Y). Wind: apply each principal direction (and
   quartering cases per §27 if required).
 - **Accidental torsion:** ±5% eccentricity (the engine's `accidental=True` static
-  applies the ±0.05·B torsional moment); include where required (and amplify Ax per
-  §12.8.4.3 if torsionally irregular).
+  applies the ±0.05·B torsional moment, B = actual plan dimension); the combinations multiply it by
+  the engine's Ax per level (§12.8.4.3, `engine3d.torsion_summary`) when Type 1 exists in SDC C–F, and
+  the drift gate then uses the EDGE drift (§12.8.6.5).
 
 **d) Second-order (P-Δ) is nonlinear → do NOT superpose factored second-order
 results.** Either: (i) build each LRFD combination as a single **factored** load case
@@ -351,9 +358,11 @@ runs on your model unchanged.
 notches, towers on podiums): the engine captures it into `cfg["present"]` on the first build and
 derives floor areas, cladding perimeter, level masses, seismic weight W, ELF story forces and
 per-level wind widths from that ACTUAL footprint -- never from the full NX x NY plate. If you set
-diaphragm masses with `ops.mass`, compute them via `engine3d.floor_w` / `floor_area_ft2` /
-`perim_ft` so the dynamic-model gravity, the static-model tributary gravity and the seismic
-weight all describe the SAME building.
+diaphragm masses, call `engine3d.attach_diaphragm_mass(cfg, info)` at the end of the build (as
+example_build does): it puts W/g and the footprint polar inertia at each level's CENTRE OF MASS. A
+hand-written `ops.mass` on the master is replaced by that consistent mass in the modal analysis (with
+a warning) unless you set `cfg['diaphragm_mass'] = 'builder'`, so the dynamic-model gravity, the
+static-model tributary gravity and the seismic weight all describe the SAME building.
 Do **not** hand-write `report.html`, a `model.py`, or your own analysis/combination scripts -- the
 model, loads, combinations, demands, and report come from the pipeline. The capacities come from
 **you + the RAG**.

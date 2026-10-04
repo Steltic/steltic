@@ -20,8 +20,8 @@ Gravity loading (HR-03 / HR-13 / HR-27)
     dead   = engine3d._Dlev(cfg, k, k == NF) + extra_mass_floors[k]   (exactly the seismic-weight dead)
     live   = engine3d._Llev(cfg, k)        on FLOOR bays
     roof   = Lr / S / R                    on ROOF bays: a bay is a roof bay when k is the top level,
-             when k is listed in cfg['roof_levels'], or when the same bay is not framed at level k+1
-             (setbacks / low roofs). Lr = cfg['Lr'] (default 20 psf, cfg['Lr_by_level'] per level),
+             when k is listed in cfg['roof_levels'], or when the same bay is not framed at ANY level
+             above (setbacks / low roofs; split levels and double-height voids stay floors). Lr = cfg['Lr'] (default 20 psf, cfg['Lr_by_level'] per level),
              S = cfg['snow'] (cfg['snow_by_level']), R = cfg['rain'] (cfg['rain_by_level']).
   plus cladding on the perimeter spans (clad * story height, half story at the top level) -- the same
   quantities engine3d.floor_w / floor_dead use for the seismic weight.
@@ -717,7 +717,7 @@ def _finish_model(cfg, model):
     for k in range(1, NF + 1):
         for (i, j), b in bays[k].items():
             b = dict(b)
-            b["roof"] = (k == NF) or (k in rl) or ((i, j) not in bays.get(k + 1, {}))
+            b["roof"] = (k == NF) or (k in rl) or not any((i, j) in bays.get(kk, {}) for kk in range(k + 1, NF + 1))
             model["bays"][(k, i, j)] = b
     model["infill"] = {}
     nonload = []

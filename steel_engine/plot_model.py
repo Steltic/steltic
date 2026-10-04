@@ -166,7 +166,7 @@ def deformed(name,outdir,direction="X",scale=None):
     T,*_=E.modal(cfg,min(3*NF,12)) if False else (None,)  # avoid extra cost; use ELF with Ta-based
     Tg=E.modal(cfg,min(3*NF,12))[0][0]
     if cfg.get("governing")=="wind": Fx=E.wind_forces(cfg,direction)
-    else: Fx=E.elf(cfg,Tg)[5]
+    else: Fx=E.elf_dir(cfg,direction)[5]     # that direction's own period + factors (hr-seismic, HR-01/02)
     ops.timeSeries("Linear",1); ops.pattern("Plain",1,1)
     for k in range(1,NF+1):
         f=[0.]*6; f[di]=Fx[k]; ops.load(E.mtag(k),*f)

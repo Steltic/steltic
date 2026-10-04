@@ -134,7 +134,9 @@ def _fmt(d):
 def _seismic(cfg):
     NF = len(cfg["heights"])
     T, w2, eX, eY, Mtot = E.modal(cfg, min(3*NF, 16))
-    Cs, V, Tu, Ta, kk, Fx, W = E.elf(cfg, T[0])
+    # hr-seismic (HR-01/02): ELF per direction (own period + factors); this single-Fx helper takes the
+    # direction with the larger base shear (conservative) until the report shows both (E.elf_dir)
+    Cs, V, Tu, Ta, kk, Fx, W = max((E.elf_dir(cfg, d) for d in ("X", "Y")), key=lambda r: r[1])
     return T, eX, eY, Cs, V, Tu, Ta, Fx, W
 
 def _run_case(cfg, direction, Fx, accidental=False):
@@ -958,29 +960,21 @@ def _diaphragm_section(cfg, Fx):
                          "diaphragm, collector and chord design is delegated and confirmed on the drawings.</p>")
 
 def _torsion_ratios(cfg, Fx):
-    NF = len(cfg["heights"]); SX, SY = cfg["SX"], cfg["SY"]; NX, NY = cfg["NX"], cfg["NY"]
-    Lx = (cfg["xcoords"][-1] if cfg.get("xcoords") else NX*SX); Ly = (cfg["ycoords"][-1] if cfg.get("ycoords") else NY*SY)
-    out = {}
-    for direction, Bperp in (("X", Ly), ("Y", Lx)):
-        try:
-            info, disp, drift, re = _run_case(cfg, direction, Fx, accidental=True)
-            rot = {k: ops.nodeDisp(E.mtag(k), 6) for k in range(1, NF+1)}
-            worst = 1.0; prevd = 0.0; prevr = 0.0
-            for k in range(1, NF+1):
-                dtr = disp[k] - prevd; drot = rot[k] - prevr; prevd = disp[k]; prevr = rot[k]
-                if abs(dtr) > 1e-9:
-                    worst = max(worst, 1.0 + abs(drot)*(Bperp/2.0)/abs(dtr))
-            out[direction] = worst
-        except Exception:
-            out[direction] = None
-    return out
+    """TIR per direction -- the ONE engine value (E.torsion_summary: Eq. 12.3-2 with accidental torsion
+    at the actual edges), so the report agrees with the screen, the combinations and the gates (HR-08)."""
+    try:
+        ts = E.torsion_summary(cfg)
+        return {"X": ts["X"]["TIR"], "Y": ts["Y"]["TIR"]}
+    except Exception:
+        return {"X": None, "Y": None}
 
 def _irregularity_section(cfg, Fx):
     NF = len(cfg["heights"]); w = [E.floor_w(cfg, k) for k in range(1, NF+1)]
     h = cfg["heights"]; custom_plan = cfg.get("plan") is not None
     tors = _torsion_ratios(cfg, Fx)
     tr = max([v for v in tors.values() if v is not None], default=1.0)
-    _Ax = min(max((tr/1.2)**2, 1.0), 3.0)   # ASCE 7-22 Eq. 12.8-15 accidental-torsion amplification
+    try: _Ax = E.torsion_summary(cfg)["Ax_max"]   # ASCE 7-22 Eq. 12.8-15 from displacements (engine, HR-08)
+    except Exception: _Ax = min(max((tr/1.2)**2, 1.0), 3.0)
     # 7-22 Table 12.3-1/-1a: single Type 1 keyed to the Torsional Irregularity Ratio (TIR,
     # Eq. 12.3-2, ratio of story drifts at the edges) with cumulative tiers >1.2 / >1.4 / >1.6
     if tr > 1.6:   tcls = f"Type 1 torsional: TIR {tr:.2f} &gt; 1.6 (also &gt;1.2/&gt;1.4 tiers) &mdash; apply A<sub>x</sub> = {_Ax:.2f} (&sect;12.8.4.3); MRSA mass-offset restriction (&sect;12.9.1.5)"

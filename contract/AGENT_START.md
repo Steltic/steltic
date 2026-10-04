@@ -87,9 +87,13 @@ framework; this list tells you what it does so you do not fight it.
   yielding in X and Y together, and the column, beam, splice, base and brace-connection demands include
   them (expected brace strengths are written into the brace-connection slots). The brace system comes from
   `cfg['system']` (or `system_X`/`system_Y`, `cfg['brace_system']`); BRB strengths need `cfg['brb']` from the
-  supplier (the defaults are flagged ASSUMED). What the pipeline cannot form — STMF special segments (E4.3),
-  multi-tiered braced frames (F2.3(c)), SPSW tension-field flexure of the boundary elements, braces whose
-  system is not identified — is listed as **NOT EVALUATED** in `design_report.md` and
+  supplier (the defaults are flagged ASSUMED). SCBF expected compression uses the brace end-to-end length
+  F2.3 requires: give `cfg['brace_length']` (in, number or {section: in}) or `cfg['brace_length_factor']`
+  (x work-point length); crossing X-brace diagonals default to half the work-point length; otherwise the
+  work-point length is used and flagged as underestimating C. What the pipeline cannot form — STMF special
+  segments (E4.3), multi-tiered braced frames (F2.3(c)), SPSW tension-field flexure of the boundary elements,
+  braces whose system is not identified, the E_cl AXIAL of braced-bay beams / struts slaved to the rigid
+  diaphragm — is listed as **NOT EVALUATED** in `design_report.md` and
   `calc_package['demand_analysis']['not_evaluated']`: derive those E_cl forces yourself and record them in
   `capacity_design`. (Setting `cfg['braces']` still works.)
 - **`run()` == `run_one()`.** The quick `engine3d.run(cfg)` now reports the SAME gates as the pipeline

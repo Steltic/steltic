@@ -209,8 +209,12 @@ def test_type1_drift_is_taken_at_the_edges():
         assert md == pytest.approx(s["Cd"]/s["Ie"]*max(ts[d]["edge_drift"]))
         assert max(ts[d]["edge_drift"]) >= max(abs(v) for v in ts[d]["cm_drift"]) - 1e-12
         assert r["edge_drift"][d] == [pytest.approx(s["Cd"]/s["Ie"]*v, abs=1e-5) for v in ts[d]["edge_drift"]]
-    # SDC B: no Ax, drift at the centre of mass
+    # SDC B: no Ax, drift at the centre of mass. (hr-gates HR-15: a declared SDC lower than the one
+    # derived from SDS/SD1 is overridden, so the SDC-B case needs SDC-B spectral values.)
     c = _tors_cfg(sdc="B")
+    c["seis"] = E.seis(0.25, 0.10, 0.10, 6, 0.02, 0.75, 1.5)
+    E.clear_caches()
+    assert E.sdc_of(c) == "B"
     ts = E.torsion_summary(c)
     assert not ts["amplify"] and ts["Ax_max"] == 1.0 and ts["X"]["drift_location"] == "centre of mass"
 

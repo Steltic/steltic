@@ -534,25 +534,52 @@ def design(name, outdir=None):
         # 12.3.3.5 (SDC D-F): 25% diaphragm-force increase for horizontal Type 1 (TIR>1.2),
         # 2 (re-entrant), 3, 4 (out-of-plane offset) or vertical Type 3. Type 4 is not auto-screened
         # here -- declare it via the collector design if present.
+        # Table 12.3-1 Type 1 is defined on drifts INCLUDING accidental torsion (Ax = 1.0): torsion_summary's
+        # TIR already is that value (hr-seismic HR-08), so it triggers the collector seed (HR-34)
         tors_trig = tr > 1.2
         if pir.get("reentrant") or pir.get("setback") or tors_trig:
+            # HR-34 collector demand. ASCE 7-22 12.10.2.1 (SDC C-F): collectors and their connections
+            # resist the MAX of (a) Om0 x ELF/MRSA forces, (b) Om0 x Fpx (Eq. 12.10-1, with its
+            # 12.10-2/-3 limits) and (c) the 2.3.6 combinations with Fpx = 0.2 SDS Ie wpx (Eq. 12.10-2).
+            # The 12.3.3.5 25 % increase (SDC D-F, horizontal Type 1/2/3/4, vertical Type 3) is NOT
+            # stacked on overstrength forces (12.3.3.5 EXCEPTION) -- it can only govern item (c).
+            # SDC A/B: 12.10.2.1 does not apply -> Fpx without Om0 (12.3.3.5 is SDC D-F only).
             Om0q = max(float(SFq["X"]["Om0"]), float(SFq["Y"]["Om0"]))   # 12.10.2.1, per-direction Om0
-            bump = 1.25 if (pir.get("reentrant") or tors_trig) else 1.0
+            try:
+                sdcq = E.sdc_of(cfg)
+            except Exception:
+                sdcq = "D"
+            kmax = max(Fpx, key=lambda k: Fpx[k])
+            Fpx_min = 0.2 * SDSq * Ieq * wlev[kmax]
+            inc = 1.25 if (sdcq in ("D", "E", "F") and (pir.get("reentrant") or pir.get("setback") or tors_trig)) else 1.0
+            if sdcq in ("C", "D", "E", "F"):
+                Pb, Pc = Om0q * Fp_max, inc * Fpx_min
+                Pgov = max(Pb, Pc); rule = ("12.10.2.1(b) Om0 x Fpx" if Pb >= Pc else
+                                            "12.10.2.1(c) Eq. 12.10-2 x %.2f (12.3.3.5)" % inc)
+            else:
+                Pb, Pc, Pgov, rule = None, None, Fp_max, "SDC %s: Fpx (12.10.1.1), no overstrength" % sdcq
+            share = 0.5
             pkg["connections"].append({
                 "id": "collector-irregularity-lines", "type": "collector / drag strut (SEEDED - REQUIRED)",
-                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Om0": Om0q,
-                           "increase_12_3_3_5": bump,
-                           "P_basis_kip": round(bump * Om0q * Fp_max * 0.5, 0)},
+                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Om0": Om0q, "SDC": sdcq,
+                           "P_12_10_2_1_b_kip": None if Pb is None else round(Pb, 0),
+                           "P_12_10_2_1_c_kip": None if Pc is None else round(Pc, 0),
+                           "increase_12_3_3_5": inc,
+                           "governing": rule,
+                           "line_share_assumed": share,
+                           "P_basis_kip": round(share * Pgov, 0)},
                 "design_basis": "SEEDED because the screen found %s: collectors on the "
                                 "re-entrant/setback/transfer lines are a REQUIRED deliverable. Design "
-                                "with the OVERSTRENGTH combinations (ASCE 7-22 12.10.2.1)%s. Refine the "
-                                "line share from your diaphragm geometry; fill limit_state/cited/"
-                                "capacity/DC like any other connection." % (
+                                "for the MAX of ASCE 7-22 12.10.2.1 (a) Om0 x the ELF/MRSA collector force from "
+                                "your diaphragm model, (b) Om0 x Fpx and (c) Fpx(Eq. 12.10-2)%s -- the 25%% "
+                                "increase of 12.3.3.5 is NOT applied on top of Om0 (12.3.3.5 Exception). "
+                                "P_basis assumes %.0f%% of the level force per collector line: replace that "
+                                "share with your diaphragm geometry; fill limit_state/cited/capacity/DC like "
+                                "any other connection." % (
                                     "/".join(k for k, on in (("reentrant", pir.get("reentrant")),
                                                              ("setback", pir.get("setback")),
-                                                             ("torsional TIR>1.2", tors_trig)) if on),
-                                    " + the 25%% increase (12.3.3.5: Type 1 torsional / Type 2 "
-                                    "re-entrant / Type 4)" if bump > 1.0 else ""),
+                                                             ("torsional TIR>1.2 (with accidental torsion)", tors_trig)) if on),
+                                    " x 1.25 (12.3.3.5)" if inc > 1.0 else "", 100 * share),
                 "limit_state": None, "cited": None, "capacity": {}, "DC": None})
         pkg["framework_screen"] = {
             "note": "FRAMEWORK-COMPUTED irregularity screen -- the agent RESPONDS to these (classify "

@@ -62,20 +62,74 @@ def _dc_num(x):
     return None
 
 
+ABS_TOL = 0.006   # absolute floor: a D/C reported to 2 decimals carries up to +/-0.005 rounding
+
+
 def _close(a, b, tol=TOL):
+    """Relative tolerance TOL, with an ABSOLUTE floor ABS_TOL so tiny ratios (D/C 0.01 reported
+    vs 0.014 recomputed) are not flagged as irreconcilable (HR-33)."""
     if a is None or b is None:
         return True
-    if abs(a) < 1e-9 and abs(b) < 1e-9:
-        return True
-    return abs(a - b) / max(abs(a), abs(b), 1e-9) <= tol
+    return abs(a - b) <= max(tol * max(abs(a), abs(b)), ABS_TOL)
+
+
+# ---- explicit demand / capacity schema (HR-33) -------------------------------------------------
+# A check's demand and capacity are matched by KEY SEMANTICS, never by substring or dict order:
+# the key is normalised (lower-case, non-alphanumerics dropped, a trailing unit suffix removed) and
+# must EQUAL one of the names below. Pairs are matched by quantity: Pu<->phiPn, Mu<->phiMn,
+# Vu<->phiVn, Tu<->phiTn, Ru<->phiRn, demand<->capacity. 'phi' alone (a resistance factor), 'strut',
+# 'truss', 'input', ... can no longer be read as a demand or a capacity.
+_UNIT_SUFFIX = ("kipft", "kipin", "kips", "kip", "kft", "kin", "ksi", "in2", "in3", "in4", "in", "ft", "k")
+_DEM_KEYS = {"pu": "P", "pr": "P", "mu": "Mx", "mr": "Mx", "mux": "Mx", "mrx": "Mx", "muy": "My", "mry": "My",
+             "vu": "V", "vr": "V", "tu": "T", "ru": "R", "demand": "*", "required": "*",
+             "requiredstrength": "*", "demandratio": "ratio"}
+_CAP_KEYS = {"phipn": "P", "phipc": "P", "pc": "P", "phimn": "Mx", "phimnx": "Mx", "mc": "Mx", "mcx": "Mx",
+             "phimny": "My", "mcy": "My", "phivn": "V", "vc": "V", "phitn": "T", "phirn": "R", "rc": "R",
+             "capacity": "*", "available": "*", "availablestrength": "*", "designstrength": "*",
+             "capacitylimit": "ratio", "ratiolimit": "ratio"}
+_INTERACTION = re.compile(r"\bh1|h2-1|interaction|combined|\+|beam.?column", re.I)
+
+
+def _norm_key(k):
+    s = re.sub(r"[^a-z0-9]", "", str(k).lower().replace("φ", "phi"))
+    for u in _UNIT_SUFFIX:
+        if len(s) > len(u) + 1 and s.endswith(u) and (s[:-len(u)] in _DEM_KEYS or s[:-len(u)] in _CAP_KEYS):
+            return s[:-len(u)]
+    return s
+
+
+def _demand_capacity_pairs(d):
+    """[(qty, demand, capacity)] recoverable from a check dict by key semantics (see above)."""
+    if not isinstance(d, dict):
+        return []
+    dem, cap = {}, {}
+    for k, v in d.items():
+        n = _num(v) if not isinstance(v, (dict, list)) else None
+        if n is None:
+            continue
+        nk = _norm_key(k)
+        if nk in _DEM_KEYS:
+            dem.setdefault(_DEM_KEYS[nk], n)
+        elif nk in _CAP_KEYS:
+            cap.setdefault(_CAP_KEYS[nk], n)
+    if "ratio" in dem and "ratio" in cap:                         # explicit demand_ratio / capacity_limit
+        return [("ratio", dem["ratio"], cap["ratio"])]
+    pairs = [(q, dem[q], cap[q]) for q in sorted(dem) if q in cap and q not in ("*", "ratio")]
+    if "*" in dem and "*" in cap:
+        pairs.append(("*", dem["*"], cap["*"]))
+    elif not pairs and len(dem) == 1 and len(cap) == 1 and "ratio" not in dem and "ratio" not in cap:
+        pairs.append(("*", list(dem.values())[0], list(cap.values())[0]))   # e.g. Ru with 'capacity'
+    return pairs
 
 
 def _find(d, *subs):
-    """First numeric value in dict d whose key contains any of the substrings (case-insensitive)."""
+    """Kept for backward compatibility: the value of the first key whose NORMALISED name equals one
+    of `subs` (exact semantic match, independent of dict order); None otherwise."""
     if not isinstance(d, dict):
         return None
+    want = set(re.sub(r"[^a-z0-9]", "", s.lower()) for s in subs)
     for k, v in d.items():
-        if any(s in str(k).lower() for s in subs):
+        if _norm_key(k) in want:
             n = _num(v)
             if n is not None:
                 return n
@@ -90,7 +144,7 @@ def _demand_capacity_from_string(s):
         return None, None
     low = s.lower()
     dem = None
-    m = re.search(r"(?:ru|required|demand|mu|pu|vu)\s*[=:]?\s*(-?\d+(?:\.\d+)?)", low)
+    m = re.search(r"(?<![a-z])(?:ru|required|demand|mu|pu|vu)\s*[=:]?\s*(-?\d+(?:\.\d+)?)", low)
     if m:
         dem = float(m.group(1))
     cap = None
@@ -99,7 +153,7 @@ def _demand_capacity_from_string(s):
     if arrow:
         cap = float(arrow[-1])
     else:
-        m = re.search(r"(?:phirn|φrn|phi\s*rn|capacity)\s*[=:]?\s*(-?\d+(?:\.\d+)?)", low)
+        m = re.search(r"(?<![a-z])(?:phirn|φrn|phi\s*rn|capacity)\s*[=:]?\s*(-?\d+(?:\.\d+)?)", low)
         if m:
             cap = float(m.group(1))
     return dem, cap
@@ -187,13 +241,22 @@ def _entry_issues(kind, entry):
             continue
         cls = c.get("limit_state", c.get("name", "check"))
         cdc = _dc_num(c.get("DC"))
-        dem = _find(c, "demand", "ru", "required", "mu", "pu", "vu", "_kip", "_kft")
-        cap = _find(c, "capacity", "phirn", "phi", "available", "design_strength")
-        if dem is not None and cap not in (None, 0.0):
+        pairs = [(q, d_, c_) for q, d_, c_ in _demand_capacity_pairs(c) if c_ not in (None, 0.0)]
+        inter = bool(_INTERACTION.search(str(cls))) and not (pairs and pairs[0][0] == "ratio")
+        if len(pairs) == 1 and not inter:         # one demand/capacity pair -> D/C must equal it
+            _q, dem, cap = pairs[0]
             rec = dem / cap
             if cdc is not None and not _close(rec, cdc):
                 out.append(f"[{kind} {cid}] check '{cls}': D/C {cdc:.3f} != demand/capacity "
                            f"{dem:.3g}/{cap:.3g} = {rec:.3f} -- reconcile")
+            elif cdc is None:
+                cdc = rec
+        elif pairs:                               # interaction (e.g. Pu/phiPn + Mu/phiMn): D/C >= each term
+            worst = max(pairs, key=lambda t: t[1] / t[2])
+            rec = worst[1] / worst[2]
+            if cdc is not None and cdc < rec and not _close(rec, cdc):
+                out.append(f"[{kind} {cid}] check '{cls}': D/C {cdc:.3f} < its own {worst[0]} term "
+                           f"{worst[1]:.3g}/{worst[2]:.3g} = {rec:.3f} -- reconcile")
             elif cdc is None:
                 cdc = rec
         if cdc is not None:
@@ -250,6 +313,88 @@ def _isnum(x):
         float(x); return True
     except Exception:
         return False
+
+
+# ---- pipeline-seeded text is NOT agent evidence (HR-33) ----------------------------------------
+# design_pipeline.design() seeds calc_package.json with notes, design-basis templates, the
+# framework irregularity screen and the collector slot text. Keyword guards must neither be
+# TRIGGERED nor CLEARED by that text -- only by what the agent wrote.
+_SEEDED_PREFIXES = ("SEEDED because", "Framework provides DEMANDS only", "FRAMEWORK-COMPUTED",
+                    "AISC 360 Ch.J (J2 welds", "AISC 360 Ch.J gusset/weld", "AISC 360 J1.4 splice",
+                    "collector / drag strut (SEEDED", "beam-to-column (shear; + moment if MF)",
+                    "brace-to-gusset", "column splice / base plate")
+_SEEDED_KEYS = ("framework_screen", "pipeline_seed")
+
+
+def _is_seeded_text(s):
+    return isinstance(s, str) and s.strip().startswith(_SEEDED_PREFIXES)
+
+
+def _agent_texts(obj, acc=None):
+    """All string values (and dict KEYS) the agent authored -- seeded strings / blocks skipped."""
+    acc = [] if acc is None else acc
+    if isinstance(obj, str):
+        if not _is_seeded_text(obj):
+            acc.append(obj)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k) in _SEEDED_KEYS or (str(k) == "note" and _is_seeded_text(v)):
+                continue
+            acc.append(str(k))
+            _agent_texts(v, acc)
+    elif isinstance(obj, list):
+        for v in obj:
+            _agent_texts(v, acc)
+    return acc
+
+
+def _agent_blob(pkg):
+    return " ".join(_agent_texts(pkg)).lower() if isinstance(pkg, dict) else ""
+
+
+_NUM_RESULT = re.compile(r"(?:=|≤|≥|<=|>=|<|>|~)\s*-?\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:kips?|k-?ft|kip-?ft|"
+                         r"kip-?in|k-?in|in\.?|ksi|psf|plf|ft|%|rad|in\^?[234])(?![a-z])", re.I)
+_CLAUSE_KEYS = ("cite", "cited", "clause", "basis", "method", "rule", "note", "notes", "reference", "ref")
+
+
+def _has_numeric_result(obj, _key=""):
+    """True when obj carries a COMPUTED number: a JSON number (not a bool) under a non-citation key,
+    or a string with a value after '=' / a comparator or a number with an engineering unit.
+    Clause numbers ('AISC 341-22 E3.4a', 'Eq. 12.8-2') do not count."""
+    if isinstance(obj, bool) or obj is None:
+        return False
+    if isinstance(obj, (int, float)):
+        return str(_key).lower() not in _CLAUSE_KEYS
+    if isinstance(obj, str):
+        return bool(_NUM_RESULT.search(obj))
+    if isinstance(obj, dict):
+        return any(_has_numeric_result(v, k) for k, v in obj.items())
+    if isinstance(obj, list):
+        return any(_has_numeric_result(v, _key) for v in obj)
+    return False
+
+
+def _numeric_entries(tree, pattern, key_only=False):
+    """Entries (key, value) anywhere in `tree` whose KEY -- or, for a dict value, its own text
+    (unless key_only) -- matches `pattern` (regex, case-insensitive) AND whose value carries a
+    computed number."""
+    rx = re.compile(pattern, re.I)
+    hits = []
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if str(k) in _SEEDED_KEYS:
+                    continue
+                txt = str(k) + (" " + " ".join(_agent_texts(v)) if isinstance(v, (dict, list))
+                                and not key_only else "")
+                if rx.search(txt) and _has_numeric_result(v, k):
+                    hits.append((k, v))
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(tree)
+    return hits
 
 
 def _load_cfg(root, name):
@@ -334,8 +479,17 @@ def _design_basis_issues(cfg, name=None, pkg=None):
     elif Ie>=1.25 and dl>0.0151 and not _relief_on:
         out.append("Risk Category III (Ie=%.2f): allowable story drift is 0.015 h_sx (Table 12.12-1) -- set cfg['drift_limit']=0.015"%Ie+_mfrho)
     if R is not None and float(R)<=3.0:
-        out.append("R=%.2f is a 'not specifically detailed for seismic' system -- AISC 341 does NOT apply (no SCWB / "
-                   "capacity design); design members & connections to AISC 360 only, and CONFIRM whether wind or seismic governs each direction"%float(R))
+        # clearable (ported from steltic_cfs, made NUMERIC): the note asks the agent to confirm which
+        # hazard governs each direction -- a pkg['governing_hazard'] block with the wind and seismic
+        # base shears (numbers) clears it; a bare 'wind governs' phrase does not.
+        _gh = pkg.get("governing_hazard") if isinstance(pkg, dict) else None
+        _gh_ok = isinstance(_gh, (dict, list)) and len(_numeric_entries(_gh, r"wind", True)) > 0 \
+            and len(_numeric_entries(_gh, r"seism|(^|_)e(q|h)?(_|$)", True)) > 0
+        if not _gh_ok:
+            out.append("R=%.2f is a 'not specifically detailed for seismic' system -- AISC 341 does NOT apply (no SCWB / "
+                       "capacity design); design members & connections to AISC 360 only, and CONFIRM whether wind or seismic "
+                       "governs each direction: record calc_package['governing_hazard'] = {'X': {'wind_kip': .., "
+                       "'seismic_kip': ..}, 'Y': {...}} (numbers) to clear this note"%float(R))
     H=[float(h) for h in (cfg.get("heights") or []) if _isnum(h)]
     if len(H)>=2 and sdc_high:
         hr=max(max(H[k]/H[k-1],H[k-1]/H[k]) for k in range(1,len(H)))
@@ -371,23 +525,46 @@ def _design_basis_issues(cfg, name=None, pkg=None):
                        "transfer + the shared columns checked across the offset)"%sorted(_dex))
     if (pir.get("reentrant") or pir.get("setback")) and isinstance(pkg,dict):
         conns=pkg.get("connections") or []
-        has_coll=any(isinstance(c,dict) and "collector" in (str(c.get("id",""))+str(c.get("type",""))).lower() for c in conns)
+        # the SEEDED (empty) collector slot is not a design: a collector entry only counts once it
+        # carries a D/C, per-limit-state checks or an explicit waiver (HR-33)
+        has_coll=any(isinstance(c,dict) and "collector" in (str(c.get("id",""))+str(c.get("type",""))).lower()
+                     and (c.get("DC") is not None or c.get("checks") or c.get("waived")) for c in conns)
         if not has_coll:
-            out.append("re-entrant/setback present but NO collector in calc_package -- collectors are a REQUIRED deliverable "
-                       "(design with Omega_0 on the re-entrant/transfer lines, 12.3.3.5/12.10.2.1), not 'delegated to the drawings'")
+            out.append("re-entrant/setback present but NO designed collector in calc_package -- collectors are a REQUIRED "
+                       "deliverable (design with Omega_0 on the re-entrant/transfer lines, 12.10.2.1; fill the seeded "
+                       "slot's limit_state/cited/capacity/DC), not 'delegated to the drawings'")
     return out
 
 
+# ---- per-system REQUIRED capacity-design checks (AISC 341-22) -- NUMERIC presence (HR-33) -------
+# Each requirement is met only by a capacity_design entry whose key (or own text) names the check
+# AND that carries a COMPUTED number (see _has_numeric_result); a keyword in prose no longer clears
+# it. Keyed by preflight.SYSTEMS rows: a dual declaration gets its MF + braced lists + the dual row,
+# a mixed declaration gets every component's list. AISC 341-22 E2 (IMF) and E4 (STMF) have no SCWB.
 _SYS_REQUIRED = {
-    "spsw": [("VBE stiffness Ic>=0.00307 t h^4/L (COMPUTED)", ["0.00307","vbe","ic_","ic "]),
-             ("web-plate tension field / 1.1RyFy expected strength", ["tension","plate","ryfy","1.1ry"])],
-    "ebf":  [("shear link e<=1.6Mp/Vp + rotation 0.08 rad", ["link","1.6","0.08"]),
-             ("brace/beam-outside-link capacity from 1.25RyVn", ["1.25","expected","ry"])],
-    "brbf": [("adjusted brace strengths (beta*omega*RyFy)", ["adjusted","omega","beta"])],
-    "scbf": [("brace expected strength RyFyAg / 1.1RyPn", ["expected","ryfy","1.1ry","brace"])],
-    "smf":  [("SCWB (strong-column-weak-beam) ratio", ["scwb","strong column","e3.4"]),
-             ("panel-zone shear / doubler", ["panel","doubler"])],
-    "dual": [("SMF independently resists >=25% of V at every level", ["25","independent","resist"])],
+    "smf":  [("SCWB ratio sum M*pc / sum M*pb > 1.0 (AISC 341-22 E3.4a)", r"scwb|strong.?column|e3\.4a"),
+             ("panel-zone shear / doubler (E3.6e)", r"panel|doubler")],
+    "imf":  [("panel-zone shear (AISC 360-22 J10.6 / 341-22 E2.6e)", r"panel|doubler"),
+             ("continuity plates (E2.6f)", r"continuity"),
+             ("column axial strength with overstrength (D1.4a)", r"overstrength|omega|om0|ω|d1\.4a")],
+    "omf":  [("column axial strength with overstrength (D1.4a) / OMF connection (E1.6b)",
+              r"overstrength|omega|om0|ω|d1\.4a|e1\.6")],
+    "stmf": [("special-segment shear strength / expected vertical shear Ve (E4.5)",
+              r"special.?segment|expected.?(vertical.?)?shear|e4\.5|(^|_)ve(_|$)")],
+    "scbf": [("brace expected strength RyFyAg / min(RyFyAg, FneAg/0.877) (F2.3)",
+              r"expected|ryfy|1\.1ry|f2\.3|capacity.?limited")],
+    "ocbf": [("connections / columns for expected strength or overstrength (F1.4a, F1.6)",
+              r"expected|ryfy|overstrength|omega|om0|ω|f1\.[46]")],
+    "ebf":  [("link length e and Vp / Mp (F3.5b)", r"link"),
+             ("link rotation angle <= 0.08 / 0.02 rad (F3.4a)", r"rotation|gamma|γ"),
+             ("outside-link members for the adjusted link shear 1.25RyVn (F3.3)", r"1\.25|expected|outside|capacity.?limited")],
+    "brbf": [("adjusted brace strengths beta*omega*Ry*Pysc (F4.2a)", r"adjusted|beta|omega|β|ω")],
+    "spsw": [("VBE stiffness Ic >= 0.0031 tw h^4 / L (F5.4a)", r"vbe|(^|_)ic(_|$)|0\.003"),
+             ("web-plate expected tension yield RyFy (F5.3)", r"tension|web.?plate|ryfy")],
+    "c-psw": [],
+    "nsd":  [],
+    "dual": [("moment frames capable of resisting >= 25 % of the design seismic forces (ASCE 7-22 12.2.5.1)",
+              r"dual|25.?(pct|%|percent)|mf.?only|independent")],
 }
 
 def _cd_blob(pkg):
@@ -404,42 +581,94 @@ def _cd_blob(pkg):
     walk(cd if cd is not None else {})
     return " ".join(parts).lower()
 
+_CMP = re.compile(r">=|<=|≥|≤")
+
 def _named_not_computed_issues(pkg):
+    """A capacity_design string that states a REQUIREMENT symbolically ('e <= 1.6Mp/Vp',
+    'Ic >= 0.0031 tw h^4/L') instead of a computed check. A string whose comparison has a NUMBER on
+    BOTH sides ('b/t = 7.2 <= 0.3 sqrt(E/Fy) = 7.22', 'TIR 1.31 <= 1.4') is a computed check and is
+    no longer flagged (HR-33)."""
     out=[]; cd=pkg.get("capacity_design") if isinstance(pkg,dict) else None
     if cd is None: return out
     txt=[]; _gather_text(cd,txt)
     for t in txt:
-        if not isinstance(t,str) or not re.search(r">=|<=|≥|≤",t): continue
-        bare=set(v.lower() for v in re.findall(r"(?<![A-Za-z0-9])[A-Za-z](?![A-Za-z0-9])", t))  # single-letter symbols (t,h,L,e,...)
-        if len(bare) >= 2:   # a symbolic formula with >=2 unresolved variables -> not numerically evaluated
+        if not isinstance(t,str) or _is_seeded_text(t) or not _CMP.search(t): continue
+        computed=True
+        for clause in re.split(r"[;\n]|,\s(?=[A-Za-z])", t):
+            m=_CMP.search(clause)
+            if not m: continue
+            left, right = clause[:m.start()], clause[m.end():]
+            if re.search(r"\d", left) and re.search(r"\d", right):
+                continue                                   # value vs limit, both numeric -> computed
+            bare=set(v.lower() for v in re.findall(r"(?<![A-Za-z0-9])[A-Za-z](?![A-Za-z0-9])", clause))
+            if len(bare) >= 2:                             # >= 2 unresolved single-letter symbols
+                computed=False; break
+        if not computed:
             out.append("[capacity_design] '%s' is a symbolic REQUIREMENT, not a COMPUTED check -- substitute the section's numbers and give value vs limit + D/C"%t.strip()[:80])
     return out
 
+def _system_rows(cfg):
+    try:
+        from preflight import parse_system as _ps
+    except Exception:
+        return []
+    ps=_ps(cfg)
+    if ps["kind"]=="dual":
+        mf=[k for k in ps["parts"] if k in ("smf","imf")]; br=[k for k in ps["parts"] if k not in ("smf","imf")]
+        return mf+br+["dual"]
+    return list(ps["rows"])
+
 def _system_checks_issues(cfg, pkg):
-    out=[]; sysname=str(cfg.get("system") or "").lower()
-    if not sysname or not isinstance(pkg,dict): return out
-    blob=_cd_blob(pkg)
-    for key,reqs in _SYS_REQUIRED.items():
-        if key in sysname:
-            for label,kws in reqs:
-                if not any(kw in blob for kw in kws):
-                    out.append("system '%s' requires check: %s -- not found in capacity_design (add it, computed)"%(cfg.get("system"),label))
+    out=[]
+    if not isinstance(cfg,dict) or not cfg.get("system") or not isinstance(pkg,dict): return out
+    cd=pkg.get("capacity_design")
+    for key in _system_rows(cfg):
+        for label,pat in _SYS_REQUIRED.get(key,[]):
+            if not _numeric_entries(cd if cd is not None else {}, pat):
+                out.append("system '%s' requires check: %s -- no capacity_design entry with COMPUTED numbers for it "
+                           "(add it under a descriptive key, with the values, limit and D/C)"%(cfg.get("system"),label))
     return out
 
-def _height_limit_issues(cfg):
-    out=[]; s=cfg.get("seis") or {}
-    H=[float(h) for h in (cfg.get("heights") or []) if _isnum(h)]
-    if not H: return out
-    hn=sum(H)/12.0; R=s.get("R"); SDS=float(s.get("SDS",0) or 0); sysname=str(cfg.get("system") or "").lower()
-    if SDS<0.5: return out
-    limit=None
-    if "smf" in sysname or "dual" in sysname: limit=None
-    elif "ocbf" in sysname or (R and abs(float(R)-3.25)<0.5): limit=35.0
-    elif "scbf" in sysname or (R and abs(float(R)-6)<0.6): limit=160.0
-    elif "ebf" in sysname or "brbf" in sysname or (R and abs(float(R)-8)<0.4): limit=160.0
-    elif "spsw" in sysname or (R and abs(float(R)-7)<0.4): limit=160.0
-    if limit and hn>limit+0.5:
-        out.append("structural height h_n=%.0f ft exceeds the Table 12.2-1 limit (~%.0f ft) for this system in SDC D+/E -- FLAG and resolve (dual system / exception) or re-select the system"%(hn,limit))
+def _height_limit_evidence(pkg):
+    """capacity_design['height_limit'] -> the dict preflight.increase_12_2_5_4 reads (TIR_max,
+    max_plane_share_X/Y as NUMBERS), or None. A framework torsion screen above 1.4 is only overridden
+    by an agent TIR when the evidence also states its 'TIR_basis' (Eq. 12.3-2 computation)."""
+    cd=pkg.get("capacity_design") if isinstance(pkg,dict) else None
+    hl=cd.get("height_limit") if isinstance(cd,dict) else None
+    if not isinstance(hl,dict): return None
+    ev={}
+    for k,v in hl.items():
+        nk=re.sub(r"[^a-z0-9]","",str(k).lower())
+        if isinstance(v,bool) or not isinstance(v,(int,float)): continue      # NUMBERS only
+        if nk in ("tirmax","tir"): ev["TIR_max"]=float(v)
+        if nk in ("maxplanesharex","planesharex"): ev["max_plane_share_X"]=float(v)
+        if nk in ("maxplanesharey","planesharey"): ev["max_plane_share_Y"]=float(v)
+        if nk in ("maxplanesharexpct","planesharexpct"): ev["max_plane_share_X"]=float(v)/100.0
+        if nk in ("maxplaneshareypct","planeshareypct"): ev["max_plane_share_Y"]=float(v)/100.0
+    if not ev: return None
+    try:
+        scr=float(((pkg.get("framework_screen") or {}).get("torsion") or {}).get("ratio_max"))
+    except (TypeError,ValueError):
+        scr=None
+    if scr is not None and scr>1.4 and isinstance(ev.get("TIR_max"),float) and ev["TIR_max"]<=1.4 \
+            and not str(hl.get("TIR_basis") or "").strip():
+        ev["TIR_max"]=scr          # the screen says > 1.4 and the agent did not show its own TIR basis
+    return ev
+
+def _height_limit_issues(cfg, pkg=None):
+    """ASCE 7-22 Table 12.2-1 / 12.2.5.4-7 system + height limits and the 11.6 SDC and Table
+    12.2-1 / 12.8-2 factor checks -- the ERROR findings of preflight (single source of the rules).
+    The 12.2.5.4 increase clears with NUMERIC evidence in capacity_design['height_limit'] =
+    {'TIR_max': .., 'max_plane_share_X': .., 'max_plane_share_Y': ..} (or cfg['height_increase_12_2_5_4'])."""
+    out=[]
+    if not isinstance(cfg,dict): return out
+    try:
+        import preflight as _PF
+    except Exception as e:
+        return ["system/height-limit checks could not run (preflight import failed: %s)"%e]
+    for sev,msg in (_PF.sdc_findings(cfg) + _PF.system_limit_findings(cfg, _height_limit_evidence(pkg))
+                    + _PF.factor_findings(cfg)):
+        if sev=="ERROR": out.append(msg)
     return out
 
 def _transfer_issues(cfg, name, pkg):
@@ -450,8 +679,7 @@ def _transfer_issues(cfg, name, pkg):
     except Exception:
         return out
     if pir.get("setback") and isinstance(pkg,dict):
-        txt=[]; _gather_text([pkg.get("capacity_design"), pkg.get("connections")],txt)
-        blob=" ".join(t for t in txt if isinstance(t,str)).lower()
+        blob=" ".join(_agent_texts([pkg.get("capacity_design"), pkg.get("connections")])).lower()
         if "transfer" not in blob and "backstay" not in blob:
             out.append("footprint SETBACK detected -- design the TRANSFER/backstay diaphragm chords/collectors and supporting members for Omega_0 (7-22 12.3.3.4, discontinuous-element support) and report the backstay force")
     return out
@@ -467,11 +695,12 @@ def _nonparallel_issues(cfg, pkg):
 
 def _consultancy_issues(cfg, pkg):
     """Tier A/B real-world guards (EDGE_CASE_SWEEP): each WARN clears when the package addresses
-    the topic, so they are reconcilable by DOING the check, not by boilerplate."""
+    the topic, so they are reconcilable by DOING the check, not by boilerplate. Only AGENT-authored
+    text counts (the pipeline's seeded notes / screen never trigger or clear a guard)."""
     out = []
     if not isinstance(cfg, dict) or not isinstance(pkg, dict):
         return out
-    blob = json.dumps(pkg).lower()
+    blob = _agent_blob(pkg)
     arch = (str(cfg.get("arch", "")) + " " + str(cfg.get("system", ""))).lower()
     mem = pkg.get("members") or []
     # A3 ponding: long-span flat roof beams and no ponding statement
@@ -490,29 +719,30 @@ def _consultancy_issues(cfg, pkg):
                    "vibration-sensitive occupancy) -- do the AISC Design Guide 11 screen (fn, a_peak "
                    "vs occupancy limit) and record it")
     # A1 composite floors: the cfg declares a composite floor system -> the package must carry the
-    # Ch. I essentials (studs + camber + the unshored wet-concrete stage), OR an explicit scope
-    # statement (bare-steel lower bound / composite excluded / delegated). Content-clearable.
+    # Ch. I essentials as COMPUTED values (studs + camber + the unshored wet-concrete stage), OR an
+    # explicit scope statement in composite_design['scope'] that composite action is not relied upon.
     fs = (str(cfg.get("floor_system", "")).lower() + " " + arch + " "
           + str(cfg.get("notes", "")).lower())   # notes too: agents park the brief's composite line there
     if "composite" in fs:
-        need = [("stud", "stud strength/schedule (I8.2a)"),
-                ("camber", "camber decision (even 'no camber', with the wet deflection shown)"),
-                (("wet", "unshored", "construction stage"), "unshored wet-concrete stage check")]
-        missing = []
-        for keys, what in need:
-            keys = (keys,) if isinstance(keys, str) else keys
-            if not any(k in blob for k in keys):
-                missing.append(what)
-        scoped = ("composite" in blob and any(k in blob for k in
-                  ("lower bound", "lower-bound model", "scope", "excluded", "not relied", "delegated")))
+        tree = {k: v for k, v in pkg.items() if k not in _SEEDED_KEYS and k != "note"}
+        need = [(r"stud|(^|_)qn", "stud strength/schedule (I8.2a) with Qn / number of studs"),
+                (r"camber", "camber decision with the wet-concrete deflection (even 'no camber: 0.55 in < 3/4 in')"),
+                (r"wet|unshored|construction", "unshored wet-concrete stage check (Mu vs phiMn, deflection)")]
+        missing = [what for pat, what in need if not _numeric_entries(tree, pat, key_only=True)]
+        cdz = pkg.get("composite_design") if isinstance(pkg.get("composite_design"), dict) else {}
+        sc = str(cdz.get("scope") or pkg.get("composite_scope") or "").lower()
+        scoped = len(sc) >= 60 and any(k in sc for k in ("not relied", "excluded", "bare steel", "bare-steel",
+                                                          "lower bound", "lower-bound", "delegat"))
         if missing and not scoped:
-            out.append("COMPOSITE floor system declared and the package lacks: " + "; ".join(missing) +
+            out.append("COMPOSITE floor system declared and the package lacks COMPUTED: " + "; ".join(missing) +
                        " -- design the composite floor per AISC 360-22 Ch. I (see COMPOSITE_I3.md: "
-                       "b_eff I3.1a, studs I8.2a, partial composite I3.2a, camber rule, I_LB deflection) "
-                       "or record an explicit composite scope statement")
-    # A8 seismic joint / pounding: multi-wing keywords and no joint decision
-    if any(k in arch for k in ("twin", "two tower", "wings", "wing ")) and \
-            not any(k in blob for k in ("seismic joint", "pounding", "joint width", "no seismic joint")):
+                       "b_eff I3.1a, studs I8.2a, partial composite I3.2a, camber rule, I_LB deflection) under "
+                       "calc_package['composite_design'], or state in composite_design['scope'] that composite "
+                       "action is not relied upon (and why)")
+    # A8 seismic joint / pounding: multi-wing keywords and no joint decision ('wing' as a WORD --
+    # 'drawing', 'showing' no longer trigger it)
+    if (re.search(r"\b(twin|two[- ]towers?|wings?)\b", arch)) and \
+            not any(k in blob for k in ("seismic joint", "seismic_joint", "pounding", "joint width", "no seismic joint")):
         out.append("multi-wing/tower configuration and NO seismic-joint decision recorded -- either "
                    "size the joint (sum of Cd-amplified drifts, ASCE 7-22 12.12.3 + pounding check) "
                    "or record why the wings are intentionally connected (with the interaction designed)")
@@ -530,9 +760,44 @@ def _consultancy_issues(cfg, pkg):
     return out
 
 
+RESULT_FILE = "consistency_result.json"
+
+
+def _sha256(path):
+    try:
+        import hashlib
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def _record_result(root, name, issues):
+    """Persist the verdict to <root>/design/consistency_result.json with the SHA-256 of the
+    calc_package.json and cfg.py it was computed from, so the app-side completion gate (which never
+    executes cfg.py) can tell a CURRENT clean check from a stale or missing one (HR-14)."""
+    try:
+        import datetime
+        d = os.path.join(root, "design")
+        if not os.path.isdir(d):
+            return
+        rec = {"name": name, "time": datetime.datetime.now().isoformat(timespec="seconds"),
+               "result": "PASS" if not issues else "FAIL", "n_issues": len(issues), "issues": issues,
+               "calc_package_sha256": _sha256(os.path.join(d, "calc_package.json")),
+               "cfg_sha256": _sha256(os.path.join(root, "cfg.py"))}
+        with open(os.path.join(d, RESULT_FILE), "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=1)
+    except Exception:
+        pass                                   # recording must never break the check itself
+
+
 def check(name, root=None, pkg=None, verbose=True):
-    """Run the self-consistency check. Returns a list of issue strings ([] == consistent)."""
+    """Run the self-consistency check. Returns a list of issue strings ([] == consistent).
+    The verdict is also written to design/consistency_result.json (with the hashes of the package
+    and cfg.py it judged) whenever the package checked IS the one on disk -- the completion gate
+    reads that file."""
     issues = []
+    _from_disk = pkg is None
     if pkg is None:
         if root is None:
             base = os.environ.get("STEEL_BUILDER_JOBS") or _here_repo()
@@ -570,13 +835,21 @@ def check(name, root=None, pkg=None, verbose=True):
     _dcfg = _load_cfg(_root, name)
     issues += _geometry_issues(_dcfg)                       # units/geometry sanity (story heights in ft, etc.)
     issues += _design_basis_issues(_dcfg, name, pkg)        # R1/R2/R8/R12/R14/R16
-    issues += _height_limit_issues(_dcfg)                   # R19 system height limit
+    issues += _height_limit_issues(_dcfg, pkg)              # R19 SDC / system / height limits / factors
     issues += _transfer_issues(_dcfg, name, pkg)            # R7/R15 transfer/backstay
     issues += _nonparallel_issues(_dcfg, pkg)               # R10 skewed frame
     issues += _consultancy_issues(_dcfg, pkg)               # Tier A/B real-world guards
     issues += _named_not_computed_issues(pkg)               # R9 named-not-computed
     issues += _system_checks_issues(_dcfg, pkg)             # R9 per-system required checks
     issues += _completeness_issues(pkg)
+    _same = _from_disk
+    if not _same:
+        try:
+            _same = json.load(open(os.path.join(_root, "design", "calc_package.json"), encoding="utf-8")) == pkg
+        except Exception:
+            _same = False
+    if _same:
+        _record_result(_root, name, issues)
     if verbose:
         _print(name, issues)
     return issues

@@ -2,11 +2,12 @@
 
 Local single-user posture: no login, no cookies, no telemetry. The user's LLM key lives in server
 memory (session.set_creds), never on disk. The steel engine + model-written code run ONLY in the
-sandbox executor. Bind to 127.0.0.1 (the CLI default) -- there is no authentication.
+sandbox executor. Bind to 127.0.0.1 (the CLI default) -- there is no login; the `_local_only` guard
+below refuses cross-site and DNS-rebound requests (and checks the hub's per-launch token when sent).
 """
-import base64, io, json, os, posixpath, threading, time, zipfile
+import base64, hmac, io, json, os, posixpath, threading, time, zipfile
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from . import config, session, agent
@@ -14,6 +15,75 @@ from .job_tools import JobWorkspace, _clean_name
 from .sandbox import make_executor
 
 app = FastAPI(title="Steltic")
+
+
+# ---------------- local-only guard (cross-site requests, DNS rebinding) ----------------
+# This server binds to 127.0.0.1 with no login, which keeps other MACHINES out -- but not other web
+# pages. A browser sends a "simple" cross-site POST (text/plain body, no CORS preflight) to any
+# 127.0.0.1 port, and `await request.json()` ignores the Content-Type, so before this guard any page
+# the user had open could POST /api/creds (re-point the LLM endpoint at its own server) and then
+# /api/run -- whose model-written run_python executes on this PC. CORS only hides the reply; the side
+# effect has already happened. A hostname the attacker resolves to 127.0.0.1 (DNS rebinding) would
+# even let it READ the replies. Same rules as the hub's own guard (steltic_hub/main.py):
+#   * every request must name a loopback Host (closes DNS rebinding; STELTIC_ALLOWED_HOSTS adds
+#     names for a deliberate non-loopback bind, comma-separated);
+#   * a state-changing request (not GET/HEAD/OPTIONS) is refused when the browser says it came from
+#     another site: a non-loopback Origin (including "null") or Sec-Fetch-Site: cross-site;
+#   * when the hub started this server it passes a per-launch secret in STELTIC_HUB_TOKEN and sends it
+#     back as the X-Steltic-Hub-Token header on everything it sends (credential push, runs, stop, its
+#     /m/ proxy). A request carrying that header must carry the right value; with it the browser
+#     provenance check is not needed (the hub has already applied its own).
+# The module's own page (same origin), the hub's page through its proxy, curl / the CLI / another
+# module's server (no Origin header at all) keep working unchanged.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]", "testserver"}   # testserver: Starlette's TestClient
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_TOKEN_HEADER = "x-steltic-hub-token"
+
+
+def _allowed_hosts() -> set:
+    extra = {h.strip().lower() for h in (os.environ.get("STELTIC_ALLOWED_HOSTS") or "").split(",") if h.strip()}
+    return _LOOPBACK_HOSTS | extra
+
+
+def _host_name(value: str) -> str:
+    """`127.0.0.1:8410` -> `127.0.0.1`; `[::1]:8410` -> `[::1]`; `http://x:1/` -> `x`."""
+    v = (value or "").strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if v.startswith("["):
+        return v.split("]", 1)[0] + "]"
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
+def _cross_site_reason(request) -> str | None:
+    """Why this request must not be acted on -- or None when it is plainly local."""
+    allowed = _allowed_hosts()
+    host = _host_name(request.headers.get("host", ""))
+    if host and host not in allowed:
+        return f"this server only answers to loopback names, not {host!r}"
+    sent = request.headers.get(_TOKEN_HEADER)
+    if sent is not None:
+        want = os.environ.get("STELTIC_HUB_TOKEN") or ""
+        if not want or not hmac.compare_digest(sent.encode(), want.encode()):
+            return "wrong hub token"
+        return None
+    if request.method in _SAFE_METHODS:
+        return None
+    origin = request.headers.get("origin")
+    if origin is not None and _host_name(origin) not in allowed:
+        return f"cross-site request from {origin!r} refused"
+    if (request.headers.get("sec-fetch-site") or "").lower() == "cross-site":
+        return "cross-site request refused"
+    return None
+
+
+@app.middleware("http")
+async def _local_only(request, call_next):
+    why = _cross_site_reason(request)
+    if why:
+        return JSONResponse({"detail": why}, status_code=403)
+    return await call_next(request)
 
 
 # Frontend freshness: browsers heuristically cache app.js/index.html for days, so users kept running

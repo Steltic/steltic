@@ -368,10 +368,16 @@ def floor_roofLrS(cfg,k):
 _MODAL_CACHE = {}
 _ELF_CACHE = {}
 _MODESHAPE_CACHE = {}   # _model_key(cfg) -> {T, coords, ev (all nodes, all solved modes), ele, z, nmodes}
+_MODAL_DETAIL = {}      # (_model_key, nm) -> per-mode diaphragm eigenvectors + participation (MRSA, HR-23)
+_DIAPH_CACHE = {}       # _model_key -> diaphragm_props (centre of mass, polar inertia, extents; HR-19/31)
+_TORSION_CACHE = {}     # _model_key -> torsion_summary (TIR / Ax / edge drift; HR-08/09)
+_MRSA_CACHE = {}        # (_model_key, direction) -> mrsa() result (HR-23)
+_SDF_CACHE = {}         # _model_key -> seismic_design_forces() (HR-01/02/08/23)
 
 def clear_caches():
     """Drop the per-run modal/elf/mode-shape memo. Called at the start of each design_and_report run."""
-    _MODAL_CACHE.clear(); _ELF_CACHE.clear(); _MODESHAPE_CACHE.clear()
+    _MODAL_CACHE.clear(); _ELF_CACHE.clear(); _MODESHAPE_CACHE.clear(); _MODAL_DETAIL.clear()
+    _DIAPH_CACHE.clear(); _TORSION_CACHE.clear(); _MRSA_CACHE.clear(); _SDF_CACHE.clear()
 
 
 def _model_key(cfg):
@@ -389,42 +395,243 @@ def _model_key(cfg):
            cfg.get("clad"), cfg.get("L_floor"), cfg.get("Lr"), cfg.get("snow"),
            bool(cfg.get("storage")), tuple(cfg.get("storage_levels") or ()),   # 12.7.2 storage live in W
            tuple(sorted((cfg.get("extra_mass_floors") or {}).items())),
-           tuple(sorted((cfg.get("seis") or {}).items())))
+           repr(sorted((cfg.get("seis") or {}).items())),
+           # HR-02/20/19/23: per-direction factors, the declared system (Table 12.2-1 defaults), the
+           # diaphragm-mass policy and the seismic demand basis all change the seismic results
+           repr([(k, cfg.get(k)) for k in ("seis_X", "seis_Y", "seis_x", "seis_y", "rho", "rho_X", "rho_Y",
+                                            "system", "system_X", "system_Y", "diaphragm_mass", "diaphragm",
+                                            "seismic_demand_basis", "analyses", "sdc", "drift_limit")]))
     return hashlib.md5(repr(sig).encode()).hexdigest()
+
+
+def _nm_default(NF):
+    """Mode count used by every seismic routine (period per direction, MRSA, modal-mass gate) so they
+    share ONE eigen solve: 16 modes (12 for >= 18 stories), never more than 3 per diaphragm level."""
+    return min(3 * NF, 12 if NF >= 18 else 16)
+
 
 def modal(cfg, nm):
     """Memoized modal analysis. Identical (cfg, nm) within a run reuses the eigen solve instead of
     re-running it for every load_cases()/combos() call. Callers use only the returned tuple; whoever
-    needs the live model next rebuilds it. Returns the SAME computed values (no numeric change)."""
-    key = (_model_key(cfg), nm)
+    needs the live model next rebuilds it.  Returns (T, w2, eX, eY, Mtot); eX/eY are the effective
+    modal mass ratios.  Per-mode diaphragm eigenvectors and participation factors (for MRSA) are kept
+    in modal_detail(cfg, nm)."""
+    mk = _model_key(cfg)
+    key = (mk, nm)
     r = _MODAL_CACHE.get(key)
     if r is None:
-        r = _modal_impl(cfg, nm); _MODAL_CACHE[key] = r
+        r = _modal_impl(cfg, nm, mk); _MODAL_CACHE[key] = r
     return r
 
-def _modal_impl(cfg,nm):
+
+def modal_detail(cfg, nm=None):
+    """Per-mode data of the cached modal solve: {'T','w2','phi':{k:[(ux,uy,rz) at the master per mode]},
+    'Lx','Ly','Mn' (participation numerators / generalised masses), 'mass_pts':{k:(x,y,m,J)} (where each
+    level's lumped seismic mass sits), 'props' (diaphragm_props), 'warnings'}."""
+    NF = len(cfg["heights"]); nm = nm or _nm_default(NF)
+    modal(cfg, nm)
+    return _MODAL_DETAIL.get((_model_key(cfg), nm))
+
+
+# ===================================================================== diaphragm mass (HR-19, HR-31)
+def cmtag(k):
+    """Node tag of the level-k centre-of-mass node (slaved to the diaphragm master mtag(k))."""
+    return k*100000 + 99998
+
+
+def _poly_props(P):
+    """Signed area, first moments and polar second moment about the ORIGIN of a polygon P=[(x,y)..]."""
+    A = Sx = Sy = Ixx = Iyy = 0.0
+    n = len(P)
+    for a in range(n):
+        x0, y0 = P[a]; x1, y1 = P[(a+1) % n]
+        c = x0*y1 - x1*y0
+        A += c; Sx += (x0+x1)*c; Sy += (y0+y1)*c
+        Ixx += (y0*y0 + y0*y1 + y1*y1)*c; Iyy += (x0*x0 + x0*x1 + x1*x1)*c
+    A *= 0.5; Sx /= 6.0; Sy /= 6.0; Ixx /= 12.0; Iyy /= 12.0
+    if A < 0: A, Sx, Sy, Ixx, Iyy = -A, -Sx, -Sy, -Ixx, -Iyy
+    return A, Sx, Sy, Ixx + Iyy
+
+
+def _diaphragm_props_live(cfg, info):
+    """Diaphragm mass properties of every level from the LIVE model (node coordinates as built):
+      * W = floor_w(cfg,k) (the ELF seismic weight, so modal mass == W/g exactly);
+      * the area-distributed part (dead, snow, storage live, extra mass) sits on the framed panels of
+        the ACTUAL footprint (present positions, real node coordinates); the cladding part sits on the
+        exposed panel edges -- centre of mass = weight-weighted centroid (ASCE 7-22 12.8.4.1/12.8.4.2.2);
+      * J about the centre of mass by the parallel-axis rule (panel polygons + edge lines), not the old
+        (extent + one bay) rectangle (HR-19);
+      * the extreme points / plan dimensions perpendicular to each direction (accidental arm, edges).
+    Returns {k: dict(W,m,xc,yc,J,xm,ym,z,xmin,xmax,ymin,ymax,BX,BY)}, plus key 'warnings'."""
+    NF = info["NF"]; out = {}; warns = []
+    for k in range(1, NF+1):
+        pts = info["present"][k]
+        co = {}
+        for (i, j) in pts:
+            try: c = ops.nodeCoord(ntag(i, j, k)); co[(i, j)] = (c[0], c[1], c[2])
+            except Exception: co[(i, j)] = _xy_in(cfg, i, j) + (zlevels(cfg)[k],)
+        try: mc = ops.nodeCoord(mtag(k)); xm, ym, zk = mc[0], mc[1], mc[2]
+        except Exception:
+            xm = sum(c[0] for c in co.values())/len(co); ym = sum(c[1] for c in co.values())/len(co)
+            zk = zlevels(cfg)[k]
+        xs = [c[0] for c in co.values()]; ys = [c[1] for c in co.values()]
+        P = set(pts)
+        def framed(i, j):
+            return (i, j) in P and (i+1, j) in P and (i, j+1) in P and (i+1, j+1) in P
+        A = Sx = Sy = Ip = 0.0
+        for (i, j) in pts:
+            if framed(i, j):
+                quad = [co[(i, j)][:2], co[(i+1, j)][:2], co[(i+1, j+1)][:2], co[(i, j+1)][:2]]
+                a, sx, sy, ip = _poly_props(quad); A += a; Sx += sx; Sy += sy; Ip += ip
+        Ltot = Lx_ = Ly_ = Le = 0.0
+        for (i, j) in pts:                 # exposed panel edges (bordered by exactly one framed panel)
+            for (a, b, n1, n2) in (((i, j), (i+1, j), (i, j-1), (i, j)), ((i, j), (i, j+1), (i-1, j), (i, j))):
+                if b not in P: continue
+                if framed(*n1) != framed(*n2):
+                    p, q = co[a], co[b]; L = math.hypot(q[0]-p[0], q[1]-p[1])
+                    mx, my = 0.5*(p[0]+q[0]), 0.5*(p[1]+q[1])
+                    Ltot += L; Lx_ += L*mx; Ly_ += L*my; Le += L*(mx*mx + my*my + L*L/12.0)
+        W = floor_w(cfg, k); m = W/g
+        NFh = len(cfg["heights"]); th = cfg["heights"][k-1]/12.0; th = th if k != NFh else th/2
+        Wc = cfg.get("clad", 0.0)*perim_ft(cfg, k)*th/1000.0
+        Wa = W - Wc
+        if A <= 0 or Wa < -1e-9:
+            # no framed panel (e.g. a single line of columns): node average + rectangle of the ACTUAL extent
+            xc = sum(xs)/len(xs); yc = sum(ys)/len(ys)
+            J = m*((max(xs)-min(xs))**2 + (max(ys)-min(ys))**2)/12.0
+            warns.append("level %d: no framed floor panel found -- centre of mass taken at the node average "
+                         "and J from the actual plan extent" % k)
+        else:
+            ma = Wa/g; me = Wc/g
+            xa, ya = Sx/A, Sy/A; Ja = ma*(Ip/A - (xa*xa + ya*ya))
+            if Ltot > 0 and me > 0:
+                xe, ye = Lx_/Ltot, Ly_/Ltot; Je = me*(Le/Ltot - (xe*xe + ye*ye))
+            else:
+                xe, ye, Je, me = xa, ya, 0.0, 0.0
+            mm = ma + me
+            xc = (ma*xa + me*xe)/mm if mm > 0 else xa; yc = (ma*ya + me*ye)/mm if mm > 0 else ya
+            J = Ja + ma*((xa-xc)**2 + (ya-yc)**2) + Je + me*((xe-xc)**2 + (ye-yc)**2)
+        out[k] = dict(W=W, m=m, xc=xc, yc=yc, J=J, xm=xm, ym=ym, z=zk,
+                      xmin=min(xs), xmax=max(xs), ymin=min(ys), ymax=max(ys),
+                      BX=max(ys)-min(ys), BY=max(xs)-min(xs))
+    out["warnings"] = warns
+    return out
+
+
+def diaphragm_props(cfg):
+    """Cached _diaphragm_props_live on a fresh build (see there). Keys 1..NF and 'warnings'."""
+    key = _model_key(cfg)
+    r = _DIAPH_CACHE.get(key)
+    if r is None:
+        info = build(cfg, "Linear"); r = _diaphragm_props_live(cfg, info); _DIAPH_CACHE[key] = r
+    return r
+
+
+def attach_diaphragm_mass(cfg, info, props=None):
+    """Put each level's seismic mass where it physically is: W/g translational and the footprint polar
+    inertia J at the CENTRE OF MASS (ASCE 7-22 12.8.4.1), not at the master node / node average (HR-31).
+    Where the master is not at the centre of mass a massed node cmtag(k) is added at the CM and slaved
+    to the master by a rigid diaphragm (exact coupled mass matrix).  Call it at the end of a builder
+    (example_build does) instead of hand-writing ops.mass on the master.  Returns the props dict."""
+    props = props or _diaphragm_props_live(cfg, info)
+    have = set(ops.getNodeTags())
+    for k in range(1, info["NF"]+1):
+        p = props[k]
+        if math.hypot(p["xc"]-p["xm"], p["yc"]-p["ym"]) < 1e-6:
+            ops.mass(mtag(k), p["m"], p["m"], 0.0, 0.0, 0.0, p["J"])
+            continue
+        t = cmtag(k)
+        if t not in have:
+            ops.node(t, p["xc"], p["yc"], p["z"]); ops.fix(t, 0, 0, 1, 1, 1, 0)
+            ops.rigidDiaphragm(3, mtag(k), t)
+        ops.mass(t, p["m"], p["m"], 0.0, 0.0, 0.0, p["J"])
+        ops.mass(mtag(k), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    info["diaphragm"] = props
+    return props
+
+
+def _modal_impl(cfg, nm, mkey=None):
+    mkey = mkey or _model_key(cfg)          # BEFORE the build below (_model_key rebuilds the model)
     info=build(cfg,"Linear"); NF=info["NF"]
-    nm_req=min(nm,3*NF)
-    masses={k:floor_w(cfg,k)/g for k in range(1,NF+1)}
-    Jm={}
-    for k in range(1,NF+1):
-        pts=info["present"][k]; SX,SY=cfg["SX"],cfg["SY"]
-        xs=[i*SX for i,j in pts]; ys=[j*SY for i,j in pts]
-        Bx=max(xs)-min(xs)+SX; By=max(ys)-min(ys)+SY; Jm[k]=masses[k]*(Bx**2+By**2)/12.0
-    Mtot=sum(masses.values()); maxmodes=max(1,3*NF)
+    nm_req=min(nm,3*NF); maxmodes=max(1,3*NF)
+    props=_diaphragm_props_live(cfg, info); warns=list(props.get("warnings", []))
+    tags=list(ops.getNodeTags()); have=set(tags)
+    mode=str(cfg.get("diaphragm_mass", "engine")).lower()
+    mref=min([props[k]["m"] for k in range(1, NF+1) if props[k]["m"] > 0] or [1.0])   # smallest REAL floor mass
+    # ---- builder masses (HR-19: never silently overwrite what the custom_build assigned) ----
+    bm={}
+    for t in tags:
+        try: mm=ops.nodeMass(t)
+        except Exception: mm=[0.0]*6
+        if any(abs(v) > 1e-9*mref for v in mm[:6]): bm[t]=list(mm[:6])
+    cm_built=("diaphragm" in info)          # the builder called attach_diaphragm_mass (example_build does)
+    if mode=="builder":
+        for k in range(1, NF+1):
+            if mtag(k) not in bm and cmtag(k) not in bm:
+                warns.append("diaphragm_mass='builder' but level %d has no mass on its master -- the engine "
+                             "centre-of-mass mass W/g was assigned instead" % k)
+                p=props[k]; t=cmtag(k)
+                if t not in have:
+                    ops.node(t, p["xc"], p["yc"], p["z"]); ops.fix(t, 0, 0, 1, 1, 1, 0)
+                    ops.rigidDiaphragm(3, mtag(k), t)
+                ops.mass(t, p["m"], p["m"], 0.0, 0.0, 0.0, p["J"])
+    elif not cm_built:
+        for k in range(1, NF+1):
+            p=props[k]; b=bm.get(mtag(k))
+            if b is None: continue
+            e2=(p["xc"]-p["xm"])**2+(p["yc"]-p["ym"])**2
+            Jm=p["J"]+p["m"]*e2                                   # engine J referred to the master
+            dm=abs(b[0]/p["m"]-1.0) if p["m"] else 0.0
+            dJ=abs(b[5]/Jm-1.0) if Jm else 0.0
+            if dm>0.02 or dJ>0.10 or e2>1.0:
+                warns.append("level %d: custom_build master mass m=%.4g J=%.4g at (%.0f,%.0f) replaced by the "
+                             "consistent seismic mass m=W/g=%.4g, J_cm=%.4g at the centre of mass (%.0f,%.0f) "
+                             "(dm=%+.1f%%, dJ(about master)=%+.1f%%); set cfg['diaphragm_mass']='builder' to "
+                             "keep the builder's own masses" % (k, b[0], b[5], p["xm"], p["ym"], p["m"], p["J"],
+                                                                 p["xc"], p["yc"], 100*(b[0]/p["m"]-1.0) if p["m"] else 0.0,
+                                                                 100*(b[5]/Jm-1.0) if Jm else 0.0))
+            bm.pop(mtag(k), None)
+        try:
+            attach_diaphragm_mass(cfg, info, props)
+        except Exception as _ex:              # e.g. a builder without mtag(k) diaphragm masters
+            warns.append("could not place the seismic mass at the centres of mass (%s) -- the builder's own "
+                         "masses are used for the modal analysis" % _ex)
+            mode = "builder"
+            for t in tags:
+                try:
+                    mm = ops.nodeMass(t)
+                    if any(abs(v) > 1e-9*mref for v in mm[:6]): bm[t] = list(mm[:6])
+                except Exception:
+                    pass
+    other=[t for t in bm if t not in {mtag(k) for k in range(1, NF+1)} | {cmtag(k) for k in range(1, NF+1)}]
+    if other:
+        mo=sum(bm[t][0] for t in other)
+        warns.append("custom_build assigned mass to %d non-diaphragm node(s) (sum m=%.4g = %.0f kip): kept in the "
+                     "eigen solve, NOT in the ELF weight W" % (len(other), mo, mo*g))
     # Regularize the (singular) mass matrix: the rigid diaphragm leaves mass only on the floor masters,
     # so most DOF are massless and -genBandArpack fails to converge beyond ~6 modes -- silently falling
-    # back to the O(N^3) -fullGenLapack (tens of seconds).  A tiny ~1e-8*floor-mass on every DOF makes M
-    # non-singular so ARPACK converges for ALL requested modes in ~1 s, with NO change to periods or
-    # modal mass (verified identical to the dense solve).  Masters keep their real lateral mass. (P7)
-    try:
-        _tm = 1e-8 * (min(masses.values()) if masses else 1.0)
-        for _t in ops.getNodeTags():
-            ops.mass(_t, _tm, _tm, _tm, _tm, _tm, _tm)
-        for _k in range(1, NF+1):
-            ops.mass(mtag(_k), masses[_k]+_tm, masses[_k]+_tm, _tm, _tm, _tm, Jm[_k]+_tm)
-    except Exception:
-        pass
+    # back to the O(N^3) -fullGenLapack (tens of seconds).  A tiny ~1e-8*floor-mass on every MASSLESS DOF
+    # makes M non-singular so ARPACK converges for ALL requested modes in ~1 s, with NO change to periods
+    # or modal mass.  Nodes that carry a real mass (the CM / master masses, any builder mass) keep it. (P7)
+    _tm = 1e-8 * mref
+    mnodes=[]
+    for t in ops.getNodeTags():
+        try: mm=list(ops.nodeMass(t))[:6]
+        except Exception: mm=[0.0]*6
+        if any(abs(v) > 1e-9*mref for v in mm):
+            mnodes.append((t, mm))
+            ops.mass(t, *[v if abs(v) > 1e-9*mref else _tm for v in mm])
+        else:
+            try: ops.mass(t, _tm, _tm, _tm, _tm, _tm, _tm)
+            except Exception: pass
+    Mtot=sum(mm[0] for t, mm in mnodes)
+    masspt={}
+    for k in range(1, NF+1):
+        p=props[k]
+        if mode=="builder" and mtag(k) in bm:
+            masspt[k]=(p["xm"], p["ym"], bm[mtag(k)][0], bm[mtag(k)][5])
+        else:
+            masspt[k]=(p["xc"], p["yc"], p["m"], p["J"])
     def _solve(nev):
         nev=max(1,min(nev,maxmodes))
         # A system MUST be set or -genBandArpack raises "no system is set" and silently falls back to the
@@ -435,24 +642,28 @@ def _modal_impl(cfg,nm):
         except Exception:
             return ops.eigen("-fullGenLapack",nev)       # dense fallback if ARPACK cannot converge
     def _mass(w2):
-        eX=[];eY=[]
+        # effective modal mass ratios over EVERY massed node (CM nodes, masters, any builder mass):
+        # L_n = sum m*phi (per direction), M_n = sum m*phi^2 (ux, uy, rz)
+        eX=[];eY=[];LX=[];LY=[];MN=[]
         for mode in range(1,len(w2)+1):
             Lx=Ly=Mi=0.0
-            for k in range(1,NF+1):
-                p=ops.nodeEigenvector(mtag(k),mode); mk=masses[k]
-                Lx+=mk*p[0]; Ly+=mk*p[1]; Mi+=mk*(p[0]**2+p[1]**2)+Jm[k]*p[5]**2
+            for t,mm in mnodes:
+                p=ops.nodeEigenvector(t,mode)
+                Lx+=mm[0]*p[0]; Ly+=mm[1]*p[1]
+                Mi+=mm[0]*p[0]**2+mm[1]*p[1]**2+mm[2]*p[2]**2+mm[3]*p[3]**2+mm[4]*p[4]**2+mm[5]*p[5]**2
+            LX.append(Lx); LY.append(Ly); MN.append(Mi)
             eX.append((Lx**2)/Mi/Mtot if Mi>0 else 0); eY.append((Ly**2)/Mi/Mtot if Mi>0 else 0)
-        return eX,eY
-    # Adaptive mode count: ask for 6 modes first -- ARPACK is fast and converges, unlike a 16-mode
-    # request on a rigid-diaphragm model (only ~3 dynamic DOF per floor). Escalate to 12, then to the
-    # caller's full request, ONLY if the ASCE 7-22 12.9.1 90% modal-mass target is not yet captured.
+        return eX,eY,LX,LY,MN
     # SINGLE solve: ops.eigen cannot be re-called on one model (the eigenSOE is consumed after the first
     # call), and with the mass regularized above, -genBandArpack converges for the full request in ONE
-    # shot (~1 s) -- no need for the escalating ladder that triggered the second (failing) eigen call and
-    # the slow dense fallback. Ask for enough modes to capture the ASCE 7-22 12.9.1 90% mass target. (P7)
+    # shot (~1 s). Ask for enough modes to capture the ASCE 7-22 12.9.1 90% mass target. (P7)
     nev = min(maxmodes, max(nm_req, 12))
-    w2 = _solve(nev); eX, eY = _mass(w2)
+    w2 = _solve(nev); eX, eY, LX, LY, MN = _mass(w2)
     T=[2*math.pi/math.sqrt(max(x,1e-12)) for x in w2]
+    phi={k:[tuple(ops.nodeEigenvector(mtag(k),md)[i] for i in (0,1,5)) for md in range(1,len(w2)+1)]
+         for k in range(1,NF+1)}
+    _MODAL_DETAIL[(mkey,nm)]={"T":T,"w2":list(w2),"phi":phi,"Lx":LX,"Ly":LY,"Mn":MN,"Mtot":Mtot,
+                              "mass_pts":masspt,"props":props,"warnings":warns,"eX":eX,"eY":eY}
     # Cache the full eigenvector FIELD (every node, every solved mode) while the model is live, so the
     # report's 3D mode-shape figure and the animated-mode GIF REUSE this solve instead of re-running
     # ops.eigen (fig_mode_3d previously re-solved with the slow -fullGenLapack). Plain-dict snapshot,
@@ -461,7 +672,7 @@ def _modal_impl(cfg,nm):
         nm_have=len(w2)
         coords={t:ops.nodeCoord(t) for t in ops.getNodeTags()}
         evf={t:[ops.nodeEigenvector(t,md) for md in range(1,nm_have+1)] for t in coords}
-        _MODESHAPE_CACHE[_model_key(cfg)]={"T":T,"coords":coords,"ev":evf,"ele":list(info["ele"]),
+        _MODESHAPE_CACHE[mkey]={"T":T,"coords":coords,"ev":evf,"ele":list(info["ele"]),
                                    "z":info["z"],"nmodes":nm_have}
     except Exception:
         pass
@@ -500,83 +711,526 @@ def sa(cfg,T):
     if T<=TL: return SD1/T
     return SD1*TL/T**2
 
-def elf(cfg, T1):
-    """Memoized ELF (pure function of cfg + fundamental period); same values, no numeric change."""
-    key = (_model_key(cfg), round(float(T1), 6))
+# ===================================================================== seismic factors (HR-02, HR-20)
+# ASCE 7-22 Table 12.2-1 (R, Omega0, Cd) with the Table 12.8-2 period coefficients (Ct, x) for the
+# steel seismic force-resisting systems this engine designs.  Keys are what sfrs_key() returns.
+SFRS_TABLE = {
+    "EBF":  dict(R=8.0,  Om0=2.0, Cd=4.0,  Ct=0.03,  x=0.75, row="B.1 steel eccentrically braced frames"),
+    "SCBF": dict(R=6.0,  Om0=2.0, Cd=5.0,  Ct=0.02,  x=0.75, row="B.2 steel special concentrically braced frames"),
+    "OCBF": dict(R=3.25, Om0=2.0, Cd=3.25, Ct=0.02,  x=0.75, row="B.3 steel ordinary concentrically braced frames"),
+    "BRBF": dict(R=8.0,  Om0=2.5, Cd=5.0,  Ct=0.03,  x=0.75, row="B.26 steel buckling-restrained braced frames"),
+    "SPSW": dict(R=7.0,  Om0=2.0, Cd=6.0,  Ct=0.02,  x=0.75, row="B.27 steel special plate shear walls"),
+    "SMF":  dict(R=8.0,  Om0=3.0, Cd=5.5,  Ct=0.028, x=0.8,  row="C.1 steel special moment frames"),
+    "STMF": dict(R=7.0,  Om0=3.0, Cd=5.5,  Ct=0.028, x=0.8,  row="C.2 steel special truss moment frames"),
+    "IMF":  dict(R=4.5,  Om0=3.0, Cd=4.0,  Ct=0.028, x=0.8,  row="C.3 steel intermediate moment frames"),
+    "OMF":  dict(R=3.5,  Om0=3.0, Cd=3.0,  Ct=0.028, x=0.8,  row="C.4 steel ordinary moment frames"),
+    "DUAL_SMF_EBF":  dict(R=8.0, Om0=2.5, Cd=4.0, Ct=0.03, x=0.75, row="D.1 dual: SMF + steel EBF"),
+    "DUAL_SMF_SCBF": dict(R=7.0, Om0=2.5, Cd=5.5, Ct=0.02, x=0.75, row="D.2 dual: SMF + steel SCBF"),
+    "DUAL_SMF_BRBF": dict(R=8.0, Om0=2.5, Cd=5.0, Ct=0.03, x=0.75, row="D.13 dual: SMF + steel BRBF"),
+    "DUAL_SMF_SPSW": dict(R=8.0, Om0=2.5, Cd=6.5, Ct=0.02, x=0.75, row="D.14 dual: SMF + steel SPSW"),
+    "DUAL_IMF_SCBF": dict(R=6.0, Om0=2.5, Cd=5.0, Ct=0.02, x=0.75, row="E.1 dual: IMF + steel SCBF"),
+    "NSD":  dict(R=3.0,  Om0=3.0, Cd=3.0,  Ct=None,  x=None, row="H steel systems not specifically detailed"),
+}
+
+
+def _has_word(s, w):
+    import re
+    return re.search(r"(?<![a-z])%s(?![a-z])" % re.escape(w), s) is not None
+
+
+def sfrs_key(name):
+    """Map a declared system name (cfg['system'], e.g. 'SPSW', 'Dual SMF+BRBF', 'steel IMF') to a
+    SFRS_TABLE key; None when it is empty, unknown, or names several systems without 'dual' (a mixed
+    building -- declare the system per direction instead, cfg['system_X'] / cfg['system_Y'])."""
+    s = str(name or "").lower().replace("_", " ").replace("-", " ")
+    if not s.strip():
+        return None
+    found = []
+    def add(key, *words):
+        if any(_has_word(s, w) for w in words): found.append(key)
+    add("STMF", "stmf", "truss moment")
+    add("SPSW", "spsw", "plate shear wall", "plate shear walls")
+    add("BRBF", "brbf", "buckling restrained")
+    add("EBF", "ebf", "eccentrically braced", "eccentric")
+    add("SCBF", "scbf", "special concentrically braced", "special concentric")
+    add("OCBF", "ocbf", "ordinary concentrically braced", "ordinary concentric")
+    add("SMF", "smf", "special moment")
+    add("IMF", "imf", "intermediate moment")
+    add("OMF", "omf", "ordinary moment")
+    if "not specifically detailed" in s or _has_word(s, "nsd"):
+        found.append("NSD")
+    if "dual" in s:
+        mf = [f for f in found if f in ("SMF", "IMF")]; other = [f for f in found if f not in ("SMF", "IMF", "OMF")]
+        if len(mf) == 1 and len(other) == 1:
+            k = "DUAL_%s_%s" % (mf[0], other[0])
+            return k if k in SFRS_TABLE else None
+        return None
+    return found[0] if len(found) == 1 else None
+
+
+def _sfrs_from_factors(s):
+    """The unique SFRS_TABLE key whose (R, Cd, Om0) equal the set s, else None (used only where no system
+    name resolves, e.g. a mixed building that gives explicit per-direction factors)."""
+    try:
+        hit = [k for k, r in SFRS_TABLE.items()
+               if all(abs(float(s[f]) - r[f]) < 1e-9 for f in ("R", "Cd", "Om0"))]
+    except Exception:
+        return None
+    return hit[0] if len(hit) == 1 else None
+
+
+def _legacy_cd(R):
+    return {8: 5.5, 7: 5.5, 6: 5.0, 4.5: 4.0, 3.25: 3.25, 3: 3.0}.get(R, R)
+
+
+def _legacy_om0(R, Cd):
+    if R == 7 and Cd == 6.0: return 2.0               # SPSW row B.27
+    return {8: 3.0, 7: 2.5, 6: 2.0, 4.5: 3.0, 3.25: 2.0, 3: 3.0}.get(R, 2.5)
+
+
+def _dir_override(cfg, d):
+    """Per-direction override dict (ASCE 7-22 12.2.2): cfg['seis']['X'|'Y'], then cfg['seis_X'|'seis_Y']
+    (or lower-case cfg['seis_x'|'seis_y']).  NOTE cfg['seis']['x'] is the period exponent, never a
+    direction key."""
+    ov = {}
+    s = cfg.get("seis") or {}
+    for src in (s.get(d), cfg.get("seis_" + d), cfg.get("seis_" + d.lower())):
+        if isinstance(src, dict): ov.update(src)
+    return ov
+
+
+def system_dir(cfg, direction=None):
+    """Declared SFRS name in `direction`: seis[d]['system'] / cfg['seis_d']['system'] / cfg['system_X'|'Y'],
+    else the building-wide cfg['seis']['system'] / cfg['system']."""
+    if direction in ("X", "Y"):
+        ov = _dir_override(cfg, direction)
+        for v in (ov.get("system"), cfg.get("system_" + direction), cfg.get("system_" + direction.lower())):
+            if v: return str(v)
+    s = cfg.get("seis") or {}
+    return str(s.get("system") or cfg.get("system") or "")
+
+
+def _seis_resolve(cfg, d=None):
+    base = {k: v for k, v in (cfg.get("seis") or {}).items() if k not in ("X", "Y")}
+    auto = set(base.pop("_auto", None) or [])
+    ov = dict(_dir_override(cfg, d)) if d in ("X", "Y") else {}
+    ov_auto = set(ov.pop("_auto", None) or [])
+    eff = dict(base); eff.update(ov)
+    warns = []; tag = ("direction %s" % d) if d else "building"
+    r_changed = bool(ov) and "R" in ov and "R" in base and abs(float(ov["R"]) - float(base["R"])) > 1e-9
+    if r_changed:
+        # a different R means a different system in this direction: only a DIRECTION-specific system name
+        # may supply its Table 12.2-1 row (the building-wide cfg['system'] describes the other direction)
+        sysname = str(ov.get("system") or cfg.get("system_" + d) or cfg.get("system_" + d.lower()) or "")
+    else:
+        sysname = system_dir(cfg, d)
+    key = sfrs_key(sysname); row = SFRS_TABLE.get(key)
+    if ov:
+        auto = (auto - set(ov)) | ov_auto
+        if r_changed:
+            for kk in ("Cd", "Om0", "Ct", "x"):        # never inherit another system's factors
+                if kk not in ov: auto.add(kk)
+    for kk in sorted(auto):
+        if row and row.get(kk) is not None:
+            eff[kk] = row[kk]
+        elif kk == "Cd":
+            eff[kk] = _legacy_cd(eff.get("R"))
+            warns.append("%s: Cd=%s is an R-keyed DEFAULT (system %r not resolved to a Table 12.2-1 row) -- "
+                         "declare cfg['system'] or pass Cd explicitly" % (tag, eff[kk], sysname or None))
+        elif kk == "Om0":
+            eff[kk] = _legacy_om0(eff.get("R"), eff.get("Cd"))
+            warns.append("%s: Omega0=%s is an R-keyed DEFAULT (system %r not resolved to a Table 12.2-1 row) -- "
+                         "declare cfg['system'] or pass Om0 explicitly" % (tag, eff[kk], sysname or None))
+        else:
+            warns.append("%s: %s=%s inherited from the base cfg['seis'] although R differs -- give %s for "
+                         "this direction (Table 12.8-2)" % (tag, kk, eff.get(kk), kk))
+    if row:
+        for kk in ("R", "Cd", "Om0", "Ct", "x"):
+            v = eff.get(kk); t = row.get(kk)
+            if v is None or t is None: continue
+            if abs(float(v) - float(t)) > 1e-6:
+                note = ""
+                if kk == "Cd" and float(v) < t: note = " (UNCONSERVATIVE: drift too low)"
+                if kk == "Om0" and float(v) < t: note = " (UNCONSERVATIVE: overstrength too low)"
+                if kk == "R" and float(v) > t: note = " (UNCONSERVATIVE: base shear too low)"
+                if kk == "Ct" and float(v) < t: note = " (Ta lower -> conservative Cs cap)"
+                warns.append("%s: %s=%s differs from ASCE 7-22 Table %s row %s value %s%s -- confirm"
+                             % (tag, kk, v, "12.8-2" if kk in ("Ct", "x") else "12.2-1", row["row"], t, note))
+    rho = None
+    if d in ("X", "Y"):
+        rho = cfg.get("rho_" + d)
+        if rho is None: rho = ov.get("rho")
+    if rho is None: rho = cfg.get("rho")
+    if rho is None: rho = base.get("rho")
+    eff["rho"] = float(rho if rho is not None else 1.3)
+    eff["system"] = sysname; eff["sfrs"] = key
+    if not key:
+        inf = _sfrs_from_factors(eff)
+        if inf:                                   # no name resolved, but R/Cd/Om0 match exactly one row
+            eff["sfrs"] = inf; eff["sfrs_inferred"] = True
+    return eff, warns
+
+
+def seis_dir(cfg, direction=None):
+    """Effective seismic parameter set for `direction` ('X', 'Y' or None = building-wide):
+    the base cfg['seis'] merged with the direction's overrides (ASCE 7-22 12.2.2: the respective R, Cd
+    and Omega0 apply to each system), the defaulted factors replaced by the declared system's Table 12.2-1
+    / 12.8-2 values (HR-20), and the redundancy factor rho (cfg['rho_X'|'rho_Y'] > override 'rho' >
+    cfg['rho'] > 1.3).  Fully backward compatible: with one set, X and Y are identical."""
+    return _seis_resolve(cfg, direction)[0]
+
+
+def seis_warnings(cfg):
+    """Loud list of seismic-factor problems (defaults not tied to a declared system, values that differ
+    from Table 12.2-1 / 12.8-2, per-direction overrides missing factors).  Preflight checks are separate."""
+    out = []
+    dirs = [None, "X", "Y"] if any(_dir_override(cfg, d) for d in ("X", "Y")) or cfg.get("system_X") \
+        or cfg.get("system_Y") else [None]
+    for d in dirs:
+        for w in _seis_resolve(cfg, d)[1]:
+            if w not in out: out.append(w)
+    return out
+
+
+# ===================================================================== ELF per direction (HR-01, HR-02)
+def period_dir(cfg, direction, nm=None):
+    """(T, mode index, effective mass ratio) of the mode with the DOMINANT translational mass
+    participation in `direction` -- ASCE 7-22 12.8.2 'the fundamental period in the direction under
+    consideration' (not simply mode 1, which may be torsional or belong to the other axis)."""
+    NF = len(cfg["heights"]); nm = nm or _nm_default(NF)
+    T, w2, eX, eY, Mtot = modal(cfg, nm)
+    eff = eX if direction == "X" else eY
+    i = max(range(len(T)), key=lambda n: eff[n])
+    return T[i], i, eff[i]
+
+
+def elf(cfg, T1, direction=None):
+    """Memoized ELF for period T1 (pure function of cfg + T1 + direction).  `direction` selects the
+    per-direction factor set (seis_dir); None keeps the single building-wide set.
+    Returns (Cs, V, Tu, Ta, k, {level: Fx}, W)."""
+    key = (_model_key(cfg), round(float(T1), 6), direction)
     r = _ELF_CACHE.get(key)
     if r is None:
-        r = _elf_impl(cfg, T1); _ELF_CACHE[key] = r
+        r = _elf_impl(cfg, T1, direction); _ELF_CACHE[key] = r
     return r
 
-def _elf_impl(cfg,T1):
-    s=cfg["seis"]; NF=len(cfg["heights"]); z=zlevels(cfg)
-    W=sum(floor_w(cfg,k) for k in range(1,NF+1))
-    Ta=s["Ct"]*(z[-1]/12)**s["x"]; Tu=min(T1,s["Cu"]*Ta)
-    R,Ie=s["R"],s["Ie"]
-    Cs=s["SDS"]/(R/Ie)
-    TL=s.get("TL",8.0)
-    cap=s["SD1"]/(Tu*(R/Ie)) if Tu<=TL else s["SD1"]*TL/(Tu**2*(R/Ie))
-    Cs=min(Cs,cap); cmin=max(0.044*s["SDS"]*Ie,0.01)
-    if s.get("S1",0)>=0.6: cmin=max(cmin,0.5*s["S1"]/(R/Ie))
-    Cs=max(Cs,cmin); V=Cs*W
-    kk=1.0 if Tu<=0.5 else (2.0 if Tu>=2.5 else 1+(Tu-0.5)/2.0)
-    whk={k:floor_w(cfg,k)*z[k]**kk for k in range(1,NF+1)}; ss=sum(whk.values())
-    return Cs,V,Tu,Ta,kk,{k:V*whk[k]/ss for k in range(1,NF+1)},W
 
-def rs_baseshear(cfg,T,eX,eY,Mtot,direction):
-    s=cfg["seis"]; R,Ie=s["R"],s["Ie"]; W=Mtot*g
-    eff=eX if direction=="X" else eY
-    Vi=[ (sa(cfg,T[i])/(R/Ie))*eff[i]*W for i in range(len(T)) ]
-    # CQC with 5% damping
-    zeta=0.05; V2=0.0
-    for i in range(len(T)):
-        for j in range(len(T)):
-            r=T[j]/T[i] if T[i]>0 else 0
-            rho=(8*zeta**2*(1+r)*r**1.5)/((1-r**2)**2+4*zeta**2*r*(1+r)**2) if r>0 else (1 if i==j else 0)
-            V2+=rho*Vi[i]*Vi[j]
-    return math.sqrt(max(V2,0))
+def elf_dir(cfg, direction):
+    """ELF in `direction` with that direction's period (period_dir) AND factors (seis_dir):
+    Tu = min(T_dir, Cu*Ta_dir), Cs/V/k/Fx per ASCE 7-22 12.8.1-12.8.3."""
+    return elf(cfg, period_dir(cfg, direction)[0], direction)
 
-def static_lateral(cfg,Fx,direction,accidental=False):
-    info=build(cfg,"PDelta"); NF=info["NF"]; di=0 if direction=="X" else 1
-    ops.timeSeries("Linear",1); ops.pattern("Plain",1,1)
-    for k in range(1,NF+1):
-        pts=info["present"][k]; p=floor_grav(cfg,k)/len(pts)
-        for (i,j) in pts: ops.load(ntag(i,j,k),0,0,-p,0,0,0)
-    SX,SY=cfg["SX"],cfg["SY"]
-    for k in range(1,NF+1):
-        f=[0.0]*6; f[di]=Fx[k]
-        if accidental:
-            pts=info["present"][k]                       # real coords (xcoords/ycoords safe)
-            xs=[_xy_in(cfg,i,j)[0] for i,j in pts]; ys=[_xy_in(cfg,i,j)[1] for i,j in pts]
-            B=(max(ys)-min(ys)+SY) if direction=="X" else (max(xs)-min(xs)+SX)
-            f[5]=Fx[k]*0.05*B
-        ops.load(mtag(k),*f)
+
+def _elf_impl(cfg, T1, direction=None):
+    s = seis_dir(cfg, direction); NF = len(cfg["heights"]); z = zlevels(cfg)
+    W = sum(floor_w(cfg, k) for k in range(1, NF+1))
+    Ta = s["Ct"]*(z[-1]/12)**s["x"]; Tu = min(T1, s["Cu"]*Ta)          # 12.8.2 / Eq. 12.8-8
+    R, Ie = s["R"], s["Ie"]
+    Cs = s["SDS"]/(R/Ie)                                                 # Eq. 12.8-2
+    TL = s.get("TL", 8.0)
+    cap = s["SD1"]/(Tu*(R/Ie)) if Tu <= TL else s["SD1"]*TL/(Tu**2*(R/Ie))   # Eq. 12.8-3 / -4
+    Cs = min(Cs, cap); cmin = max(0.044*s["SDS"]*Ie, 0.01)                   # Eq. 12.8-6
+    if s.get("S1", 0) >= 0.6: cmin = max(cmin, 0.5*s["S1"]/(R/Ie))          # Eq. 12.8-7
+    Cs = max(Cs, cmin); V = Cs*W
+    kk = 1.0 if Tu <= 0.5 else (2.0 if Tu >= 2.5 else 1+(Tu-0.5)/2.0)
+    whk = {k: floor_w(cfg, k)*z[k]**kk for k in range(1, NF+1)}; ss = sum(whk.values())
+    return Cs, V, Tu, Ta, kk, {k: V*whk[k]/ss for k in range(1, NF+1)}, W
+
+
+def _eq12_8_7_governs(cfg, direction):
+    """True when Cs in `direction` is set by the S1 >= 0.6 minimum, Eq. 12.8-7 (drives 12.9.1.4.2)."""
+    s = seis_dir(cfg, direction)
+    if s.get("S1", 0) < 0.6: return False
+    Cs = elf_dir(cfg, direction)[0]
+    return abs(Cs - 0.5*s["S1"]/(s["R"]/s["Ie"])) < 1e-12
+
+
+def _cqc_rho(T, zeta=0.05):
+    n = len(T); rho = [[0.0]*n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            r = T[j]/T[i] if T[i] > 0 else 0
+            rho[i][j] = ((8*zeta**2*(1+r)*r**1.5)/((1-r**2)**2+4*zeta**2*r*(1+r)**2)) if r > 0 else (1.0 if i == j else 0.0)
+    return rho
+
+
+def _cqc(vals, rho):
+    v2 = 0.0; n = len(vals)
+    for i in range(n):
+        if vals[i] == 0.0: continue
+        for j in range(n):
+            v2 += rho[i][j]*vals[i]*vals[j]
+    return math.sqrt(max(v2, 0.0))
+
+
+def rs_baseshear(cfg, T, eX, eY, Mtot, direction):
+    """CQC modal base shear Vt in `direction` (design spectrum / (R/Ie) of that direction)."""
+    s = seis_dir(cfg, direction); R, Ie = s["R"], s["Ie"]; W = Mtot*g
+    eff = eX if direction == "X" else eY
+    Vi = [(sa(cfg, T[i])/(R/Ie))*eff[i]*W for i in range(len(T))]
+    return _cqc(Vi, _cqc_rho(T))
+
+
+# ===================================================================== static ELF analysis (HR-08/09/31)
+def _u_at(ux, uy, rz, xm, ym, x, y, di):
+    """Rigid-diaphragm displacement in direction di (0=X, 1=Y) at plan point (x, y)."""
+    return (ux - rz*(y - ym)) if di == 0 else (uy + rz*(x - xm))
+
+
+def static_lateral(cfg, Fx, direction, accidental=False, Ax=None):
+    """Linear-elastic (P-Delta) static ELF analysis in `direction` under the story forces Fx{level}.
+    * The forces act at each level's CENTRE OF MASS (diaphragm_props), applied at the master as the force
+      plus its offset torque -- ASCE 7-22 12.8.4.1 inherent torsion from the true CM (HR-31).
+    * accidental = False | True/+1 | -1: adds Mta = +/-0.05 * B * Fx * Ax at each level, B = the actual
+      plan dimension perpendicular to the forces (12.8.4.2.2(2), HR-19); Ax{level} (12.8.4.3) defaults 1.
+    Returns (ok, disp, drift, base_reaction, TIR, detail):
+      disp{k}   displacement at the level's centre of mass;
+      drift[k-1] story drift ratio at the centre of mass (bottom = vertical projection of the top CM,
+                 12.8.6.5);
+      TIR       max over stories of Delta_max/Delta_avg at the two extreme edges (Eq. 12.3-2);
+      detail    {'edge_drift': [max |edge drift ratio| per story], 'edge_pair': [(lo, hi) signed],
+                 'tir': [per story or None], 'disp_ratio': {k: delta_max/delta_avg} (Eq. 12.8-15 basis),
+                 'edge_disp': {k: (lo, hi)}, 'Mta': {k}, 'rz': {k}}."""
+    props = diaphragm_props(cfg)
+    info = build(cfg, "PDelta"); NF = info["NF"]; di = 0 if direction == "X" else 1
+    sgn = 0.0 if not accidental else (-1.0 if (accidental is not True and accidental < 0) else 1.0)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for k in range(1, NF+1):
+        pts = info["present"][k]; p = floor_grav(cfg, k)/len(pts)
+        for (i, j) in pts: ops.load(ntag(i, j, k), 0, 0, -p, 0, 0, 0)
+    Mta = {}
+    for k in range(1, NF+1):
+        pk = props[k]; f = [0.0]*6; F = Fx[k]; f[di] = F
+        # force at the centre of mass -> force + offset torque at the master
+        f[5] = (-(pk["yc"]-pk["ym"])*F) if di == 0 else ((pk["xc"]-pk["xm"])*F)
+        B = pk["BX"] if di == 0 else pk["BY"]
+        Mta[k] = sgn*0.05*B*F*(Ax.get(k, 1.0) if Ax else 1.0)
+        f[5] += Mta[k]
+        ops.load(mtag(k), *f)
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     ops.test("NormDispIncr",1e-7,200); ops.algorithm("Newton"); ops.integrator("LoadControl",1.0); ops.analysis("Static")
     ok=ops.analyze(1)
-    disp={k:ops.nodeDisp(mtag(k),di+1) for k in range(1,NF+1)}
-    rz={k:ops.nodeDisp(mtag(k),6) for k in range(1,NF+1)}
-    z=info["z"]; dr=[]; prev=0.0
-    for k in range(1,NF+1): dr.append((disp[k]-prev)/cfg["heights"][k-1]); prev=disp[k]
+    U = {k: (ops.nodeDisp(mtag(k), 1), ops.nodeDisp(mtag(k), 2), ops.nodeDisp(mtag(k), 6)) for k in range(1, NF+1)}
+    def u(k, x, y):
+        if k == 0: return 0.0
+        a = U[k]; pk = props[k]
+        return _u_at(a[0], a[1], a[2], pk["xm"], pk["ym"], x, y, di)
+    disp = {}; dr = []; edge_drift = []; edge_pair = []; tir = []; dratio = {}; edge_disp = {}
+    for k in range(1, NF+1):
+        pk = props[k]; h = cfg["heights"][k-1]
+        disp[k] = u(k, pk["xc"], pk["yc"])
+        dr.append((disp[k] - u(k-1, pk["xc"], pk["yc"]))/h)
+        if di == 0: E1, E2 = (pk["xc"], pk["ymin"]), (pk["xc"], pk["ymax"])
+        else:       E1, E2 = (pk["xmin"], pk["yc"]), (pk["xmax"], pk["yc"])
+        d1 = (u(k, *E1) - u(k-1, *E1))/h; d2 = (u(k, *E2) - u(k-1, *E2))/h
+        edge_pair.append((d1, d2)); edge_drift.append(max(abs(d1), abs(d2)))
+        avg = 0.5*(abs(d1) + abs(d2))
+        tir.append(max(abs(d1), abs(d2))/avg if avg > 1e-12 else None)
+        u1, u2 = u(k, *E1), u(k, *E2); edge_disp[k] = (u1, u2)
+        davg = 0.5*(abs(u1) + abs(u2))
+        dratio[k] = (max(abs(u1), abs(u2))/davg) if davg > 1e-12 else None
     ops.reactions()
-    Rs=sum(ops.nodeReaction(ntag(i,j,0),di+1) for (i,j) in info["present"][0])
-    # Torsional Irregularity Ratio screen (ASCE 7-22 Table 12.3-1 Type 1 / Eq. 12.3-2): ratio of
-    # story DRIFT at the diaphragm edge to the story drift at the centre of mass, worst over ALL
-    # stories (7-22 keys the TIR to story drifts at the ends, not total displacements; with a rigid
-    # diaphragm the CM drift equals the two-edge average, so this is Dmax/Davg).
-    SXp,SYp=cfg["SX"],cfg["SY"]; tratio=1.0; pd_=0.0; pr_=0.0
-    for k in range(1,NF+1):
-        pts=info["present"][k]
-        ddr=disp[k]-pd_; rdr=rz[k]-pr_; pd_=disp[k]; pr_=rz[k]
-        if abs(ddr)<=1e-12: continue
-        if direction=="X":
-            ys=[j*SYp for i,j in pts]; ycm=info["cm"][k][1]
-            edge=max(abs(y-ycm) for y in ys)
+    Rs = sum(ops.nodeReaction(ntag(i, j, 0), di+1) for (i, j) in info["present"][0])
+    # Torsional Irregularity Ratio (ASCE 7-22 Eq. 12.3-2): story drift at the building's extreme edge /
+    # average of the two opposing edges, for every story; the max over stories is returned.  Stories
+    # whose drift is numerically nil (e.g. a stiff podium under a tiny force) are skipped.
+    big = max(edge_drift) if edge_drift else 0.0
+    vals = [t for t, e in zip(tir, edge_drift) if t is not None and e > 1e-6*big]
+    tratio = max(vals) if vals else 1.0
+    det = dict(edge_drift=edge_drift, edge_pair=edge_pair, tir=tir, disp_ratio=dratio, edge_disp=edge_disp,
+               Mta=Mta, rz={k: U[k][2] for k in U})
+    return ok, disp, dr, Rs, tratio, det
+
+
+# ===================================================================== torsion: TIR / Ax / edge drift
+def torsion_summary(cfg):
+    """THE torsional-irregularity result used everywhere (screen, combos, gates, report) -- HR-08/HR-09.
+    Per direction, with that direction's ELF forces:
+      * TIR (Eq. 12.3-2): story-drift max/avg at the extreme edges WITH accidental torsion (+ and -),
+        Ax = 1 (12.3.2.1.1); Type 1 when TIR > 1.2 (Table 12.3-1, tiers 1.2/1.4/1.6 of Table 12.3-1a);
+      * Ax per level (Eq. 12.8-15): (delta_max/(1.2 delta_avg))^2 from level DISPLACEMENTS at the extreme
+        points, 1.0 <= Ax <= 3.0, applied where Type 1 exists in SDC C-F (12.8.4.3);
+      * design story drift location (12.8.6.5): the centre of mass, or -- Type 1 in SDC C-F -- the largest
+        edge drift of vertically aligned points incl. diaphragm rotation, with accidental torsion x Ax.
+    Flexible diaphragms: not applicable (12.8.4.2.1), Ax = 1, CM drift.
+    Returns {'X': {...}, 'Y': {...}, 'TIR': max, 'type1': bool, 'amplify': bool, 'edges': bool,
+             'classification': str, 'Ax_max': float, 'sdc': str}."""
+    key = _model_key(cfg)
+    r = _TORSION_CACHE.get(key)
+    if r is not None:
+        return r
+    sdc = sdc_of(cfg); flexible = str(cfg.get("diaphragm", "rigid")).lower() == "flexible"
+    NF = len(cfg["heights"]); res = {"sdc": sdc}
+    for d in ("X", "Y"):
+        Fx = elf_dir(cfg, d)[5]
+        c0 = static_lateral(cfg, Fx, d)
+        ap = static_lateral(cfg, Fx, d, accidental=+1)
+        an = static_lateral(cfg, Fx, d, accidental=-1)
+        tir_story = []
+        for a, b in zip(ap[5]["tir"], an[5]["tir"]):
+            vv = [v for v in (a, b) if v is not None]; tir_story.append(max(vv) if vv else None)
+        axraw = {}
+        for k in range(1, NF+1):
+            vv = [v for v in (ap[5]["disp_ratio"].get(k), an[5]["disp_ratio"].get(k)) if v is not None]
+            axraw[k] = max(((v/1.2)**2 for v in vv), default=1.0)
+        res[d] = dict(TIR=max(ap[4], an[4]), TIR_story=tir_story, TIR_inherent=c0[4], Ax_raw=axraw,
+                      cm_drift=list(c0[2]), centric=c0, acc=(ap, an))
+    TIR = max(res["X"]["TIR"], res["Y"]["TIR"])
+    type1 = (not flexible) and TIR > 1.2
+    amplify = type1 and sdc in ("C", "D", "E", "F")
+    for d in ("X", "Y"):
+        Fx = elf_dir(cfg, d)[5]; q = res[d]
+        q["Ax"] = {k: (round(min(max(q["Ax_raw"][k], 1.0), 3.0), 3) if amplify else 1.0) for k in range(1, NF+1)}
+        if amplify and any(v > 1.0 for v in q["Ax"].values()):
+            runs = (static_lateral(cfg, Fx, d, accidental=+1, Ax=q["Ax"]),
+                    static_lateral(cfg, Fx, d, accidental=-1, Ax=q["Ax"]))
         else:
-            xs=[i*SXp for i,j in pts]; xcm=info["cm"][k][0]
-            edge=max(abs(x-xcm) for x in xs)
-        tratio=max(tratio,(abs(ddr)+abs(rdr)*edge)/abs(ddr))
-    return ok,disp,dr,Rs,tratio
+            runs = q["acc"]
+        q["acc_amp"] = runs
+        q["edge_drift"] = [max(abs(runs[0][5]["edge_drift"][i]), abs(runs[1][5]["edge_drift"][i])) for i in range(NF)]
+        # the static accidental-torsion contribution alone (amplified run minus centric run), per story --
+        # what 12.9.1.5 adds to the MRSA edge drift
+        q["mta_edge_drift"] = [max(abs(runs[s][5]["edge_pair"][i][e] - q["centric"][5]["edge_pair"][i][e])
+                                   for s in (0, 1) for e in (0, 1)) for i in range(NF)]
+        q["drift_location"] = "edges" if amplify else "centre of mass"
+        q["drift_elastic"] = list(q["edge_drift"]) if amplify else [abs(v) for v in q["cm_drift"]]
+        q["Ax_max"] = max(q["Ax"].values()) if q["Ax"] else 1.0
+    res["TIR"] = TIR; res["type1"] = type1; res["amplify"] = amplify; res["edges"] = amplify
+    res["flexible"] = flexible
+    res["Ax_max"] = max(res["X"]["Ax_max"], res["Y"]["Ax_max"])
+    if flexible:
+        res["classification"] = "not applicable (flexible diaphragm, 12.8.4.2.1)"
+    elif TIR <= 1.2:
+        res["classification"] = "none (TIR %.2f <= 1.2)" % TIR
+    else:
+        tier = ">1.6" if TIR > 1.6 else (">1.4" if TIR > 1.4 else ">1.2")
+        res["classification"] = ("Type 1 torsional, TIR %.2f (%s tier)%s" % (
+            TIR, tier, "; Ax up to %.2f applied to Mta (12.8.4.3); drift at the edges (12.8.6.5)" % res["Ax_max"]
+            if amplify else "; SDC %s: Ax / edge drift not required" % sdc))
+    _TORSION_CACHE[key] = res
+    return res
+
+
+# ===================================================================== MRSA (HR-23)
+def mrsa(cfg, direction):
+    """Modal response spectrum analysis in `direction` (ASCE 7-22 12.9.1), CQC with 5 % damping on the
+    cached modes.  Per mode n: Gamma_n = L_n/M_n, pseudo-displacement D_n = Gamma_n*Sa_n*g/omega_n^2/(R/Ie);
+    story forces F = m*omega^2*u at each level's mass point; story shears, CM drifts (vertical projection)
+    and edge drifts are CQC-combined.  Scaling (12.9.1.4): forces x V/Vt where Vt < V (ELF V of that
+    direction, 12.9.1.4.1); displacements x CsW/Vt where Vt < CsW and Cs is set by Eq. 12.8-7
+    (12.9.1.4.2).  For Type 1 the static accidental torsion (x Ax) is added to the edge drift (12.9.1.5).
+    Returns dict(Vt, V, force_scale, drift_scale, F (scaled story forces, sum = scaled base shear),
+    shear (scaled CQC story shears), drift_cm / drift_edge (elastic ratios, scaled), nmodes, mass)."""
+    key = (_model_key(cfg), direction)
+    r = _MRSA_CACHE.get(key)
+    if r is not None:
+        return r
+    NF = len(cfg["heights"]); det = modal_detail(cfg)
+    s = seis_dir(cfg, direction); RI = s["R"]/s["Ie"]; di = 0 if direction == "X" else 1
+    T = det["T"]; w2 = det["w2"]; L = det["Lx"] if di == 0 else det["Ly"]; Mn = det["Mn"]
+    props = det["props"]; mp = det["mass_pts"]; nmo = len(T)
+    Vn = []; Dcm = []; De1 = []; De2 = []
+    for n in range(nmo):
+        if Mn[n] <= 0 or w2[n] <= 0:
+            Vn.append([0.0]*NF); Dcm.append([0.0]*NF); De1.append([0.0]*NF); De2.append([0.0]*NF); continue
+        Dn = (L[n]/Mn[n])*sa(cfg, T[n])*g/w2[n]/RI
+        U = {k: tuple(Dn*v for v in det["phi"][k][n]) for k in range(1, NF+1)}
+        def u(k, x, y):
+            if k == 0: return 0.0
+            a = U[k]; pk = props[k]
+            return _u_at(a[0], a[1], a[2], pk["xm"], pk["ym"], x, y, di)
+        F = [mp[k][2]*w2[n]*u(k, mp[k][0], mp[k][1]) for k in range(1, NF+1)]
+        V = [sum(F[i:]) for i in range(NF)]
+        dc = []; e1 = []; e2 = []
+        for k in range(1, NF+1):
+            pk = props[k]; h = cfg["heights"][k-1]
+            dc.append((u(k, pk["xc"], pk["yc"]) - u(k-1, pk["xc"], pk["yc"]))/h)
+            if di == 0: E1, E2 = (pk["xc"], pk["ymin"]), (pk["xc"], pk["ymax"])
+            else:       E1, E2 = (pk["xmin"], pk["yc"]), (pk["xmax"], pk["yc"])
+            e1.append((u(k, *E1) - u(k-1, *E1))/h); e2.append((u(k, *E2) - u(k-1, *E2))/h)
+        Vn.append(V); Dcm.append(dc); De1.append(e1); De2.append(e2)
+    rho = _cqc_rho(T)
+    shear = [_cqc([Vn[n][i] for n in range(nmo)], rho) for i in range(NF)]
+    dcm = [_cqc([Dcm[n][i] for n in range(nmo)], rho) for i in range(NF)]
+    de = [max(_cqc([De1[n][i] for n in range(nmo)], rho), _cqc([De2[n][i] for n in range(nmo)], rho)) for i in range(NF)]
+    Vt = shear[0] if shear else 0.0
+    Cs, V, Tu, Ta, kk, Fx, W = elf_dir(cfg, direction)
+    fs = (V/Vt) if 0 < Vt < V else 1.0
+    ds = (Cs*W/Vt) if (0 < Vt < Cs*W and _eq12_8_7_governs(cfg, direction)) else 1.0
+    sh = [fs*v for v in shear]
+    F = {k: sh[k-1] - (sh[k] if k < NF else 0.0) for k in range(1, NF+1)}
+    ts = torsion_summary(cfg); q = ts[direction]
+    edge = [ds*de[i] + (q["mta_edge_drift"][i] if ts["edges"] else 0.0) for i in range(NF)]
+    r = dict(Vt=Vt, V=V, force_scale=fs, drift_scale=ds, F=F, shear=sh, drift_cm=[ds*v for v in dcm],
+             drift_edge=edge, drift_elastic=(edge if ts["edges"] else [ds*v for v in dcm]),
+             drift_location=q["drift_location"], nmodes=nmo,
+             mass=sum(det["eX"] if di == 0 else det["eY"]))
+    _MRSA_CACHE[key] = r
+    return r
+
+
+# ===================================================================== design seismic forces per direction
+def seismic_design_forces(cfg):
+    """Per direction, everything the load combinations and gates need (HR-01/02/08/19/23/31):
+    {'X': dict(Fx{k} (story forces used for the demands), F_elf{k}, V, Cs, T, Tu, Ta, k, W, R, Cd, Om0,
+               rho, Ie, Ax{k}, B{k} (accidental arm dimension), off{k}=(xc-xm, yc-ym) CM offset from the
+               master, basis, rs (mrsa dict or None)), 'Y': {...}, 'basis': ..., 'warnings': [...]}.
+    Demand basis (12.6: ELF is permitted for all structures; 12.9.1 MRSA where 'RS' is in cfg['analyses']):
+    cfg['seismic_demand_basis'] = 'ELF' | 'MRSA' | 'envelope' (default 'envelope' when RS is requested:
+    the larger of the ELF and the 12.9.1.4-scaled MRSA response -- never below either
+    method in any story: the story-shear envelope of the two, re-differenced into story forces, so the base
+    shear stays V), 'ELF' otherwise."""
+    key = _model_key(cfg)
+    r = _SDF_CACHE.get(key)
+    if r is not None:
+        return r
+    NF = len(cfg["heights"]); props = diaphragm_props(cfg)
+    rs_on = "RS" in (cfg.get("analyses") or [])
+    basis = str(cfg.get("seismic_demand_basis") or ("envelope" if rs_on else "ELF"))
+    if basis not in ("ELF", "MRSA", "envelope"):
+        raise ValueError("cfg['seismic_demand_basis'] must be 'ELF', 'MRSA' or 'envelope' (got %r)" % basis)
+    if basis != "ELF" and not rs_on:
+        raise ValueError("cfg['seismic_demand_basis']=%r needs 'RS' in cfg['analyses']" % basis)
+    ts = torsion_summary(cfg); out = {"basis": basis}
+    for d in ("X", "Y"):
+        s = seis_dir(cfg, d)
+        Cs, V, Tu, Ta, kk, Fx, W = elf_dir(cfg, d)
+        rs = mrsa(cfg, d) if rs_on else None
+        if basis == "MRSA": F = dict(rs["F"])
+        elif basis == "envelope":
+            # per story the larger STORY SHEAR of the two methods (both sum to V at the base, so the
+            # envelope keeps V_base = V and never falls below either method in any story)
+            Ve = {k: max(sum(Fx[i] for i in range(k, NF+1)), rs["shear"][k-1]) for k in range(1, NF+1)}
+            F = {k: Ve[k] - (Ve[k+1] if k < NF else 0.0) for k in range(1, NF+1)}
+        else: F = dict(Fx)
+        out[d] = dict(Fx=F, F_elf=dict(Fx), V=V, Cs=Cs, T=period_dir(cfg, d)[0], Tu=Tu, Ta=Ta, k=kk, W=W,
+                      R=s["R"], Cd=s["Cd"], Om0=s["Om0"], rho=s["rho"], Ie=s["Ie"], system=s.get("system"),
+                      sfrs=s.get("sfrs"),
+                      Ax=dict(ts[d]["Ax"]), B={k: (props[k]["BX"] if d == "X" else props[k]["BY"]) for k in range(1, NF+1)},
+                      off={k: (props[k]["xc"]-props[k]["xm"], props[k]["yc"]-props[k]["ym"]) for k in range(1, NF+1)},
+                      basis=basis, rs=rs)
+    out["warnings"] = seis_warnings(cfg) + list(props.get("warnings", []))
+    _SDF_CACHE[key] = out
+    return out
+
+
+def lateral_pattern(cfg, dirn, sgn=1, acc=0, fac="rho", companion=0.3):
+    """Diaphragm-master load dict {level: (fx, fy, mz)} for one seismic case:
+    principal = fac_d * Fx_d (fac 'rho' | 'Om0' | a number), companion = companion * fac_o * Fx_o of the
+    OTHER direction (its own forces and factors, 12.5.3.1), forces at the centre of mass (offset torque),
+    accidental torsion acc * 0.05 * B * Ax * principal force (12.8.4.2 / 12.8.4.3), all x sgn."""
+    SF = seismic_design_forces(cfg); NF = len(cfg["heights"])
+    oth = "Y" if dirn == "X" else "X"; P, O = SF[dirn], SF[oth]
+    fP = P[fac] if isinstance(fac, str) else float(fac)
+    fO = O[fac] if isinstance(fac, str) else float(fac)
+    lat = {}
+    for k in range(1, NF+1):
+        Fp = fP*P["Fx"][k]; Fo = companion*fO*O["Fx"][k]
+        fx, fy = (Fp, Fo) if dirn == "X" else (Fo, Fp)
+        ex, ey = P["off"][k]
+        mz = ex*fy - ey*fx + acc*0.05*P["B"][k]*P["Ax"][k]*Fp
+        lat[k] = (sgn*fx, sgn*fy, sgn*mz)
+    return lat
 
 
 def sdc_of(cfg):
@@ -587,24 +1241,30 @@ def sdc_of(cfg):
     return sdc_of_cfg(cfg)
 
 
-def _mf_only(cfg):
-    """True when the SFRS is a moment-frame-only system (SMF/IMF/OMF family, not dual): declared
-    cfg['system'] wins; otherwise a model with no braces is taken as moment-frame-only."""
-    sysname = str(cfg.get("system") or "").lower()
+def _mf_only(cfg, direction=None):
+    """True when the SFRS (in `direction`, if given and declared per direction) is a moment-frame-only
+    system (SMF/IMF/OMF/STMF family, not dual): the declared system wins; otherwise a model with no
+    braces is taken as moment-frame-only."""
+    sysname = (system_dir(cfg, direction) if direction else str(cfg.get("system") or "")).lower()
+    key = sfrs_key(sysname)
+    if not key and direction:
+        key = _sfrs_from_factors(seis_dir(cfg, direction))   # e.g. a mixed building with per-direction R/Cd/Om0
+    if key:
+        return key in ("SMF", "IMF", "OMF", "STMF")
     if sysname:
         return (any(k in sysname for k in ("smf", "imf", "omf")) or "moment" in sysname) \
                and "dual" not in sysname
     return not is_braced(cfg)
 
 
-def drift_allowable(cfg):
+def drift_allowable(cfg, direction=None):
     """(allowable story drift ratio, rho_applied): cfg['drift_limit'] (Table 12.12-1 value,
     default 0.020), divided by the redundancy factor rho for a moment-frame-only SFRS in SDC
-    D/E/F per ASCE 7-22 sec.12.12.1.1 (Delta <= Delta_a/rho). rho = cfg['rho'], the same value
-    used in the load combinations (default 1.3)."""
+    D/E/F per ASCE 7-22 sec.12.12.1.1 (Delta <= Delta_a/rho).  With `direction`, the system and rho of
+    that direction (seis_dir) are used (HR-02); rho defaults to cfg['rho'] (1.3), as in the combinations."""
     dl = float(cfg.get("drift_limit", 0.020) or 0.020)
-    if sdc_of(cfg) in ("D", "E", "F") and _mf_only(cfg):
-        rho = float(cfg.get("rho", 1.3) or 1.3)
+    if sdc_of(cfg) in ("D", "E", "F") and _mf_only(cfg, direction):
+        rho = float(seis_dir(cfg, direction)["rho"]) if direction else float(cfg.get("rho", 1.3) or 1.3)
         return dl / rho, True
     return dl, False
 
@@ -618,38 +1278,93 @@ def _drift_env(cfg, drifts):
     return max(vals) if vals else max(abs(d) for d in drifts)
 
 
+def seismic_drift(cfg):
+    """Design story drifts per direction (ASCE 7-22 Eq. 12.8-16: Delta = Cd*delta_xe/Ie, here as ratios of
+    the story height) at the location 12.8.6.5 requires (centre of mass; the edges, incl. diaphragm
+    rotation and accidental torsion x Ax, for Type 1 in SDC C-F -- torsion_summary), from ELF and -- when
+    'RS' is requested -- from the 12.9.1.4.2-scaled MRSA; the governing profile follows the seismic demand
+    basis ('envelope': per story the larger).  Each direction uses its own Cd (12.2.2) and allowable drift
+    (rho of that direction for moment-frame-only systems, 12.12.1.1).
+    {'X': dict(location, elf[], mrsa[] or None, design[], max, limit, rho_applied, elastic[] (delta_xe/h
+    at the same location -- the story stiffness basis for theta, 12.8.7)), 'Y': {...}}"""
+    SF = seismic_design_forces(cfg); ts = torsion_summary(cfg); out = {}
+    for d in ("X", "Y"):
+        P = SF[d]; amp = P["Cd"]/P["Ie"]
+        el = list(ts[d]["drift_elastic"])
+        dd = dict(location=ts[d]["drift_location"], elf=[amp*v for v in el], mrsa=None, Cd=P["Cd"])
+        if P["rs"] is not None:
+            dd["mrsa"] = [amp*v for v in P["rs"]["drift_elastic"]]
+        if SF["basis"] == "MRSA":
+            dd["design"] = dd["mrsa"]; dd["elastic"] = list(P["rs"]["drift_elastic"])
+        elif SF["basis"] == "envelope":
+            dd["design"] = [max(a, b) for a, b in zip(dd["elf"], dd["mrsa"])]
+            dd["elastic"] = [max(a, b) for a, b in zip(el, P["rs"]["drift_elastic"])]
+        else:
+            dd["design"] = dd["elf"]; dd["elastic"] = el
+        dd["max"] = _drift_env(cfg, dd["design"])
+        dd["limit"], dd["rho_applied"] = drift_allowable(cfg, d)
+        out[d] = dd
+    return out
+
+
+def _seismic_gate(cfg, chk, out, nm):
+    """Shared seismic part of run()/run_one(): per-direction ELF (HR-01/02), drift at the 12.8.6.5
+    location (HR-09), torsion (HR-08), MRSA scaling gate (HR-23).  Fills chk / out in place."""
+    NF = len(cfg["heights"])
+    T, w2, eX, eY, Mtot = modal(cfg, nm)
+    SF = seismic_design_forces(cfg); ts = torsion_summary(cfg); sd = seismic_drift(cfg)
+    for d in ("X", "Y"):
+        P = SF[d]; low = d.lower()
+        out["T" + d] = P["T"]; out["Tu" + d] = P["Tu"]; out["Ta" + d] = P["Ta"]; out["Cs" + d] = P["Cs"]
+        out["V" + d] = P["V"]; out["k" + d] = P["k"]; out["R" + d] = P["R"]; out["Cd" + d] = P["Cd"]
+        out["Om0" + d] = P["Om0"]; out["rho" + d] = P["rho"]
+        out["md" + low] = sd[d]["max"]; out["drift_profile_" + d] = sd[d]["design"]
+        out["drift_location_" + d] = sd[d]["location"]
+        chk["drift_" + d] = 0 < sd[d]["max"] < sd[d]["limit"]
+        if sd[d]["rho_applied"]: out["drift_limit_rho_" + d] = sd[d]["limit"]
+        # 12.8.2: T_dir between 0.5 Ta and 3 Ta of THAT direction (a model-sanity screen)
+        out["period_ok_" + d] = (0.5*P["Ta"] <= P["T"] <= 3*P["Ta"]) if NF >= 3 else (0.1 <= P["T"] <= 1.5)
+    chk["period"] = out["period_ok_X"] and out["period_ok_Y"]
+    out["torsion"] = {"TIR_X": round(ts["X"]["TIR"], 3), "TIR_Y": round(ts["Y"]["TIR"], 3),
+                      "TIR": round(ts["TIR"], 3), "classification": ts["classification"],
+                      "Ax_max": ts["Ax_max"], "Ax_X": ts["X"]["Ax"], "Ax_Y": ts["Y"]["Ax"],
+                      "drift_location": sd["X"]["location"]}
+    out["edge_drift"] = {d: [round(SF[d]["Cd"]/SF[d]["Ie"]*v, 5) for v in ts[d]["edge_drift"]] for d in ("X", "Y")}
+    out["seismic_basis"] = SF["basis"]
+    if "RS" in (cfg.get("analyses") or []):
+        # 12.9.1.4.1: the design forces actually handed to the demands must reach 100 % of the ELF base
+        # shear of each direction, and 12.9.1.1: >= 90 % modal mass -- a gate that CAN fail.
+        for d, cum in (("X", sum(eX)), ("Y", sum(eY))):
+            rs = SF[d]["rs"]; Vd = SF[d]["V"]; Fsum = sum(SF[d]["Fx"].values())
+            out["Vrs" + d] = rs["Vt"]; out["Vrs%s/V" % d] = rs["Vt"]/Vd if Vd else 0.0
+            out["rs_force_scale_" + d] = rs["force_scale"]; out["rs_drift_scale_" + d] = rs["drift_scale"]
+            out["Vrs%s_scaled" % d] = rs["Vt"]*rs["force_scale"]
+            chk["rs_" + d] = (Fsum >= Vd*(1 - 1e-6)) and cum >= 0.90 and rs["Vt"]*rs["force_scale"] >= Vd*(1 - 1e-6)
+    w = list(SF.get("warnings", []))
+    det = modal_detail(cfg, nm)
+    if det: w += [x for x in det.get("warnings", []) if x not in w]
+    if w: out["seismic_warnings"] = w
+    return T, w2, eX, eY, SF, sd, ts
+
+
 def run(cfg):
     NF=len(cfg["heights"]); r={}
-    T,w2,eX,eY,Mtot=modal(cfg,min(3*NF,12))
-    Cs,V,Tu,Ta,kk,Fx,W=elf(cfg,T[0])
-    sx=static_lateral(cfg,Fx,"X"); sy=static_lateral(cfg,Fx,"Y")
-    mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2])
-    Cd=cfg["seis"]["Cd"]; Ie=cfg["seis"]["Ie"]            # ASCE 7-22 Eq.12.8-16 design drift
-    mdx=Cd*mde_x/Ie; mdy=Cd*mde_y/Ie
+    chk={}; out={}
+    T,w2,eX,eY,SF,sd,ts=_seismic_gate(cfg, chk, out, _nm_default(NF))
+    sx=static_lateral(cfg,SF["X"]["F_elf"],"X"); sy=static_lateral(cfg,SF["Y"]["F_elf"],"Y")
+    VX=SF["X"]["V"]; VY=SF["Y"]["V"]
     cumX=sum(eX); cumY=sum(eY)
-    chk={}
-    chk["equil_X"]=abs(sx[3]+V)<=1e-3*V; chk["equil_Y"]=abs(sy[3]+V)<=1e-3*V
+    chk["equil_X"]=abs(sx[3]+VX)<=1e-3*VX; chk["equil_Y"]=abs(sy[3]+VY)<=1e-3*VY
     chk["stability"]=min(w2)>0
-    chk["period"]=0.5*Ta<=T[0]<=3*Ta
     chk["modalmass_X"]=cumX>=0.90; chk["modalmass_Y"]=cumY>=0.90
-    dl,_dlrho=drift_allowable(cfg)   # Table 12.12-1 limit, /rho for MF-only SDC D-F (12.12.1.1)
-    chk["drift_X"]=0<mdx<dl; chk["drift_Y"]=0<mdy<dl
-    chk["baseshear_X"]=abs(abs(sx[3])-V)<=1e-3*V; chk["baseshear_Y"]=abs(abs(sy[3])-V)<=1e-3*V
-    out=dict(T1=T[0],T2=T[1],T3=T[2],Ta=Ta,Cs=Cs,V=V,W=W,Tu=Tu,k=kk,cumX=cumX,cumY=cumY,
-             mdx=mdx,mdy=mdy,roofX=sx[1][NF],roofY=sy[1][NF],tratioX=sx[4],tratioY=sy[4])
-    if _dlrho: out["drift_limit_rho"]=dl
-    if "RS" in cfg.get("analyses",[]):
-        # ASCE 7-22 sec.12.9.1.4.1: where the modal base shear Vt < V (ELF), scale forces by V/Vt
-        # -- i.e. the MRSA design base shear is the FULL 100% of V (the 7-16 85% floor is deleted).
-        VrsX=rs_baseshear(cfg,T,eX,eY,Mtot,"X"); VrsY=rs_baseshear(cfg,T,eX,eY,Mtot,"Y")
-        out["VrsX"]=VrsX; out["VrsY"]=VrsY
-        out["VrsX_scaled"]=max(VrsX,1.00*V); out["VrsY_scaled"]=max(VrsY,1.00*V)
-        chk["rs_X_ge_100pct"]=out["VrsX_scaled"]>=1.00*V-1e-6
-        chk["rs_Y_ge_100pct"]=out["VrsY_scaled"]>=1.00*V-1e-6
-    if cfg.get("torsion_check"):
-        sxa=static_lateral(cfg,Fx,"X",accidental=True)
-        out["tratioX_acc"]=sxa[4]                          # B4: advisory (irregularity + Ax handled in report Ch.2)
-        out["torsion_Ax"]=round(min(max((sxa[4]/1.2)**2,1.0),3.0),2)
+    chk["baseshear_X"]=abs(abs(sx[3])-VX)<=1e-3*VX; chk["baseshear_Y"]=abs(abs(sy[3])-VY)<=1e-3*VY
+    gd="X" if VX>=VY else "Y"; G=SF[gd]
+    out.update(T1=T[0],T2=T[1] if len(T)>1 else None,T3=T[2] if len(T)>2 else None,Ta=G["Ta"],Cs=G["Cs"],
+               V=max(VX,VY),W=G["W"],Tu=G["Tu"],k=G["k"],cumX=cumX,cumY=cumY,
+               roofX=sx[1][NF],roofY=sy[1][NF],tratioX=ts["X"]["TIR"],tratioY=ts["Y"]["TIR"])
+    out["tratioX_acc"]=ts["X"]["TIR"]; out["torsion_Ax"]=ts["Ax_max"]
+    if out.get("drift_limit_rho_X") or out.get("drift_limit_rho_Y"):
+        out["drift_limit_rho"]=out.get("drift_limit_rho_X") or out.get("drift_limit_rho_Y")
     # model-fidelity / completeness / serviceability gates -- match run_one() so quick run()
     # never reports a false ALL PASS (P2).
     _dok,_cok,_mmsg=_model_gate(cfg); chk["model_declared"]=_dok; chk["model_consistent"]=_cok
@@ -668,16 +1383,28 @@ def run(cfg):
 
 # ===== configs + orchestration =====
 D=dict(D_floor=75.0,D_roof=60.0,clad=15.0,L_floor=50.0)
-def seis(SDS,SD1,S1,R,Ct,x,Cu,Ie=1.0,Cd=None,Om0=None):
-    # Cd, Om0 (overstrength) per ASCE 7-22 Table 12.2-1, defaulted by R for the common steel
-    # SFRS here (SMF/dual R8/R7, SCBF R6, IMF R4.5, OCBF R3.25, "not detailed" R3). Systems whose
-    # Cd/Om0 differ from the R-default (EBF, BRBF) pass them explicitly. A special plate shear
-    # wall (the ONLY R=7 steel system with Cd=6 in Table 12.2-1) defaults to its tabulated
-    # Om0 = 2.0 (row B.27), not the R=7 dual-system 2.5.
-    if Cd  is None: Cd ={8:5.5,7:5.5,6:5.0,4.5:4.0,3.25:3.25,3:3.0}.get(R,R)
-    if Om0 is None and R==7 and Cd==6.0: Om0=2.0   # SPSW: Table 12.2-1 Om0 = 2.0
-    if Om0 is None: Om0={8:3.0,7:2.5,6:2.0,4.5:3.0,3.25:2.0,3:3.0}.get(R,2.5)
-    return dict(SDS=SDS,SD1=SD1,S1=S1,R=R,Ct=Ct,x=x,Cu=Cu,Ie=Ie,Cd=Cd,Om0=Om0,TL=8.0)
+def seis(SDS,SD1,S1,R,Ct,x,Cu,Ie=1.0,Cd=None,Om0=None,system=None):
+    """Seismic parameter block for cfg['seis'].  Cd / Om0 (overstrength) come from ASCE 7-22 Table 12.2-1
+    for the declared system: pass system= here, or declare cfg['system'] -- an omitted Cd/Om0 is marked
+    in '_auto' and re-derived from the declared system at use time by seis_dir() (HR-20).  Only when no
+    system can be resolved does the legacy R-keyed default apply, with a loud warning (seis_warnings):
+    it is wrong for e.g. STMF (Om0 3.0, not 2.5) and SPSW (Cd 6.0, dual 6.5, not 5.5).
+    Per-direction factors (ASCE 7-22 12.2.2, different systems along the two axes): give the other
+    direction's overrides as cfg['seis_Y'] = seis(...) / dict(R=..., Cd=..., Om0=..., Ct=..., x=...,
+    rho=..., system=...) (or cfg['seis']['Y'] = {...}; likewise X).  Keys not given are inherited;
+    when R differs, Cd/Om0/Ct/x are taken from that direction's system, never from the other one."""
+    auto=[]
+    row=SFRS_TABLE.get(sfrs_key(system)) if system else None
+    if Cd is None:
+        if row: Cd=row["Cd"]
+        else: Cd=_legacy_cd(R); auto.append("Cd")
+    if Om0 is None:
+        if row: Om0=row["Om0"]
+        else: Om0=_legacy_om0(R, Cd); auto.append("Om0")
+    d=dict(SDS=SDS,SD1=SD1,S1=S1,R=R,Ct=Ct,x=x,Cu=Cu,Ie=Ie,Cd=Cd,Om0=Om0,TL=8.0)
+    if system: d["system"]=system
+    if auto: d["_auto"]=auto
+    return d
 def Lplan(k,NX,NY): return {(i,j) for i in range(NX+1) for j in range(NY+1) if not (i>NX//2 and j>NY//2)}
 def setback(k,NX,NY):
     if k<=5: return {(i,j) for i in range(NX+1) for j in range(NY+1)}
@@ -918,24 +1645,36 @@ def floor_beam_gaps(cfg, transf="Linear"):
 
 def run_one(name):
     cfg=CFG[name]; NF=len(cfg["heights"])
-    T,w2,eX,eY,Mtot=modal(cfg,min(3*NF,12 if NF>=18 else 16))
-    Cs,V,Tu,Ta,kk,Fx,W=elf(cfg,T[0]); gov=cfg.get("governing","seismic")
+    gov=cfg.get("governing","seismic")
+    chk={}; sout={}
+    # seismic: per-direction period + factors (HR-01/02), CM forces (HR-31), torsion/Ax (HR-08),
+    # drift at the 12.8.6.5 location (HR-09), MRSA (HR-23) -- shared with run()
+    T,w2,eX,eY,SF,sd,ts=_seismic_gate(cfg, chk, sout, _nm_default(NF))
+    gd="X" if SF["X"]["V"]>=SF["Y"]["V"] else "Y"; G=SF[gd]
+    Cs,V,Tu,Ta,kk,W=G["Cs"],G["V"],G["Tu"],G["Ta"],G["k"],G["W"]
     if gov=="wind": FxX=wind_forces(cfg,"X"); FxY=wind_forces(cfg,"Y"); Vx=sum(FxX.values()); Vy=sum(FxY.values())
-    else: FxX=Fx; FxY=Fx; Vx=Vy=V
+    else: FxX=SF["X"]["F_elf"]; FxY=SF["Y"]["F_elf"]; Vx=SF["X"]["V"]; Vy=SF["Y"]["V"]
     sx=static_lateral(cfg,FxX,"X"); sy=static_lateral(cfg,FxY,"Y")
-    _cr_tr=max(sx[4],sy[4])                                # B5: centric-load torsion ratio (~1.0 if symmetric)
-    mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2]); cumX=sum(eX); cumY=sum(eY)
-    dl,_dlrho=drift_allowable(cfg)   # Table 12.12-1 limit, /rho for MF-only SDC D-F (12.12.1.1)
-    # ASCE 7-22 Eq. 12.8-16: design story drift = Cd*delta_elastic/Ie (seismic only; wind drift not amplified)
-    Cd=cfg["seis"]["Cd"]; Ie=cfg["seis"]["Ie"]; amp=1.0 if gov=="wind" else Cd/Ie
-    mdx=amp*mde_x; mdy=amp*mde_y
-    chk={}
+    _cr_tr=max(sx[4],sy[4]) if gov=="wind" else max(ts["X"]["TIR_inherent"],ts["Y"]["TIR_inherent"])  # B5
+    cumX=sum(eX); cumY=sum(eY)
+    Cd=SF[gd]["Cd"]; Ie=SF[gd]["Ie"]
+    if gov=="wind":
+        # wind drift: not amplified (ASCE 7-22 Eq. 12.8-16 is seismic only); CM drift of the wind case
+        mde_x=_drift_env(cfg, sx[2]); mde_y=_drift_env(cfg, sy[2]); mdx=mde_x; mdy=mde_y
+        dl,_dlrho=drift_allowable(cfg)
+        chk["drift_X"]=0<mdx<dl; chk["drift_Y"]=0<mdy<dl
+    else:
+        # ASCE 7-22 Eq. 12.8-16 per direction (own Cd) at the 12.8.6.5 location -- see seismic_drift()
+        mdx=sout["mdx"]; mdy=sout["mdy"]
+        mde_x=mdx*SF["X"]["Ie"]/SF["X"]["Cd"]; mde_y=mdy*SF["Y"]["Ie"]/SF["Y"]["Cd"]
     chk["equil_X"]=abs(sx[3]+Vx)<=1e-3*Vx; chk["equil_Y"]=abs(sy[3]+Vy)<=1e-3*Vy; chk["stability"]=min(w2)>0
     chk["modalmass_X"]=cumX>=0.90; chk["modalmass_Y"]=cumY>=0.90
-    chk["drift_X"]=0<mdx<dl; chk["drift_Y"]=0<mdy<dl
     chk["baseshear_X"]=abs(abs(sx[3])-Vx)<=1e-3*Vx; chk["baseshear_Y"]=abs(abs(sy[3])-Vy)<=1e-3*Vy
-    chk["period"]=(0.5*Ta<=T[0]<=3*Ta) if NF>=3 else (0.1<=T[0]<=1.5)
     extra={}
+    for _k in ("TX","TY","TuX","TuY","TaX","TaY","CsX","CsY","VX","VY","RX","RY","CdX","CdY","Om0X","Om0Y",
+               "rhoX","rhoY","drift_location_X","drift_location_Y","drift_limit_rho_X","drift_limit_rho_Y",
+               "seismic_basis","seismic_warnings"):
+        if _k in sout: extra[_k]=sout[_k]
     if (not chk["drift_X"] or not chk["drift_Y"]) and min(mdx,mdy)>1e-9 and max(mdx,mdy)/min(mdx,mdy)>1.5:
         _b="X" if mdx>mdy else "Y"
         extra["orientation_warning"]=("drift in %s is %.1fx the other direction AND fails -- this is "
@@ -946,31 +1685,21 @@ def run_one(name):
     chk["model_declared"]=_decl_ok; chk["model_consistent"]=_cons_ok
     if _mmsg: extra["model_warning"]=_mmsg
     if "RS" in cfg.get("analyses",[]):
-        # 7-22 sec.12.9.1.4.1: MRSA forces scale to the FULL ELF base shear V (Vt < V -> x V/Vt)
-        VrsX=rs_baseshear(cfg,T,eX,eY,Mtot,"X"); VrsY=rs_baseshear(cfg,T,eX,eY,Mtot,"Y")
-        extra["VrsX/V"]=VrsX/V; extra["VrsY/V"]=VrsY/V
-        chk["rs_X"]=max(VrsX,1.00*V)>=1.00*V-1e-6; chk["rs_Y"]=max(VrsY,1.00*V)>=1.00*V-1e-6
-    if cfg.get("torsion_check"):
-        if NF>=30:
-            tr=sx[4]
-        else:
-            sxa=static_lateral(cfg,FxX,"X",accidental=True)
-            if NF>=18: tr=sxa[4]
-            else:
-                sya=static_lateral(cfg,FxY,"Y",accidental=True); tr=max(sxa[4],sya[4])
-        # B4: torsional irregularity is ADVISORY, not a pass/fail gate. ASCE 7-22 Table 12.3-1 has a
-        # SINGLE Type 1 keyed to the Torsional Irregularity Ratio (TIR, Eq. 12.3-2) with cumulative
-        # tiers >1.2/>1.4/>1.6 (Table 12.3-1a); Ax per sec.12.8.4.3. static_lateral computes the
-        # ratio from per-story DRIFTS at the diaphragm edge (the 7-22 TIR basis).
-        extra["torsion_acc"]=tr
-        extra["torsion_irregularity"]=("none (TIR screen <1.2)" if tr<1.2 else
-                                       "Type 1 torsional, TIR screen %.2f (>1.2 tier)"%tr if tr<1.4 else
-                                       "Type 1 torsional, TIR screen %.2f (>1.4 tier%s)"%(tr,"; also >1.6" if tr>1.6 else ""))
-        extra["torsion_Ax"]=round(min(max((tr/1.2)**2,1.0),3.0),2)   # Eq. 12.8-15
-        if _cr_tr>1.15:                                    # B5: centre of rigidity offset from centre of mass
-            extra["cr_offset_warning"]=("centric-load torsion ratio %.2f > 1.15: the lateral system's centre "
-                "of rigidity is offset from the centre of mass (asymmetric brace/frame layout), inducing "
-                "INHERENT torsion with no accidental eccentricity -- prefer a symmetric layout."%_cr_tr)
+        # 12.9.1.4: MRSA scaled to 100 % of each direction's ELF V; the gate (in _seismic_gate) checks
+        # the forces actually handed to the demands, plus the 90 % modal mass of 12.9.1.1
+        for _k in ("VrsX/V","VrsY/V","rs_force_scale_X","rs_force_scale_Y","rs_drift_scale_X","rs_drift_scale_Y"):
+            extra[_k]=sout[_k]
+    # torsion (ASCE 7-22 12.3.2.1.1 / 12.8.4.3): computed for EVERY building with a non-flexible
+    # diaphragm (12.8.4.2.1: accidental torsion applied to all structures to determine the irregularity);
+    # ONE value (torsion_summary) feeds this screen, the combos, the drift gate and the report.
+    tr=ts["TIR"]
+    extra["torsion_acc"]=tr; extra["torsion_TIR_X"]=ts["X"]["TIR"]; extra["torsion_TIR_Y"]=ts["Y"]["TIR"]
+    extra["torsion_irregularity"]=ts["classification"]
+    extra["torsion_Ax"]=ts["Ax_max"]
+    if _cr_tr>1.15:                                    # B5: centre of rigidity offset from centre of mass
+        extra["cr_offset_warning"]=("centric-load torsion ratio %.2f > 1.15: the lateral system's centre "
+            "of rigidity is offset from the centre of mass (asymmetric brace/frame layout), inducing "
+            "INHERENT torsion with no accidental eccentricity -- prefer a symmetric layout."%_cr_tr)
     if cfg.get("dual_check"):
         mf=copy.deepcopy(cfg); mf["braces"]=None; smf=static_lateral(mf,FxX,"X")
         frac=sx[1][NF]/smf[1][NF]; extra["MF_fraction"]=frac; chk["dual_25pct"]=frac>=0.25
@@ -991,7 +1720,11 @@ def run_one(name):
             "in BOTH directions, at each floor; and all braces. Add the missing beams in your build with "
             "engine3d.add_beam(...) and re-run." % len(_gaps))
     return dict(name=name,arch=cfg["arch"],NF=NF,T=T,Ta=Ta,Cs=Cs,V=V,W=W,Tu=Tu,k=kk,cumX=cumX,cumY=cumY,mde_x=mde_x,mde_y=mde_y,Cd=Cd,
-                mdx=mdx,mdy=mdy,roofX=sx[1][NF],roofY=sy[1][NF],Vx=Vx,Vy=Vy,gov=gov,chk=chk,extra=extra,allp=all(chk.values()))
+                mdx=mdx,mdy=mdy,roofX=sx[1][NF],roofY=sy[1][NF],Vx=Vx,Vy=Vy,gov=gov,chk=chk,extra=extra,
+                torsion=sout.get("torsion"),edge_drift=sout.get("edge_drift"),
+                seismic={d: {kk_: SF[d][kk_] for kk_ in ("T","Tu","Ta","Cs","V","k","R","Cd","Om0","rho","Ie","basis")}
+                         for d in ("X","Y")},
+                allp=all(chk.values()))
 def report(name):
     r=run_one(name)
     print("### %s %s (%d st, gov=%s)"%(r["name"],r["arch"],r["NF"],r["gov"]))
@@ -1119,7 +1852,11 @@ def export_model(cfg, outdir, name="model", transf="PDelta"):
     for f, real in orig.items():
         setattr(_ops, f, _shim(f, real))
     try:
-        build(cfg, transf)
+        _inf = build(cfg, transf)
+        if "diaphragm" not in _inf and str(cfg.get("diaphragm_mass", "engine")).lower() != "builder":
+            # the engine's modal analysis replaces a custom_build's master masses by the seismic mass at the
+            # centre of mass (HR-19/31): record that assignment too so the exported model matches it
+            attach_diaphragm_mass(cfg, _inf)
     finally:
         for f, real in orig.items():
             setattr(_ops, f, real)

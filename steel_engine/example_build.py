@@ -130,8 +130,7 @@ def example_build(cfg, transf="PDelta"):
     for k in range(1, NF+1):
         sl = [eng.ntag(i, j, k) for (i, j) in present[k]]
         ops.rigidDiaphragm(3, eng.mtag(k), *sl)
-        w = eng.floor_w(cfg, k); m = w/eng.g
-        pts = present[k]; xs = [XY(i, j)[0] for i, j in pts]; ys = [XY(i, j)[1] for i, j in pts]
-        Bx = max(xs)-min(xs)+SX; By = max(ys)-min(ys)+SY
-        ops.mass(eng.mtag(k), m, m, 0.0, 0.0, 0.0, m*(Bx**2+By**2)/12.0)
+    # seismic mass W/g + footprint polar inertia at each level's CENTRE OF MASS (ASCE 7-22 12.8.4.1):
+    # do this in your custom_build too, instead of hand-writing ops.mass on the master.
+    eng.attach_diaphragm_mass(cfg, info)
     return info

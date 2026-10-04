@@ -42,9 +42,9 @@ def _beam_grav(cfg, n1, n2, fD, fL, fLr):
         w = fD * cfg.get("clad", 0.0) * th / 1000.0 / 12.0               # kip/in (dead only)
         return w*L*L/8.0, w*L/2.0
     trib = cfg["SY"] if Lx >= Ly else cfg["SX"]
-    Dp = cfg["D_roof"] if roof else cfg["D_floor"]
-    Lp = 0.0 if roof else cfg["L_floor"]
-    LrSp = (cfg.get("snow", 0.0) if cfg.get("snow", 0.0) > 0 else 20.0) if roof else 0.0
+    Dp = E._Dlev(cfg, k, roof) + cfg.get("extra_mass_floors", {}).get(k, 0.0)    # HR-03: per-level D, L, cfg Lr
+    Lp = 0.0 if roof else E._Llev(cfg, k)
+    LrSp = (cfg.get("snow", 0.0) if cfg.get("snow", 0.0) > 0 else cfg.get("Lr", 20.0)) if roof else 0.0
     w = (fD*Dp + fL*Lp + fLr*LrSp) / 1000.0 / 144.0 * trib     # kip/in
     return w*L*L/8.0, w*L/2.0
 

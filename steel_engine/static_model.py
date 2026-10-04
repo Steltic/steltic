@@ -470,7 +470,7 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
     model = {"cm": info.get("cm", {}), "present": present, "z": zl, "NF": NF,
              "cols": cols, "beams": beams, "braces": braces, "bases": bases, "base_nodes": sorted(base_nodes),
              "masters": mdict, "coord": coord, "dropped": dropped, "warnings": warnings,
-             "sig": R.calls, "custom": True, "orphans": orphans}
+             "sig": R.calls, "custom": True, "orphans": orphans, "slaves": slave_set}
     _finish_model(cfg, model)
     return model
 
@@ -649,7 +649,7 @@ def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=
     model = {"cm": cm, "present": present, "z": z, "NF": NF, "cols": cols, "beams": beams,
              "braces": braces, "bases": bases, "base_nodes": sorted(base_nodes), "masters": masters,
              "coord": coord, "dropped": dropped, "warnings": warnings, "sig": R.calls, "custom": False,
-             "orphans": orphans}
+             "orphans": orphans, "slaves": slave_set}
     _finish_model(cfg, model)
     return model
 
@@ -1683,6 +1683,50 @@ def ecl_plan(cfg, model, desig):
                 ne.append("EBF link %s: %s" % (bm["etag"], note)); continue
             d = "X" if abs(bm["xyzB"][0] - bm["xyzA"][0]) >= abs(bm["xyzB"][1] - bm["xyzA"][1]) else "Y"
             links.append(dict(bm=bm, dir=d, V=Vc, note=note)); drop.add(bm["etag"])
+    # AISC 341-22 F2.3 / F4.3 ('columns, beams, struts') and F3.3 ('beams outside links'): the Ecl model
+    # restrains the rigid diaphragm, so the horizontal components of the expected brace / adjusted link
+    # forces enter the diaphragm at the work points, and a beam whose end nodes are slaved to it carries
+    # ~0 axial in that analysis. Its Ecl axial (strut / drag force) is therefore NOT EVALUATED -- say so
+    # instead of reporting the ~0 value silently (the 12.10.2.1 collector statics use Omega0 x E, not Ecl).
+    sl = model.get("slaves") or set()
+    cd = model["coord"]
+
+    def _pdir(n1, n2):                                      # unit plan direction n1 -> n2 (None if vertical)
+        a, b = cd.get(n1), cd.get(n2)
+        if a is None or b is None:
+            return None
+        dx, dy = b[0] - a[0], b[1] - a[1]; L = math.hypot(dx, dy)
+        return (dx / L, dy / L) if L > _TOL else None
+    wp = {}                                                 # work-point node -> plan directions of its yielding elements
+    for it in braces:
+        u = _pdir(it["br"]["n1"], it["br"]["n2"])
+        for n in (it["br"]["n1"], it["br"]["n2"]):
+            if u: wp.setdefault(n, []).append(u)
+    for it in links:
+        u = _pdir(it["bm"]["A"], it["bm"]["B"])
+        for n in (it["bm"]["A"], it["bm"]["B"]):
+            if u: wp.setdefault(n, []).append(u)
+    if wp and sl:
+        lk = {it["bm"]["etag"] for it in links}
+        struts = []
+        for bm in model["beams"]:
+            if bm["etag"] in lk or bm["A"] not in sl or bm["B"] not in sl:
+                continue
+            d = _pdir(bm["A"], bm["B"])
+            if d and any(abs(d[0] * u[1] - d[1] * u[0]) < 0.05          # beam in the plane of the brace / link
+                         for n in (bm["A"], bm["B"]) for u in wp.get(n, ())):
+                struts.append(bm["etag"])
+        struts = sorted(set(struts))
+        if struts:
+            ne.append("Ecl AXIAL of %d braced-bay beam(s) / strut(s)%s (e.g. element %s) NOT EVALUATED (AISC 341-22 "
+                      "F2.3 / F3.3 / F4.3): their end nodes are slaved to the rigid diaphragm, which the capacity-"
+                      "limited analysis restrains, so the horizontal components of the expected brace%s forces enter "
+                      "the diaphragm at the work points and these beams show ~0 Ecl axial. Design the struts%s and the "
+                      "collectors delivering to the braced bays by hand for those horizontal components along the "
+                      "actual diaphragm load path (their moments / shears and the unbalanced loads ARE evaluated)"
+                      % (len(struts), " / beams outside links" if links else "",
+                         ", ".join(str(t) for t in struts[:4]), " / link" if links else "",
+                         " / beams outside links" if links else ""))
     if spsw:
         notes.append("SPSW F5.3(b) PARTIAL: web tension field at RyFy applied as the panel resultant on the "
                      "tension diagonal(s) (0.5*Ry*Fy*tw*L*sin2a horizontal) and HBE 1.1*Ry*Mp hinge SHEARS "

@@ -266,7 +266,10 @@ def test_scbf_expected_strengths_and_chevron_unbalanced_load():
                    ecl=dict(sx=1, sy=1, variant="b", patterns=(pat, paty), Om0=2.0))
     info = {}
     env, kinds = SM.demand_envelope(cfg, [case], nseg=4, info_out=info)
-    assert not info["not_evaluated"]
+    # the only NOT EVALUATED item: the Ecl strut axial of the two Y beams (8, 9) whose single diagonals end
+    # at diaphragm-slaved nodes (VERIFY: AISC 341-22 F2.3 'struts'); the chevron beams (free apex) are evaluated
+    assert len(info["not_evaluated"]) == 1 and "Ecl AXIAL of 2 braced-bay beam(s)" in info["not_evaluated"][0]
+    assert "element 8, 9" in info["not_evaluated"][0]
     sin = 156.0 / L
     Pu = (T - 0.3 * C) * sin
     beam = next(fs for fs, kv in kinds.items() if kv[0] == "beam" and 180000 in fs)
@@ -401,3 +404,30 @@ def test_service_deflection_from_solved_model():
         assert v["TL"] == pytest.approx(5 * wT * 300.0 ** 4 / (384 * E.E * Ix), rel=0.02)
         assert v["LL"] == pytest.approx(5 * wL * 300.0 ** 4 / (384 * E.E * Ix), rel=0.02)
     assert SM._ss_mid_defl([(("uni", 1.0), "")], 480.0) == pytest.approx(5 * 480.0 ** 4 / 384, rel=1e-4)
+
+
+def test_ecl_strut_axial_on_a_slaved_braced_bay_beam_is_reported_not_evaluated():
+    """VERIFY (independent review): with the diaphragm restrained in the Ecl analysis, a braced-bay beam whose
+    ends are slaved to the rigid diaphragm shows ~0 axial although AISC 341-22 F2.3 requires the strut to be
+    designed for Ecl -- the package must say NOT EVALUATED instead of delivering the ~0 silently."""
+    cfg = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="SCBF", D_roof=0.0, Lr=0.0)
+    pat = {1: (100.0, 0.0, 0.0)}; paty = {1: (0.0, 100.0, 0.0)}
+    case = SM.Case("Ecl", 0.0, 0.0, SM.RoofFactors(), {}, True, kind="ecl",
+                   ecl=dict(sx=1, sy=1, variant="a", patterns=(pat, paty), Om0=2.0))
+    info = {}
+    env, kinds = SM.demand_envelope(cfg, [case], nseg=4, info_out=info)
+    model = SM.build_static(cfg, "Linear", 4)
+    yb = [b for b in model["beams"] if b["etag"] in (8, 9)]
+    assert len(yb) == 2
+    # the Y brace at expected tension RyFyAg delivers a large horizontal force at the top of these beams ...
+    row = SM._shape("HSS6X6X1/2"); T = 1.3 * 50.0 * row["A"]
+    for b in yb:
+        e = env[frozenset((b["A"], b["B"]))]
+        assert max(e["comp"], e["tens"]) < 0.01 * T * 300.0 / math.hypot(300.0, 156.0)   # ... yet ~0 axial here
+    ne = " ".join(info["not_evaluated"])
+    assert "NOT EVALUATED" in ne and "element 8, 9" in ne and "F2.3" in ne
+    # no braces of an identified capacity-limited system -> no strut note
+    cfg2 = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="OCBF", D_roof=0.0, Lr=0.0)
+    info2 = {}
+    SM.demand_envelope(cfg2, [case], nseg=4, info_out=info2)
+    assert not any("Ecl AXIAL" in x for x in info2["not_evaluated"])

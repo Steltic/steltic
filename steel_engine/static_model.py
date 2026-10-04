@@ -347,7 +347,10 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
     _gt_seen = set()                       # a custom_build may register the SAME transf tag twice
     for a in rec["geomTransf"]:            # (explicit register_col_transf + add_*/_ensure auto-register);
         if a[1] in _gt_seen: continue      # the live build swallows the dup, but replay must not re-add it
-        _gt_seen.add(a[1]); R("geomTransf", *a)
+        _gt_seen.add(a[1])
+        if transf == "Linear" and a[0] in ("PDelta", "Corotational"):
+            a = ("Linear",) + tuple(a[1:])  # first-order model requested (add_column always asks PDelta)
+        R("geomTransf", *a)
     mat_E = {}
     for a in rec["uniaxialMaterial"]:
         a = list(a)

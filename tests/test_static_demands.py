@@ -332,20 +332,25 @@ def test_demand_cache_hits_only_on_identical_inputs():
         assert max(v["Mz"] for v in e3.values()) > max(v["Mz"] for v in e1.values())
 
 
-def test_default_one_way_rigid_beam_floor_scales_solved_gravity():
-    # rigid-ended beams, deck span undeclared: gravity-only demand = solved x (girder load / applied load)
+def test_default_one_way_rigid_beam_floor_adds_girder_load_effect():
+    # rigid-ended beams, deck span undeclared: demand = solved + simple-span effect of the extra load the
+    # half-bay girder rule puts on the beam (uniform w*c instead of the 45-degree trapezoid)
     cfg = _cfg(NX=1, NY=1, heights=[144.0], D_roof=100.0, Lr=0.0, floor_system="one-way",
                releases=lambda i, j, k, d: ("none", "none"))
     case = SM.Case("1.4D", 1.4, 0.0, SM.RoofFactors(), {}, False)
     env, kinds = SM.demand_envelope(cfg, [case], nseg=6)
     model, _, _ = SM.run_combo(cfg, 1.4, 0.0, SM.RoofFactors(), {}, transf="PDelta", nseg=6)
     res = SM._extract(model)
+    w = 1.4 * 100.0 / 144000.0
     for b in model["beams"]:
         fs = frozenset((b["A"], b["B"]))
         L = b["L"]; c = (300.0 if b["dir"] == "X" else 360.0) / 2.0
-        lam = (c * L) / SM._tri_int(0.0, L, L, c)
-        assert env[fs]["Mz"] == pytest.approx(lam * res[fs]["Mz"], rel=1e-6)
-        assert env[fs]["V"] == pytest.approx(lam * res[fs]["V"], rel=1e-6)
+        xs, Mg, Vg, _ = SM._simple_span([(("uni", w * c), "g")], L)
+        _x, Ma, Va, _ = SM._simple_span([(("tri", w, c), "a")], L)
+        dM = max(g - a for g, a in zip(Mg, Ma))
+        assert dM > 0
+        assert env[fs]["Mz"] == pytest.approx(res[fs]["Mz"] + dM, rel=1e-6)
+        assert env[fs]["Mz"] < w * c * L * L / 8.0 * 1.2                     # not a scaled-up solve
 
 
 def test_roof_suction_coefficients_fig_27_3_1():

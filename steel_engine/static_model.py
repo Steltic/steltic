@@ -41,9 +41,9 @@ Gravity loading (HR-03 / HR-13 / HR-27)
                                   it is unknown which beams are girders, every unsubdivided beam gets a
                                   girder FLOOR from the half-bay on EACH adjacent side: the simple-span
                                   girder moment/shear for pinned-pinned beams; for rigid-ended beams the
-                                  solved gravity moment/shear scaled by girder-rule load / applied load
-                                  (gravity-only combinations; the solved end restraint is kept). Declare
-                                  deck_span so the one-way load path itself is analysed.
+                                  solved moment/shear PLUS the simple-span effect of the extra load the
+                                  girder rule puts on the beam (solved end restraint and loads from above
+                                  kept). Declare deck_span so the one-way load path itself is analysed.
   Beams intersected by braces of a V / inverted-V CBF or BRBF (AISC 341-22 F1.4a(a), F2.4a(a), F4.4a(a):
   "braces provide no support of dead and live loads") additionally get the parent simple-span gravity
   moment/shear as a floor.
@@ -1259,10 +1259,11 @@ def service_loads(cfg, nseg=2):
 
 
 def _floors(cfg, model, pcs, spec, grav_only=True):
-    """{id(bm): (Mg, Vg)} -- or ('scale', lam) for rigid-ended girders -- for the beams in spec, from the
-    case pieces. 'girder_rigid' floors (deck span undeclared, rigid-ended beam) are applied in gravity-only
-    combinations only, as lam x the solved gravity moment/shear with lam = girder-rule load / applied load
-    on the beam (keeps the solved end restraint, restores the one-way girder load)."""
+    """{id(bm): (Mg, Vg)} -- or ('add', dM, dV) for rigid-ended girders -- for the beams in spec, from
+    the case pieces. 'girder_rigid' (deck span undeclared, rigid-ended beam): the solved moment/shear is
+    kept (real end restraint, loads from above) and the simple-span effect of the load the half-bay
+    girder rule adds over the analysed 45-degree load is added on top (conservative). grav_only is kept
+    for API compatibility."""
     out = {}
     cache = {}
     for bm in model["beams"]:
@@ -1271,13 +1272,13 @@ def _floors(cfg, model, pcs, spec, grav_only=True):
             continue
         par = bm["parent"]
         if basis == "girder_rigid":
-            if not grav_only:
-                continue
             Lp = bm["Lp"]
-            Wg = sum(_piece_int(pc, 0.0, Lp, Lp) if pc[0] != "pt" else pc[2] for pc, _o in _floor_plist(pcs, par))
-            Wa = sum(_piece_int(pc, 0.0, Lp, Lp) if pc[0] != "pt" else pc[2] for pc, _o in pcs["span"].get(par, []))
-            if Wa > 1e-9 and Wg > Wa:
-                out[id(bm)] = ("scale", Wg / Wa)
+            xs, Mg_, Vlg, Vrg = _simple_span(_floor_plist(pcs, par), Lp)
+            _x, Ma_, Vla, Vra = _simple_span(pcs["span"].get(par, []), Lp)
+            dM = max([g - a for g, a in zip(Mg_, Ma_)] + [0.0])
+            dV = max([abs(g - a) for g, a in zip(Vlg, Vla)] + [abs(g - a) for g, a in zip(Vrg, Vra)] + [0.0])
+            if dM > 0 or dV > 0:
+                out[id(bm)] = ("add", dM, dV)
             continue
         if par not in cache:
             cache[par] = _simple_span(_floor_plist(pcs, par), bm["Lp"])
@@ -1336,8 +1337,8 @@ def _extract(model, floors=None):
             if len(lf) >= 12:
                 V = max(V, abs(lf[1]), abs(lf[2]), abs(lf[7]), abs(lf[8]))
         fl = floors.get(id(b))
-        if fl and fl[0] == "scale":
-            Mmaj = Mmaj * fl[1]; V = V * fl[1]
+        if fl and fl[0] == "add":
+            Mmaj = Mmaj + fl[1]; V = V + fl[2]
         elif fl:
             Mmaj = max(Mmaj, fl[0]); V = max(V, fl[1])
         out[frozenset((b["A"], b["B"]))] = dict(Nc=Nc, Nt=Nt, Mz=Mmaj, My=Mmin, V=V)
@@ -2009,8 +2010,8 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
     if any(m[0] == "default" for m in modes.values()):
         info["notes"].append("one-way floor without cfg['deck_span']: 45-deg distribution analysed; every "
                              "unsubdivided beam gets a half-bay-per-side girder floor (simple-span diagram for "
-                             "pinned beams, solved gravity x load ratio for rigid-ended beams in gravity-only "
-                             "combinations) -- conservative for the non-girder direction; declare deck_span / "
+                             "pinned beams; solved + simple-span effect of the extra girder load for rigid-ended "
+                             "beams) -- conservative for the non-girder direction; declare deck_span / "
                              "infill_spacing for the actual one-way load path")
     env = {}; renv = {}
 

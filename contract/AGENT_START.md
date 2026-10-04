@@ -96,9 +96,22 @@ framework; this list tells you what it does so you do not fight it.
   (section x span x level) beam group at its governing level — NOT one representative — so a too-light beam in
   any group (e.g. a roof beam on a long bay) is caught instead of hiding behind `cfg['beam']`. `cfg['beam']` /
   `cfg['col']` remain optional under a `custom_build`.
-- **Work points should stay on the column grid.** `model_complete` (via `floor_beam_gaps`) now ignores
-  legitimate off-grid nodes (brace crossing points, beam-subdivision nodes), but the cleanest model keeps
-  every beam-column work point on the grid; express multi-tier / two-storey-X by grouping brace SIZES.
+- **Beam-column work points stay on the column grid; girders may be subdivided.** `model_complete` (via
+  `floor_beam_gaps`) treats a girder split at off-grid nodes (chevron / inverted-V brace point, EBF link ends,
+  two-storey-X crossing, infill-beam nodes) as continuous when the pieces form a straight chain between the
+  two grid nodes, so model chevron, EBF-link and two-storey-X bays explicitly. A chain that stops short or
+  leaves the girder line is still reported as a missing girder.
+- **Wind (MWFRS) is ASCE 7-22 Ch. 27 directional.** `engine3d.wind_forces` uses windward 0.8·qz and leeward
+  Cp(L/B)·qh, mid-height wall bands of the real building volume (setbacks, split levels, lean-tos), G or the
+  flexible Gf (§26.11; give `cfg['wind']['n1']` = 1/T1 for buildings that are not low-rise), the §27.1.5
+  16/8 psf minimum and, with `cfg['wind']['roofs'] = {k: {eave_ft, ridge_ft, ridge:'X'|'Y'}}`, gable end walls
+  and roof slopes. `engine3d.wind_detail(cfg, 'X')` shows every number. Cases 2–4 (Fig. 27.3-8) and roof uplift
+  are not included: where they or another geometry govern, supply your hand MWFRS story forces with
+  `cfg['wind']['story_forces'] = {'X': {k: kip}, 'Y': {k: kip}}` (no monkeypatching needed).
+- **Omitted columns do not punch holes in the slab.** `present` lists column positions; an interior grid node
+  without a column (all 8 neighbours present) keeps its four bays in the floor plate. Declare genuinely open
+  bays (atria, shafts) with `cfg['openings'] = {k: [(i,j), ...]}` and edge/clustered omitted columns with
+  `cfg['omitted_columns'] = {k: [(i,j), ...]}`.
 - **Grounding evidence = activity log OR calc_package.** Chapter 13 credits a required code (AISC 360/341/358)
   if EITHER the activity log has a `search_engineering_standards` record OR a `cited` clause in
   `calc_package.json` references it. The activity-log record format the log-reader expects is one JSON object

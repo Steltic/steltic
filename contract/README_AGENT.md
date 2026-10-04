@@ -110,8 +110,12 @@ primitives (`modal`, `elf`, `static_lateral`, `rs_baseshear`) directly.
   pass also produces a varied, grouped section schedule.
 - `braces` (a layout function or `None`), `plan` (a footprint function or `None`).
 - `seis = seis(SDS, SD1, S1, R, Ct, x, Cu, Ie)`; `analyses=["ELF","RS"]`.
-- Optional: `governing="wind"` + `wind={V,exposure,...}`; `snow` (psf);
-  `extra_mass_floors={level:psf}`; `skew` (parallelogram), `xcoords`/`ycoords`
+- Optional: `governing="wind"` + `wind={V,exposure,Kd,Kzt,Ke,...}` (ASCE 7-22 Ch. 27 directional MWFRS; optional
+  `n1`/`beta`/`Gf`, `parapet_ft`, `roofs={k:{eave_ft,ridge_ft,ridge}}`, `ground_band`, and the hand-force override
+  `story_forces={'X':{k:kip},'Y':{k:kip}}` -- see `engine3d.wind_detail`); `snow` (psf);
+  `extra_mass_floors={level:psf}` (seismic weight AND gravity dead); `seismic_mass_only={level:psf}` /
+  `seismic_weight_kip={level:kip}` (seismic weight only); `openings` / `omitted_columns` / `floor_bays`
+  (floor plate per level, see `engine3d.floor_bays`); `skew` (parallelogram), `xcoords`/`ycoords`
   (non-uniform grid); `torsion_check`, `dual_check`, `softstorey_check`,
   `drift_limit`; `D_floor`,`D_roof`,`clad`,`L_floor`; `drift_relief_16_1_2` (ONLY when the Nonlinear
   module hands it back — ASCE 7-22 §16.1.2, Risk Category I–III; see *Feedback from the Nonlinear module* in AGENT_START).
@@ -349,8 +353,9 @@ For unusual geometry or non-rigid joints, set `cfg["custom_build"] = custom_buil
 runs on your model unchanged.
 **`present` must be ACCURATE per level for non-rectangular / setback footprints** (L/T/U plans,
 notches, towers on podiums): the engine captures it into `cfg["present"]` on the first build and
-derives floor areas, cladding perimeter, level masses, seismic weight W, ELF story forces and
-per-level wind widths from that ACTUAL footprint -- never from the full NX x NY plate. If you set
+derives floor areas, cladding, level masses, seismic weight W, ELF story forces and the wind
+silhouette from that ACTUAL footprint -- never from the full NX x NY plate. An interior grid node
+without a column keeps its bays in the floor plate; declare real openings with `cfg["openings"]`. If you set
 diaphragm masses with `ops.mass`, compute them via `engine3d.floor_w` / `floor_area_ft2` /
 `perim_ft` so the dynamic-model gravity, the static-model tributary gravity and the seismic
 weight all describe the SAME building.

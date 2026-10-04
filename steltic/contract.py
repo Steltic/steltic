@@ -23,7 +23,9 @@ captures your custom_build's per-level footprint (the info["present"] sets you r
 first build, and ALL derived quantities -- floor areas, cladding perimeter, level masses, seismic weight W, ELF story \
 forces, wind widths (per level, so setbacks get smaller widths) and extra_mass_floors -- use that ACTUAL footprint, \
 NEVER the full NX x NY plate. So: return an accurate info["present"] for EVERY level (only the (i,j) column positions \
-that really exist there). If you set diaphragm masses yourself with ops.mass, compute them from engine3d.floor_w / \
+that really exist there; an interior omitted column keeps its bays in the slab -- declare real atria/shafts with \
+cfg["openings"] = {k: [(i,j),...]}). Hand MWFRS wind story forces, where the engine's ASCE 7-22 Ch.27 wind does not \
+cover the case, go in cfg["wind"]["story_forces"] = {"X": {k: kip}, "Y": {k: kip}} -- never monkeypatch engine3d. If you set diaphragm masses yourself with ops.mass, compute them from engine3d.floor_w / \
 floor_area_ft2 / perim_ft (they see the real footprint) and use your actual plan extents for the rotational-inertia \
 term. The dynamic-model gravity, the static-model tributary gravity and the seismic weight must all describe the \
 SAME building -- consistency.check compares them.

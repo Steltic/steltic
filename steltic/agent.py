@@ -212,62 +212,252 @@ def _r21_gate(ws, code):
 
 
 # ---------------- hardening #2: blocking completion gate (app-side, engine-free) ----------------
+# The gate NEVER imports the steel engine or executes cfg.py (the engine only runs in the sandbox).
+# It reads the verdict files the sandbox-side tools write, each stamped with the SHA-256 of the
+# inputs it judged:
+#   design/calc_package.json      -- members/connections: numeric D/C <= 1.0, cited clause
+#   design/pipeline_results.json  -- pipeline.design_and_report: the sanity suite (drift, model_complete,
+#                                    beam_deflection, model_declared/consistent, theta, dual_25pct, ...)
+#   design/consistency_result.json-- consistency.check: must be PASS for the CURRENT package + cfg.py
+# An item that genuinely does not apply is waived EXPLICITLY, with a justification of >= 20 chars:
+#   member/connection  : {'waived': '<justification citing the clause>'} on the entry;
+#   sanity check / consistency issue : calc_package['gate_waivers'] = {'<check name>': '<why>',
+#                        'consistency: <start of the issue text>': '<why>'}.
+# Code limits are never waivable: drift, theta, model_declared/consistent, equilibrium/base shear,
+# the Table 12.2-1 system / height limits, a declared SDC below the derived one, unconservative
+# R/Cd/Om0/Ct/x, and a D/C > 1.0 in consistency.
+GATE_WAIVER_MIN_CHARS = 20
+_GATE_NOT_WAIVABLE_CHECKS = ("model_declared", "model_consistent", "drift_X", "drift_Y", "stability",
+                             "stability_theta", "equil_X", "equil_Y", "baseshear_X", "baseshear_Y")
+_GATE_WAIVABLE_HINT = ("model_complete", "beam_deflection", "period", "modalmass_X", "modalmass_Y")
+_GATE_NOT_WAIVABLE_ISSUE = re.compile(r"exceeds the Table 12\.2-1|NOT PERMITTED in SDC|cfg\['sdc'\]=|UNCONSERVATIVE|"
+                                      r"> 1\.0 \(NG|Risk Category I[IV]+ \(Ie", re.I)
+_CODE_REF = re.compile(r"AISC|ASCE|ACI|AWS|IBC|§|\b[A-K]\d+(\.\d+)*\b|\b\d+\.\d+(\.\d+)*\b")
+
+
+def _gate_num(x):
+    """A D/C as a number: a number, or a string that STARTS with one ('1.07 (NG)'); else None."""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        m = re.match(r"\s*(-?\d*\.?\d+)", x)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
+
+
+def _gate_sha(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return None
+
+
+def _gate_waiver(waivers, key):
+    """Justification for `key` in calc_package['gate_waivers'] if it is a real one, else None."""
+    if not isinstance(waivers, dict):
+        return None
+    for k, v in waivers.items():
+        k = str(k).strip()
+        if k == key or (key.startswith("consistency:") and k.lower().startswith("consistency:")
+                        and k[len("consistency:"):].strip() and
+                        key[len("consistency:"):].strip().lower().startswith(k[len("consistency:"):].strip().lower())):
+            v = str(v or "").strip()
+            return v if len(v) >= GATE_WAIVER_MIN_CHARS else None
+    return None
+
+
+def _gate_entries(pkg, probs):
+    mem = pkg.get("members") or []
+    con = pkg.get("connections") or []
+    if not con:
+        probs.append("connections list is EMPTY -- connections are a required deliverable")
+    for x in mem + con:
+        if not isinstance(x, dict):
+            continue
+        checks = [c for c in (x.get("checks") or []) if isinstance(c, dict)]
+        dcs = [d for d in [_gate_num(x.get("DC"))] + [_gate_num(c.get("DC")) for c in checks] if d is not None]
+        cited = x.get("cited") or any(c.get("cited") for c in checks)
+        w = str(x.get("waived") or "").strip()
+        if w:
+            if len(w) < GATE_WAIVER_MIN_CHARS:
+                probs.append("'%s' is waived without a real justification (%r) -- state why it does not apply "
+                             "(>= %d chars, citing the clause)" % (x.get("id"), w, GATE_WAIVER_MIN_CHARS))
+            elif not cited and not _CODE_REF.search(w):
+                probs.append("'%s' waiver must cite the governing clause (in 'cited' or in the waiver text)"
+                             % x.get("id"))
+            continue
+        if not dcs:
+            probs.append("'%s' has no numeric D/C (top-level or in checks) and no waiver" % x.get("id"))
+        elif max(dcs) > 1.0 + 1e-9:
+            probs.append("'%s' has D/C = %.3f > 1.0 -- resize/redesign (or waive with justification)"
+                         % (x.get("id"), max(dcs)))
+        if not cited:
+            probs.append("'%s' has no cited AISC clause" % x.get("id"))
+    # seeded collector slot must be filled (hardening #3 pairs with this)
+    for c in con:
+        if isinstance(c, dict) and "SEEDED" in str(c.get("type", "")) and c.get("DC") is None \
+                and not c.get("waived") and not (c.get("checks") or []):
+            probs.append("seeded collector slot '%s' was never designed -- collectors on "
+                         "irregularity lines are REQUIRED (fill it or waive with justification)"
+                         % c.get("id"))
+    # deleting/renaming the seeded slot is NOT an escape: if the framework screen says the plan
+    # is irregular, SOME designed collector connection must exist (a prose note does not count)
+    plan = ((pkg.get("framework_screen") or {}).get("plan") or {})
+    if (plan.get("reentrant") or plan.get("setback")):
+        has_coll = any(isinstance(c, dict) and "collector" in
+                       (str(c.get("id", "")) + str(c.get("type", ""))).lower() and
+                       (c.get("DC") is not None or c.get("checks") or c.get("waived"))
+                       for c in con)
+        if not has_coll:
+            probs.append("framework screen: plan is re-entrant/setback but NO designed collector "
+                         "connection exists in the package -- a note is not a design: add a "
+                         "collector entry with demand (Om0 x Fpx share), components and D/C "
+                         "(or a waiver with justification)")
+
+
+def _gate_dual_record(pkg):
+    """A capacity_design dual 25 % record that carries numeric D/C values, all <= 1.0."""
+    cd = pkg.get("capacity_design") if isinstance(pkg.get("capacity_design"), dict) else {}
+    rec = None
+    for k, v in cd.items():
+        if re.search(r"dual|25.?(pct|%|percent)", str(k), re.I):
+            rec = v; break
+    if rec is None:
+        return False
+    dcs = []
+    def walk(o, key=""):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, k)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, key)
+        elif re.fullmatch(r"(?i)(max_?)?d_?c(_.*)?", str(key)) and _gate_num(o) is not None:
+            dcs.append(_gate_num(o))
+    walk(rec)
+    return bool(dcs) and max(dcs) <= 1.0 + 1e-9
+
+
+def _gate_sanity(jd, pkg, cfg_sha, probs):
+    rp = jd / "design" / "pipeline_results.json"
+    if not rp.exists():
+        probs.append("design/pipeline_results.json is missing -- run pipeline.design_and_report(name, cfg) so the "
+                     "sanity suite (drift, model_complete, beam_deflection, model_declared/consistent, theta) is "
+                     "recorded")
+        return
+    try:
+        res = json.loads(rp.read_text(errors="replace"))
+    except Exception as e:
+        probs.append("design/pipeline_results.json is unreadable (%s) -- re-run pipeline.design_and_report" % e)
+        return
+    if res.get("cfg_sha256") and cfg_sha and res["cfg_sha256"] != cfg_sha:
+        probs.append("the sanity results are STALE: cfg.py changed after the last pipeline.design_and_report run "
+                     "-- re-run it so drift/theta/model checks reflect the delivered model")
+    waivers = pkg.get("gate_waivers")
+    checks = res.get("checks") or {}
+    extra = res.get("extra") or {}
+    for k, ok in checks.items():
+        if ok:
+            continue
+        if k == "dual_25pct":
+            if _gate_dual_record(pkg):
+                continue
+            probs.append("sanity check dual_25pct FAILED (ASCE 7-22 12.2.5.1: MF share %s) -- design the moment "
+                         "frames for the MF-only run at 25%% of the design forces and record "
+                         "capacity_design['dual_25pct'] with numeric D/C values <= 1.0"
+                         % extra.get("MF_fraction"))
+            continue
+        if k in _GATE_NOT_WAIVABLE_CHECKS:
+            why = {"drift_X": "story drift exceeds the allowable (Table 12.12-1 / 12.12.1.1)",
+                   "drift_Y": "story drift exceeds the allowable (Table 12.12-1 / 12.12.1.1)",
+                   "stability_theta": "stability coefficient theta > theta_max (ASCE 7-22 12.8.7) -- redesign",
+                   "model_declared": "cfg['model'] declaration missing",
+                   "model_consistent": str(extra.get("model_warning") or "built model contradicts cfg['model']")[:300],
+                   }.get(k, "")
+            probs.append("sanity check %s FAILED%s -- fix the design and re-run pipeline.design_and_report "
+                         "(not waivable)" % (k, (": " + why) if why else ""))
+            continue
+        if _gate_waiver(waivers, k):
+            continue
+        probs.append("sanity check %s FAILED -- fix it and re-run pipeline.design_and_report, or (only if it "
+                     "genuinely does not apply) add calc_package['gate_waivers']['%s'] = '<justification>'"
+                     % (k, k))
+    th = extra.get("theta")
+    if not isinstance(th, dict) or "max" not in th:
+        probs.append("stability coefficient theta (ASCE 7-22 12.8.7) was NOT evaluated by the pipeline run -- "
+                     "re-run pipeline.design_and_report with the current engine")
+    elif float(th["max"]) > float(th.get("theta_max", 0.10)) + 1e-9:
+        if "stability_theta" in checks and not checks["stability_theta"]:
+            pass                                          # already reported above
+        else:
+            probs.append("theta = %.3f > theta_max = %.3f (ASCE 7-22 12.8.7) -- the structure is potentially "
+                         "unstable and shall be redesigned" % (th["max"], th.get("theta_max", 0.10)))
+
+
+def _gate_consistency(jd, pkg_sha, cfg_sha, pkg, probs):
+    cp = jd / "design" / "consistency_result.json"
+    if not cp.exists():
+        probs.append("consistency.check(name) has not been run on this package (no design/consistency_result.json) "
+                     "-- run it and reconcile every flag")
+        return
+    try:
+        res = json.loads(cp.read_text(errors="replace"))
+    except Exception as e:
+        probs.append("design/consistency_result.json is unreadable (%s) -- re-run consistency.check(name)" % e)
+        return
+    if res.get("calc_package_sha256") != pkg_sha or (cfg_sha and res.get("cfg_sha256") != cfg_sha):
+        probs.append("the last consistency.check ran on an OLDER calc_package.json / cfg.py -- re-run "
+                     "consistency.check(name) on the delivered files")
+        return
+    waivers = pkg.get("gate_waivers")
+    for iss in res.get("issues") or []:
+        iss = str(iss)
+        if not _GATE_NOT_WAIVABLE_ISSUE.search(iss) and _gate_waiver(waivers, "consistency: " + iss):
+            continue
+        probs.append("consistency: " + iss[:260] + ("" if not _GATE_NOT_WAIVABLE_ISSUE.search(iss)
+                                                    else "  [code limit -- not waivable]"))
+
+
 def _completion_gate(ws):
-    """Lightweight JSON checks on jobs/<building>/design/calc_package.json before a final answer
-    is accepted. Returns a list of problems ([] = clean). A member/connection may carry
-    {'waived': '<engineering justification>'} instead of capacities to pass explicitly."""
+    """Blocking checks before a final answer is accepted. Returns a list of problems ([] = clean):
+    (1) calc_package.json members/connections: numeric D/C <= 1.0 and a cited clause, or an explicit
+        justified waiver; seeded collector designed;
+    (2) design/pipeline_results.json (the sanity suite of the latest pipeline.design_and_report run,
+        for the CURRENT cfg.py): every check passes -- drift, theta <= theta_max, model_declared /
+        model_consistent, model_complete, beam_deflection, dual_25pct (or its numeric record), ... --
+        waivable only where marked;
+    (3) design/consistency_result.json: consistency.check PASS on the CURRENT calc_package.json and
+        cfg.py, with justified waivers only for issues that are not code limits."""
     import pathlib
     probs = []
     try:
         jd = ws._job_dir() if hasattr(ws, "_job_dir") else None
         if not jd:
             return []
-        cp = pathlib.Path(jd) / "design" / "calc_package.json"
+        jd = pathlib.Path(jd)
+        cp = jd / "design" / "calc_package.json"
         if not cp.exists():
             return ["design/calc_package.json does not exist -- run pipeline.design_and_report first"]
         pkg = json.loads(cp.read_text(errors="replace"))
-        mem = pkg.get("members") or []
-        con = pkg.get("connections") or []
-        if not con:
-            probs.append("connections list is EMPTY -- connections are a required deliverable")
-        for x in mem + con:
-            if not isinstance(x, dict):
-                continue
-            if x.get("waived"):
-                continue
-            checks = [c for c in (x.get("checks") or []) if isinstance(c, dict)]
-            dcs = [d for d in [x.get("DC")] + [c.get("DC") for c in checks]
-                   if isinstance(d, (int, float))]
-            if not dcs:
-                probs.append("'%s' has no D/C (top-level or in checks) and no waiver" % x.get("id"))
-            elif max(dcs) > 1.001:
-                probs.append("'%s' has D/C = %.3f > 1.0 -- resize/redesign (or waive with justification)"
-                             % (x.get("id"), max(dcs)))
-            if not x.get("cited") and not any(c.get("cited") for c in checks):
-                probs.append("'%s' has no cited AISC clause" % x.get("id"))
-        # seeded collector slot must be filled (hardening #3 pairs with this)
-        for c in con:
-            if isinstance(c, dict) and "SEEDED" in str(c.get("type", "")) and c.get("DC") is None \
-                    and not c.get("waived") and not (c.get("checks") or []):
-                probs.append("seeded collector slot '%s' was never designed -- collectors on "
-                             "irregularity lines are REQUIRED (fill it or waive with justification)"
-                             % c.get("id"))
-        # deleting/renaming the seeded slot is NOT an escape: if the framework screen says the plan
-        # is irregular, SOME designed collector connection must exist (a prose note does not count)
-        plan = ((pkg.get("framework_screen") or {}).get("plan") or {})
-        if (plan.get("reentrant") or plan.get("setback")):
-            has_coll = any(isinstance(c, dict) and "collector" in
-                           (str(c.get("id", "")) + str(c.get("type", ""))).lower() and
-                           (c.get("DC") is not None or c.get("checks") or c.get("waived"))
-                           for c in con)
-            if not has_coll:
-                probs.append("framework screen: plan is re-entrant/setback but NO designed collector "
-                             "connection exists in the package -- a note is not a design: add a "
-                             "collector entry with demand (Om0 x Fpx share), components and D/C "
-                             "(or a waiver with justification)")
+        cfg_sha = _gate_sha(jd / "cfg.py")
+        if cfg_sha is None:
+            probs.append("cfg.py is missing from the job folder -- write the building cfg (incl. custom_build) "
+                         "to cfg.py and run the pipeline from it")
+        _gate_entries(pkg, probs)
+        _gate_sanity(jd, pkg, cfg_sha, probs)
+        _gate_consistency(jd, _gate_sha(cp), cfg_sha, pkg, probs)
     except Exception as e:
-        return ["completion gate could not read calc_package.json: %s" % e]
-    return probs[:12]
+        return ["completion gate could not read the design files: %s" % e]
+    if len(probs) > 12:
+        probs = probs[:11] + ["... and %d more problem(s) -- see consistency.check / the sanity suite output"
+                              % (len(probs) - 11)]
+    return probs
 
 
 
@@ -286,8 +476,9 @@ _PHASE_HINTS = (
      "before doing ANY member design; every downstream number changes."),
     ("collector", re.compile(r"SEEDED - REQUIRED", re.I),
      "The framework SEEDED a collector slot because the footprint is irregular: design it like any "
-     "connection (Omega0 combos per ASCE 7-22 12.10.2.1, +25% if Type 2) and fill "
-     "limit_state/cited/capacity/DC -- the completion gate checks it."),
+     "connection for the MAX of ASCE 7-22 12.10.2.1 (a) Om0 x your ELF collector force, (b) Om0 x Fpx, "
+     "(c) Fpx per Eq. 12.10-2 (x1.25 per 12.3.3.5 in SDC D-F -- the 25% is NOT stacked on Om0, "
+     "12.3.3.5 Exception) and fill limit_state/cited/capacity/DC -- the completion gate checks it."),
     ("driftfail", re.compile(r"\[FAIL\] drift", re.I),
      "DRIFT FAIL: stiffen the governing direction (deeper beams / heavier columns / bigger braces "
      "along that axis) and re-run. If the failing 'story' is a declared split-level inter-diaphragm "
@@ -767,7 +958,11 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     "unresolved problems:\n- " + "\n- ".join(_gate_probs) +
                     "\nFix each one (resize the member and re-run the pipeline, design the missing "
                     "connection/collector, or add {'waived': '<engineering justification>'} to the entry "
-                    "if it genuinely does not apply), re-run consistency.check, then finish."})
+                    "if it genuinely does not apply; a sanity check or consistency issue that genuinely "
+                    "does not apply goes in calc_package['gate_waivers'] = {'<check name>' or "
+                    "'consistency: <start of the issue>': '<justification>'} -- code limits such as drift, "
+                    "theta, the model declaration and the Table 12.2-1 system/height limits cannot be "
+                    "waived), re-run consistency.check, then finish."})
                 continue
             if _gate_probs:
                 final_text += ("\n\n[completion gate] NOTE: finishing with %d unresolved package "

@@ -225,3 +225,49 @@ def test_seismic_weight_only_keys_do_not_touch_gravity():
     c["seismic_mass_only"] = {1: 10.0}; c["seismic_weight_kip"] = {"1": 25.0}
     assert E.floor_w(c, 1) == pytest.approx(w0 + 10.0*8100.0/1000.0 + 25.0)
     assert E.floor_grav(c, 1) == pytest.approx(g0) and E.floor_dead(c, 1) == pytest.approx(d0)
+
+
+# ----------------------------------------------------------------------------- HR-12 floor_beam_gaps
+def _frame_builder(variant):
+    import openseespy.opensees as ops
+
+    def cb(cfg, transf="Linear"):
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
+        SX, SY, z = cfg["SX"], cfg["SY"], E.zlevels(cfg)
+        P = {(i, j) for i in range(3) for j in range(2)}
+        for k in (0, 1):
+            for (i, j) in P:
+                ops.node(E.ntag(i, j, k), i*SX, j*SY, z[k])
+        for (i, j) in P:
+            ops.fix(E.ntag(i, j, 0), 1, 1, 1, 1, 1, 1)
+        ele = []; et = 1
+        for (i, j) in sorted(P):
+            E.add_column(et, E.ntag(i, j, 0), E.ntag(i, j, 1), "W14X90", "X")
+            ele.append((et, "col", "W14X90", E.ntag(i, j, 0), E.ntag(i, j, 1))); et += 1
+
+        def beam(n1, n2):
+            nonlocal et
+            E.add_beam(et, n1, n2, "W18X50"); ele.append((et, "beam", "W18X50", n1, n2)); et += 1
+        mid = 1*100000 + 9000 + 1                       # off-grid work point (i >= 90)
+        off = 24.0 if variant == "offline" else 0.0
+        ops.node(mid, 0.5*SX, off, z[1])
+        beam(E.ntag(0, 0, 1), mid)                      # (0,0)-(1,0) girder in two halves
+        if variant != "missing_half":
+            beam(mid, E.ntag(1, 0, 1))
+        if variant == "three_pieces":                   # extra collinear subdivision node
+            mid2 = 1*100000 + 9000 + 2; ops.node(mid2, 1.5*SX, 0.0, z[1])
+            beam(E.ntag(1, 0, 1), mid2); beam(mid2, E.ntag(2, 0, 1))
+        else:
+            beam(E.ntag(1, 0, 1), E.ntag(2, 0, 1))
+        for i in range(2):
+            beam(E.ntag(i, 1, 1), E.ntag(i+1, 1, 1))
+        for i in range(3):
+            beam(E.ntag(i, 0, 1), E.ntag(i, 1, 1))
+        return {"cm": {1: (SX, 0.5*SY)}, "present": {0: P, 1: P}, "z": z, "NF": 1, "ele": ele}
+    return cb
+
+
+@pytest.mark.parametrize("variant,ngaps", [("split", 0), ("three_pieces", 0), ("missing_half", 1), ("offline", 1)])
+def test_floor_beam_gaps_follow_collinear_chains(variant, ngaps):
+    c = _plate_cfg(NX=2, NY=1, SX=240.0, SY=240.0, custom_build=_frame_builder(variant))
+    assert len(E.floor_beam_gaps(c)) == ngaps

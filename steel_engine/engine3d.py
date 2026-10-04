@@ -990,20 +990,25 @@ def _model_gate(cfg):
 
 
 def floor_beam_gaps(cfg, transf="Linear"):
-    """Column-line floor-grid beam positions that have NO beam element in the model = the un-modelled
-    gravity girders. Coordinate-based, so it works for the parametric builder AND any custom_build.
+    """Column-line floor-grid beam positions that have NO beam in the model = the un-modelled gravity
+    girders. Coordinate-based, so it works for the parametric builder AND any custom_build.
+    A grid pair counts as modelled when ONE horizontal element joins the two grid nodes OR a CHAIN of
+    horizontal elements joins them through off-grid nodes that lie on the straight segment between
+    them -- a girder subdivided at a chevron / EBF-link / two-storey-X work point or at infill-beam
+    nodes is continuous, not a gap (HR-12). A chain that leaves the line, stops short, or passes
+    through another column-grid node does not count, so a genuinely missing girder is still reported.
     Returns a list of (z,(x1,y1),(x2,y2)); EMPTY means every column-line floor beam is modelled."""
     from collections import defaultdict
     info = build(cfg, transf)
-    coord = {}; modelled = set()
+    coord = {}; adj = defaultdict(set)
     for (et, kind, sec, n1, n2) in info["ele"]:
         for t in (n1, n2):
             if t not in coord:
                 try: coord[t] = ops.nodeCoord(t)
                 except Exception: coord[t] = None
         a, b = coord.get(n1), coord.get(n2)
-        if a and b and abs(a[2]-b[2]) < 1e-6:
-            modelled.add(frozenset((n1, n2)))
+        if a and b and abs(a[2]-b[2]) < 1e-6 and n1 != n2:
+            adj[n1].add(n2); adj[n2].add(n1)
     zmin = min((c[2] for c in coord.values() if c), default=0.0)
     # Build the adjacency grid ONLY from real column-grid nodes (tag == ntag(i,j,k) in range), so
     # legitimate off-grid work points -- brace crossing nodes, beam-subdivision nodes -- do not register
@@ -1012,9 +1017,30 @@ def floor_beam_gaps(cfg, transf="Linear"):
     def _isgrid(t):
         k = t // 100000; r = t % 100000; i = r // 100; j = r % 100
         return 0 <= k <= NFc and 0 <= i <= NXc and 0 <= j <= NYc and t == ntag(i, j, k)
+    gridtags = {t for t, c in coord.items() if c and _isgrid(t)}
+    def _on_segment(p, a, b, tol=1e-3):
+        ab = [b[q]-a[q] for q in range(3)]; ap = [p[q]-a[q] for q in range(3)]
+        L2 = sum(v*v for v in ab)
+        if L2 <= 0: return False
+        u = sum(ab[q]*ap[q] for q in range(3))/L2
+        if not (1e-9 < u < 1-1e-9): return False
+        d2 = sum((ap[q]-u*ab[q])**2 for q in range(3))
+        return d2 <= (tol*max(1.0, math.sqrt(L2)))**2
+    def _joined(t1, t2):
+        if t2 in adj[t1]: return True
+        a, b = coord[t1], coord[t2]; seen = {t1}; stack = [t1]
+        while stack:                      # walk the collinear chain through OFF-grid nodes only
+            u = stack.pop()
+            for v in adj[u]:
+                if v == t2: return True
+                if v in seen or v in gridtags or not coord.get(v): continue
+                if _on_segment(coord[v], a, b):
+                    seen.add(v); stack.append(v)
+        return False
     byz = defaultdict(list)
-    for t, c in coord.items():
-        if c and c[2] > zmin + 1e-6 and _isgrid(t):
+    for t in gridtags:
+        c = coord[t]
+        if c[2] > zmin + 1e-6:
             byz[round(c[2], 3)].append((c[0], c[1], t))
     gaps = []
     for z, pts in byz.items():
@@ -1024,7 +1050,7 @@ def floor_beam_gaps(cfg, transf="Linear"):
         for (gi, gj), (x, y, t) in at.items():
             for (di, dj) in ((1, 0), (0, 1)):
                 nb = at.get((gi+di, gj+dj))
-                if nb and frozenset((t, nb[2])) not in modelled:
+                if nb and not _joined(t, nb[2]):
                     gaps.append((z, (x, y), (nb[0], nb[1])))
     return gaps
 

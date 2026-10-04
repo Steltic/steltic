@@ -2140,6 +2140,8 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
                     continue
                 info["solves"] += 1
                 res = _extract(omodel, _floors(cfgF, omodel, g["pieces"], ospec, grav_only=False))
+                vb = {frozenset((b["A"], b["B"])) for b in omodel["beams"] if ospec.get(id(b)) == "chevron"}
+                res = {fs: r for fs, r in res.items() if fs in vb}      # F1.4a: V / inverted-V beams only
                 _merge(env, okinds, res, case[0], False, {"beam"})
             model = build_static(cfgF, "PDelta", nseg, stiff=stiff)
 

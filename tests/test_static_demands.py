@@ -360,3 +360,24 @@ def test_roof_suction_coefficients_fig_27_3_1():
     qh, h = SM._wind_qh(cfg)
     Kz = E.kz_exposure(h, "C")
     assert qh == pytest.approx(0.00256 * Kz * 115.0 ** 2 * 0.85)
+
+
+def test_ocbf_v_beam_unbalanced_load_f1_4a():
+    cfg = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="OCBF", D_roof=0.0, Lr=0.0)
+    model = SM.build_static(cfg, "Linear", 4)
+    row = SM._shape("HSS6X6X1/2")
+    L = math.hypot(180.0, 156.0)
+    T = 1.3 * 50.0 * row["A"]                                   # Om0*E (large pattern) > RyFyAg -> RyFyAg
+    r = min(row["rx"], row["ry"]); Fe = math.pi ** 2 * 29000.0 / (L / r) ** 2
+    Fn = 0.658 ** (50.0 / Fe) * 50.0 if 50.0 / Fe <= 2.25 else 0.877 * Fe
+    C = 0.3 * Fn * row["A"]                                     # 0.3 Pn with Fy (not RyFy)
+    pat = {1: (5000.0, 0.0, 0.0)}; paty = {1: (0.0, 5000.0, 0.0)}
+    case = SM.Case("OCBF V", 0.0, 0.0, SM.RoofFactors(), {}, True, kind="ecl_ocbf", applies={"beam"},
+                   ecl=dict(sx=1, sy=1, variant="a", patterns=(pat, paty), Om0=2.0))
+    info = {}
+    env, kinds = SM.demand_envelope(cfg, [case], nseg=4, info_out=info)
+    beam = next(fs for fs, kv in kinds.items() if kv[0] == "beam" and 180000 in fs)
+    Pu = (T - C) * 156.0 / L
+    assert env[beam]["Mz"] == pytest.approx(Pu * 360.0 / 4.0, rel=0.02)
+    other = [fs for fs, kv in kinds.items() if kv[0] == "beam" and 180000 not in fs]
+    assert all(env.get(fs, {}).get("Mz", 0.0) == 0.0 for fs in other)     # only the V-braced beam

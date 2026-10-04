@@ -93,9 +93,9 @@ def _xy_in(cfg, i, j):
 def grid(cfg,k):
     # set of (i,j) present at floor k (k=0 = base footprint = floor1).
     # Priority: cfg['present'] (per-level footprint captured from custom_build on first engine3d.build,
-    # or declared by the agent) > cfg['plan'] callable > full NX x NY rectangle. This keeps areas,
-    # perimeters, masses, wind widths and ELF weights consistent with the ACTUAL framed footprint for
-    # non-rectangular / setback buildings instead of silently assuming the full plate.
+    # or declared by the agent) > cfg['plan'] callable > full NX x NY rectangle. These are COLUMN
+    # positions; the floor plate (areas, perimeters, masses, cladding, wind silhouette, ELF weights) is
+    # floor_bays(), which keeps the bays around an omitted interior column (HR-11).
     NX,NY=cfg["NX"],cfg["NY"]
     kk=1 if k==0 else k
     pr=cfg.get("present")
@@ -260,43 +260,145 @@ def add_beam(tag, n1, n2, sec, releases=None):
     return tag
 
 
+# ---------------------------------------------------------------------------------------------------
+# FLOOR PLATE (HR-11). `present` lists COLUMN positions; the floor/roof plate is a set of BAYS. A bay is
+# in the plate when its 4 corner grid nodes are present -- EXCEPT that a grid node with no column must
+# not punch a hole in the slab:
+#   * cfg['omitted_columns'] = {k: [(i,j),...]} (or a list for every level / f(k,NX,NY)) -- grid nodes
+#     that have NO column but ARE inside the floor plate (long-span transfer, gym, lobby);
+#   * auto: an INTERIOR grid node missing from `present` whose 8 neighbours are all present at that
+#     level is an omitted column (a printed note says so) -- a 2x2-bay hole around one missing node is
+#     an opening only when declared;
+#   * cfg['openings'] = {k: [(i,j),...]} (bay = lower-left node index) -- bays that are genuinely open
+#     (atrium, shaft) even though their corner columns exist;
+#   * cfg['floor_bays'] = {k: [(i,j),...]} -- explicit plate per level, overrides all of the above;
+#   * cfg['auto_omitted_columns'] = False disables the auto rule (old behaviour).
+# All keys optional; with none of them the plate is the old "4 corners present" set except for the
+# interior-isolated-missing-node case, which used to delete 4 bays (Ex16: -3136 ft2, -12 % of W).
+# ---------------------------------------------------------------------------------------------------
+_PLATE_NOTES = set()
+
+def _note_once(msg):
+    if msg not in _PLATE_NOTES:
+        _PLATE_NOTES.add(msg); print("[engine3d] " + msg)
+
+def _per_level(cfg, key, k):
+    """Per-level set of (i,j) tuples from cfg[key]: dict {k: [...]}, callable f(k,NX,NY) or a plain
+    list (same for every level). None when the key is absent / has no entry for level k."""
+    spec = cfg.get(key)
+    if spec is None or spec is False: return None
+    if callable(spec): v = spec(k, cfg["NX"], cfg["NY"])
+    elif isinstance(spec, dict): v = spec.get(k, spec.get(str(k)))
+    else: v = spec
+    return None if v is None else {tuple(p) for p in v}
+
+def _auto_omitted(cfg, k, P):
+    if cfg.get("auto_omitted_columns", True) is False: return set()
+    NX, NY = cfg["NX"], cfg["NY"]; out = set()
+    for i in range(1, NX):
+        for j in range(1, NY):
+            if (i, j) in P: continue
+            if all((i+a, j+b) in P for a in (-1, 0, 1) for b in (-1, 0, 1) if (a, b) != (0, 0)):
+                out.add((i, j))
+                _note_once("level %d: grid node (%d,%d) has no column but all 8 neighbours are framed -> treated "
+                           "as an OMITTED COLUMN; its 4 bays stay in the floor plate (area, W, cladding, wind). "
+                           "Declare cfg['openings'] if those bays are really open." % (k, i, j))
+    return out
+
+def floor_bays(cfg, k):
+    """Set of bays (i,j) (lower-left grid node index, 0<=i<NX, 0<=j<NY) carrying floor/roof plate at
+    level k (k=0 -> level 1). See the FLOOR PLATE note above for the cfg keys (HR-11)."""
+    NX, NY = cfg["NX"], cfg["NY"]; kk = 1 if k == 0 else k
+    fb = _per_level(cfg, "floor_bays", kk)
+    if fb is not None:
+        bays = {b for b in fb if 0 <= b[0] < NX and 0 <= b[1] < NY}
+    else:
+        P = set(grid(cfg, kk))
+        P |= (_per_level(cfg, "omitted_columns", kk) or set())
+        P |= _auto_omitted(cfg, kk, P)
+        bays = {(i, j) for i in range(NX) for j in range(NY)
+                if (i, j) in P and (i+1, j) in P and (i, j+1) in P and (i+1, j+1) in P}
+    op = _per_level(cfg, "openings", kk)
+    if op: bays -= op
+    return bays
+
+def _bay_dims_ft(cfg, i, j):
+    """(dx, dy) of bay (i,j) in ft, honoring xcoords/ycoords (skew does not change the bay area)."""
+    dx = _xy_in(cfg, i+1, j)[0] - _xy_in(cfg, i, j)[0]
+    dy = _xy_in(cfg, i, j+1)[1] - _xy_in(cfg, i, j)[1]
+    return abs(dx)/12.0, abs(dy)/12.0
+
 def nbays(cfg,k):
-    P=grid(cfg,k); n=0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]):
-            if (i,j) in P and (i+1,j) in P and (i,j+1) in P and (i+1,j+1) in P: n+=1
-    return n
+    return len(floor_bays(cfg, k))
 
 def floor_area_ft2(cfg,k):
-    """Framed floor area (ft^2): sum of ACTUAL bay areas (honors non-rectangular footprints via
-    grid() and non-uniform xcoords/ycoords).  Full uniform rectangle reduces to NX*NY*SX*SY."""
-    P=grid(cfg,k); a=0.0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]):
-            if (i,j) in P and (i+1,j) in P and (i,j+1) in P and (i+1,j+1) in P:
-                dx=_xy_in(cfg,i+1,j)[0]-_xy_in(cfg,i,j)[0]
-                dy=_xy_in(cfg,i,j+1)[1]-_xy_in(cfg,i,j)[1]
-                a+=abs(dx*dy)/144.0
+    """Floor-plate area (ft^2) of level k: sum of the bays in floor_bays(cfg,k) (HR-11: an omitted column
+    no longer deletes its surrounding bays; openings are declared with cfg['openings']). Honors
+    non-rectangular footprints and non-uniform xcoords/ycoords; a full uniform rectangle = NX*NY*SX*SY."""
+    a = 0.0
+    for (i, j) in floor_bays(cfg, k):
+        dx, dy = _bay_dims_ft(cfg, i, j); a += dx*dy
     return a
 
 def perim_ft(cfg,k):
-    """Exposed floor-edge length (ft) for cladding: bay edges bordered by exactly ONE framed bay.
-    Handles non-rectangular footprints (L/T/U, notches, setbacks) and non-uniform xcoords/ycoords.
-    A full uniform rectangle reduces to the old 2*(NX*SX + NY*SY) bounding-box value."""
-    P=grid(cfg,k)
-    def framed(i,j):
-        return (0<=i<cfg["NX"] and 0<=j<cfg["NY"] and (i,j) in P and (i+1,j) in P
-                and (i,j+1) in P and (i+1,j+1) in P)
-    per=0.0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]+1):          # X-running edges between nodes (i,j)-(i+1,j)
-            if framed(i,j-1) != framed(i,j):
-                per+=abs(_xy_in(cfg,i+1,j)[0]-_xy_in(cfg,i,j)[0])/12.0
-    for j in range(cfg["NY"]):
-        for i in range(cfg["NX"]+1):          # Y-running edges between nodes (i,j)-(i,j+1)
-            if framed(i-1,j) != framed(i,j):
-                per+=abs(_xy_in(cfg,i,j+1)[1]-_xy_in(cfg,i,j)[1])/12.0
+    """Exposed floor-edge length (ft) of the level-k plate: bay edges bordered by exactly ONE plate bay.
+    Handles L/T/U plans, notches, setbacks, openings (atrium edges count) and non-uniform grids.
+    A full uniform rectangle reduces to 2*(NX*SX + NY*SY)."""
+    B = floor_bays(cfg, k); per = 0.0
+    for (i, j) in B:
+        dx, dy = _bay_dims_ft(cfg, i, j)
+        if (i, j-1) not in B: per += dx
+        if (i, j+1) not in B: per += dx
+        if (i-1, j) not in B: per += dy
+        if (i+1, j) not in B: per += dy
     return per
+
+# ---------------------------------------------------------------------------------------------------
+# BUILDING VOLUME (bay stacks) -- shared by cladding weight and MWFRS wind. Each plan bay b has a stack
+# of levels whose plate contains it; the enclosed volume of b runs from grade to its top level (plus
+# parapet). An exterior wall exists on an edge of b wherever b is taller than the bay across that edge.
+# Wall height between two consecutive levels of b's stack is shared half/half (bottom half of the
+# lowest storey -> grade). This replaces the old "storey below x level perimeter" tributary, so split
+# levels (Ex13), setbacks and lean-tos get the wall that actually spans to each diaphragm.
+# ---------------------------------------------------------------------------------------------------
+def _stacks(cfg):
+    """{bay: [(k, z_ft), ...] ascending} over all levels, and z (ft) per level."""
+    NF = len(cfg["heights"]); z = [v/12.0 for v in zlevels(cfg)]; st = {}
+    for k in range(1, NF+1):
+        for b in floor_bays(cfg, k):
+            st.setdefault(b, []).append((k, z[k]))
+    return st, z
+
+def _band_split(stack, za, zb):
+    """Split wall segment [za,zb] (ft) carried by a bay with level stack [(k,z),...] into {k: height};
+    key 0 = grade (bottom half of the lowest storey); above the top level -> top level."""
+    out = {}; zs = [s[1] for s in stack]; ks = [s[0] for s in stack]
+    bounds = [zs[0]/2.0] + [(zs[n]+zs[n+1])/2.0 for n in range(len(zs)-1)] + [float("inf")]
+    lo = 0.0; owners = [0] + ks
+    for n, hi in enumerate(bounds):
+        a, b2 = max(za, lo), min(zb, hi)
+        if b2 > a: out[owners[n]] = out.get(owners[n], 0.0) + (b2 - a)
+        lo = hi
+    return out
+
+def clad_areas_ft2(cfg):
+    """{k: exterior wall area (ft^2) tributary to level k} from the bay-stack volume (mid-height
+    tributaries; parapet cfg['wind']['parapet_ft'] adds to the top level). Grade portion excluded."""
+    st, z = _stacks(cfg); NF = len(cfg["heights"]); out = {k: 0.0 for k in range(1, NF+1)}
+    par = float((cfg.get("wind") or {}).get("parapet_ft", 0.0) or 0.0)
+    top = {b: s[-1][1] for b, s in st.items()}
+    for (i, j), s in st.items():
+        dx, dy = _bay_dims_ft(cfg, i, j)
+        for nb, L in (((i, j-1), dx), ((i, j+1), dx), ((i-1, j), dy), ((i+1, j), dy)):
+            lo = top.get(nb, 0.0); hi = top[(i, j)]
+            if nb in top and lo >= hi: continue
+            for k, hgt in _band_split(s, lo, hi + par).items():
+                if k: out[k] += hgt*L
+    return out
+
+def _clad_kip(cfg, k):
+    c = cfg.get("clad", 0.0) or 0.0
+    return c*clad_areas_ft2(cfg).get(k, 0.0)/1000.0 if c else 0.0
 
 def _Dlev(cfg, k, roof):
     """Dead load (psf) at level k: cfg['D_by_level'][k] override, else D_roof (top level) / D_floor.
@@ -318,16 +420,28 @@ def _is_storage(cfg, k):
     lv = cfg.get("storage_levels")
     return bool(lv) and k in {int(i) for i in lv}
 
+def _lvl_val(spec, k):
+    """Per-level scalar from a {k: v} dict (int or str keys); 0.0 when absent."""
+    if not spec: return 0.0
+    v = spec.get(k, spec.get(str(k), 0.0)) if isinstance(spec, dict) else 0.0
+    return float(v or 0.0)
+
 def floor_w(cfg,k):
     """Effective seismic weight of level k (ASCE 7-22 sec.12.7.2): dead + cladding + 25% of the
     floor live where the area is storage (item 1) + 15% of the uniform design snow load where the
-    flat-roof snow load pf exceeds 45 psf (item 4)."""
+    flat-roof snow load pf exceeds 45 psf (item 4) + extra_mass_floors (psf, ALSO gravity dead).
+    Cladding = clad (psf) x exterior wall area tributary to the level by MID-HEIGHT bands of the actual
+    building volume (clad_areas_ft2: half the storey below + half the storey above, true wall heights at
+    split levels / setbacks / lean-tos; the bottom half of the lowest storey goes to grade).
+    Seismic-weight-only inputs (HR-39, never added to gravity): cfg['seismic_mass_only'] = {k: psf}
+    (e.g. the 12.7.2 item-2 partition allowance) and cfg['seismic_weight_kip'] = {k: kip} (lumped
+    equipment / tanks)."""
     NF=len(cfg["heights"]); roof=(k==NF)
     d=_Dlev(cfg,k,roof)
     w=d*floor_area_ft2(cfg,k)/1000.0
-    th=cfg["heights"][k-1]/12.0
-    th=th if not roof else th/2
-    w+=cfg["clad"]*perim_ft(cfg,k)*th/1000.0
+    w+=_clad_kip(cfg,k)
+    w+=_lvl_val(cfg.get("seismic_mass_only"),k)*floor_area_ft2(cfg,k)/1000.0
+    w+=_lvl_val(cfg.get("seismic_weight_kip"),k)
     if roof:
         snow=cfg.get("snow",0.0)
         if snow>45.0:                          # 12.7.2 item 4: 15% of snow ONLY where pf > 45 psf
@@ -349,8 +463,7 @@ def floor_dead(cfg,k):
     NF=len(cfg["heights"]); roof=(k==NF)
     d=_Dlev(cfg,k,roof)
     w=d*floor_area_ft2(cfg,k)/1000.0
-    th=cfg["heights"][k-1]/12.0; th=th if not roof else th/2
-    w+=cfg["clad"]*perim_ft(cfg,k)*th/1000.0
+    w+=_clad_kip(cfg,k)                         # same mid-height wall tributary as floor_w
     w+=cfg.get("extra_mass_floors",{}).get(k,0.0)*floor_area_ft2(cfg,k)/1000.0
     return w
 

@@ -264,6 +264,8 @@ def parse_system(cfg_or_name):
         found.append("nsd")
     if not found:
         return dict(kind="unknown", rows=[], parts=[], text=txt)
+    if "nsd" in found:                   # an explicit 'not specifically detailed' system governs the row;
+        return dict(kind="single", rows=["nsd"], parts=found, text=txt)   # 'OMF-type' etc. is description
     if "dual" in txt:
         mfs = [k for k in found if k in ("smf", "imf")]
         brs = [k for k in found if k in _BRACED]

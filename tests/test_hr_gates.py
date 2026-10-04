@@ -151,6 +151,11 @@ def test_mixed_system_is_not_moment_frame_only():
     assert P.mf_only_system({"system": "SMF"}) and P.mf_only_system({"system": "IMF both directions"})
     assert not P.mf_only_system({"system": "mixed per direction: SMF in X + SCBF in Y"})
     assert not P.mf_only_system({"system": "dual SMF+BRBF"})
+    ex31 = "Steel systems not specifically detailed for seismic resistance (R=3): Y = gable portal moment frames (OMF-type)"
+    assert P.parse_system(ex31)["rows"] == ["nsd"]
+    ex33 = _cfg("IMF (Y, transverse) + OCBF (X, longitudinal)", [38], SDS=0.42, SD1=0.17, S1=0.10)
+    ex33["seis"].update(R=3.25, Cd=3.25, Om0=3.0, Ct=0.02, x=0.75)          # Ex33: Cd of the OCBF used for the IMF too
+    assert any("Cd=3.25" in m and "UNCONSERVATIVE" in m for m in _err(ex33))
 
 
 # ------------------------------------------------------------------ HR-33: consistency heuristics

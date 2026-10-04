@@ -372,7 +372,8 @@ def design(name, outdir=None):
     with open(os.path.join(outdir, "design_report.md"), "w") as f:
         f.write("# %s - demand summary\n\n" % name)
         f.write("Archetype: %s; %d storeys; system %s; R=%s, Ie=%s.\n\n"
-                % (cfg["arch"], len(cfg["heights"]), "CBF/dual" if cfg.get("braces") else "moment frame",
+                % (cfg.get("arch", ""), len(cfg["heights"]),
+                   cfg.get("system") or "NOT DECLARED (set cfg['system']; HR-26)",
                    cfg["seis"]["R"], cfg["seis"]["Ie"]))
         f.write("- Load combinations run: **%d** (LRFD, P-Delta each).\n" % len(cases))
         f.write("- Members enveloped: **%d** elements.\n" % len(reg))

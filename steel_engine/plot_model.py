@@ -51,7 +51,10 @@ def _depth_dir(kind,p1,p2,i_is_perim):
     columns: vecxz=(1,0,0) interior / (0,1,0) perimeter, strong about local z -> depth = local y.
     beams:   vecxz=(0,0,1), strong about local y (Ix in Iy-arg, fixed) -> depth = local z."""
     if _ck(kind)=="col":
-        vecxz=(0.,1.,0.) if i_is_perim else (1.,0.,0.)
+        if isinstance(i_is_perim,str):          # actual strong_dir recorded by add_column (info['col_dir'])
+            vecxz=(0.,1.,0.) if "X" in i_is_perim.upper() else (1.,0.,0.)
+        else:
+            vecxz=(0.,1.,0.) if i_is_perim else (1.,0.,0.)
         x,y,z=_local_axes(p1,p2,vecxz); return y
     else:
         x,y,z=_local_axes(p1,p2,(0.,0.,1.)); return z
@@ -64,11 +67,45 @@ def _model(name):
         for t in (n1,n2):
             if t not in nodes: nodes[t]=ops.nodeCoord(t)   # coords from OpenSees -> robust to ANY node tags (e.g. brace apex)
         i1=(n1//100)%1000
-        perim=(i1==0 or i1==NX)
+        perim=(info.get("col_dir") or {}).get(et) or (i1==0 or i1==NX)
         eles.append((kind,sec,nodes[n1],nodes[n2],perim))
-    base=[ (i,j) for (i,j) in info["present"][0] ]
-    bxyz=[ops.nodeCoord(E.ntag(i,j,0)) for (i,j) in base]
+    bxyz=_base_nodes(info)
     return cfg,info,nodes,eles,bxyz
+
+def _base_nodes(info):
+    """[(x, y, z, 'fixed'|'pinned'|'other')] for every RESTRAINED node at the base elevation, read from the
+    live OpenSees domain (ops.getFixedNodes / getFixedDOFs) -- so mixed bases, custom node tags and
+    footprints whose level-0 set differs from level 1 are drawn as modelled (HR-38: every base was drawn
+    with the cfg['base'] symbol)."""
+    out=[]
+    try:
+        z0=min(ops.nodeCoord(t)[2] for t in ops.getNodeTags())
+        for n in ops.getFixedNodes():
+            c=ops.nodeCoord(n)
+            if abs(c[2]-z0)>1e-6: continue
+            dofs=set(ops.getFixedDOFs(n))
+            kind="fixed" if {1,2,3,4,5,6}.issubset(dofs) else ("pinned" if {1,2,3}.issubset(dofs) else "other")
+            out.append((c[0],c[1],c[2],kind))
+    except Exception:
+        pres=(info.get("present") or {}).get(0) or []
+        for (i,j) in pres:
+            try:
+                c=ops.nodeCoord(E.ntag(i,j,0)); out.append((c[0],c[1],c[2],"other"))
+            except Exception: pass
+    return out
+
+def _sections_title(cfg,eles):
+    """Title fragment naming the sections actually in the model (custom_build cfgs may have no
+    cfg['col'] / cfg['beam'] -- the old title raised KeyError 'col' and Fig. 1 was lost)."""
+    by={}
+    for kind,sec,a,b,perim in eles:
+        by.setdefault(_ck(kind),{}).setdefault(str(sec),0); by[_ck(kind)][str(sec)]+=1
+    parts=[]
+    for k in ("col","beam","brace"):
+        if k in by:
+            top=sorted(by[k].items(),key=lambda t:-t[1])
+            parts.append("%s %s%s"%(k,top[0][0],(" +%d sizes"%(len(top)-1)) if len(top)>1 else ""))
+    return ", ".join(parts) or "no members"
 
 def _setup(ax,title):
     ax.set_title(title,fontsize=10); ax.set_xlabel("X (in)"); ax.set_ylabel("Y (in)")
@@ -129,12 +166,15 @@ def geometry(name,outdir):
     fig=plt.figure(figsize=(8,7)); ax=fig.add_subplot(111,projection="3d")
     _draw_members(ax,eles)
     _draw_ghost_framing(ax,cfg,info,legend=True)
-    base_fixed = cfg.get("base","fixed")!="pinned"
-    ax.scatter([p[0] for p in bxyz],[p[1] for p in bxyz],[p[2] for p in bxyz],
-               marker="s" if base_fixed else "^",s=40,color="black",
-               label=f"{'fixed' if base_fixed else 'pinned'} base")
-    _setup(ax,f"{name} — {cfg['arch']} ({info['NF']}-story) geometry\n"
-              f"col {cfg['col']}, beam {cfg['beam']}"+(f", brace {cfg['brace']}" if cfg.get('brace') else ""))
+    for kind,mk,lab in (("fixed","s","fixed base"),("pinned","^","pinned base"),("other","o","other base restraint")):
+        pts=[p for p in bxyz if p[3]==kind]
+        if pts:
+            ax.scatter([p[0] for p in pts],[p[1] for p in pts],[p[2] for p in pts],marker=mk,s=40,
+                       color="black" if kind=="fixed" else ("#c0392b" if kind=="pinned" else "#7f7f7f"),
+                       label="%s (%d)"%(lab,len(pts)))
+    import textwrap
+    _arch=textwrap.shorten(str(cfg.get('arch','')),width=70,placeholder="...")
+    _setup(ax,f"{name} ({info['NF']}-story) geometry\n{_arch}\n"+_sections_title(cfg,eles))
     ax.legend(loc="upper left",fontsize=8)
     p=os.path.join(outdir,f"{name}_geometry.png"); fig.tight_layout(); fig.savefig(p,dpi=130); plt.close(fig); return p
 

@@ -524,6 +524,8 @@ def _horizontal_distribution(cfg, Fx, VwX, VwY, sf=None, runs=None):
     diaphragm, no accidental torsion) -- not an assumed 50/50 split."""
     sf = sf or _sfrs(cfg)
     FxX, FxY = _fx_by_dir(Fx)
+    if runs:                                     # the per-direction ELF forces the drift runs used
+        FxX, FxY = runs["X"]["F"], runs["Y"]["F"]
     h = ["<p>Story forces reach the vertical lateral elements through the rigid floor diaphragm in "
          "proportion to their lateral stiffness and position (3D model). The table gives, per direction, "
          "the system, the lateral planes found in the analysis model and the fraction of the base shear each "
@@ -1159,18 +1161,23 @@ def _lateral_runs(cfg, Fx, sf=None):
         r["Cd"], r["Ie"] = Cd, Ie
         if sd_eng is not None:
             e = sd_eng[d]
-            f, why = e.get("rbs") or rbs_drift_factor(cfg, d)
-            pre = "rbs" in e                                       # factor already in the engine's profile
-            r["rbs"] = (f, why)
+            f_rep, why_rep = rbs_drift_factor(cfg, d, sf)
+            f_eng = (e.get("rbs") or (1.0, ""))[0]
+            pre = "rbs" in e                                       # engine profile already carries its factor
+            # apply only what the engine profile does not already include (e.g. RBS found in the calc package)
+            f = (f_rep / f_eng) if (pre and f_rep > f_eng) else (1.0 if pre else f_rep)
+            r["rbs"] = (max(f_rep, f_eng), why_rep if f_rep >= f_eng else e["rbs"][1])
+            pre = False                                            # 'f' is now the extra factor to apply
             r["basis"] = ("diaphragm edge incl. accidental torsion &times; A<sub>x</sub> (Type 1, SDC %s: &sect;12.8.6.5)" % sdc
                           if "edge" in str(e.get("location", "")) else "centre of mass (&sect;12.8.6.5)")
             if e.get("mrsa") is not None:
-                r["basis"] += "; %s of ELF and scaled MRSA (&sect;12.9.1.4)" % ("envelope" if e.get("design") != e.get("elf") else "ELF")
-            r["dxe"] = [abs(v) * (1.0 if pre else f) for v in e["elastic"]]
-            r["design"] = [abs(v) * (1.0 if pre else f) for v in e["design"]]
+                r["basis"] += ("; story-by-story envelope of the ELF and the &sect;12.9.1.4-scaled MRSA drifts"
+                               if e.get("design") != e.get("elf") else "; ELF governs over the scaled MRSA drifts")
+            r["dxe"] = [abs(v) * f for v in e["elastic"]]
+            r["design"] = [abs(v) * f for v in e["design"]]
             r["limit"], r["limit_rho"] = e["limit"], e["rho_applied"]
         else:
-            f, why = rbs_drift_factor(cfg, d)
+            f, why = rbs_drift_factor(cfg, d, sf)
             r["rbs"] = (f, why)
             base = r["drift_edge"] if edge_basis else r["drift_cm"]
             r["basis"] = ("diaphragm edge incl. accidental torsion (Type 1 TIR %.2f &gt; 1.2, SDC %s: &sect;12.8.6.5)"
@@ -1218,14 +1225,17 @@ def _theta_rows(cfg, runs, d):
     return rows, tmax, beta
 
 
-def rbs_drift_factor(cfg, direction=None):
+def rbs_drift_factor(cfg, direction=None, sf=None):
     """AISC 358-22 sec.5.7 Step 1: elastic drift of an RBS moment frame is computed with the effect of
     the reduced section; in lieu of detailed calculation, multiply gross-section elastic drifts by 1.1
     for flange reductions up to 50% of bbf, interpolating linearly for smaller reductions.
     Delegates to engine3d.rbs_drift_factor when present (the drift GATE uses the same value)."""
     fn = getattr(E, "rbs_drift_factor", None)
     f, why = fn(cfg, direction) if fn is not None else (1.0, "no RBS declared")
-    if f <= 1.0 and _PKG_RBS[0] and not cfg.get("rbs") and cfg.get("rbs_drift_factor") is None:
+    mf_here = True
+    if sf is not None and direction:
+        mf_here = any(x in MF_FAMS or x == "MF?" for x in sf["dirs"].get(direction, []))
+    if f <= 1.0 and mf_here and _PKG_RBS[0] and not cfg.get("rbs") and cfg.get("rbs_drift_factor") is None:
         # the calc package designs RBS connections but the cfg does not declare them: apply 1.1 here and say
         # loudly that the engine drift gate (which reads cfg only) omitted it
         if "only" not in why:
@@ -2225,6 +2235,8 @@ def _connection_demands(cfg, pkg, reX, sf=None):
 def _qa_scorecard(cfg, Fx, reX, eX, eY, runs):
     s = cfg["seis"]; rows = []
     FxX, FxY = _fx_by_dir(Fx) if Fx is not None else (None, None)
+    if runs:
+        FxX, FxY = runs["X"]["F"], runs["Y"]["F"]
     if reX is not None and FxX is not None:
         Rx = sum(r[2][0] for r in reX); base = sum(FxX.values())
         rows.append(["Equilibrium &mdash; |&Sigma;R<sub>x</sub>| = applied base shear", f"{abs(Rx):.0f} vs {base:.0f} kip",
@@ -2629,11 +2641,13 @@ def build_report(name, root=None):
         sf = None; parts.append(f"<p class='note'>[SFRS inventory failed: {_esc(ex)}]</p>")
     if Fx is not None:
         _FxX, _FxY = _fx_by_dir(Fx)
+        try: runs = _lateral_runs(cfg, Fx, sf)
+        except Exception as ex: parts.append(f"<p class='note'>[drift / torsion runs failed: {_esc(ex)}]</p>")
+        if runs is not None:
+            _FxX, _FxY = runs["X"]["F"], runs["Y"]["F"]
         try:
             _, _dX, _drX, reX = _run_case(cfg, "X", _FxX); _, _dY, _drY, reY = _run_case(cfg, "Y", _FxY)
         except Exception as ex: parts.append(f"<p class='note'>[equilibrium run failed: {_esc(ex)}]</p>")
-        try: runs = _lateral_runs(cfg, Fx, sf)
-        except Exception as ex: parts.append(f"<p class='note'>[drift / torsion runs failed: {_esc(ex)}]</p>")
 
     # ============================== Chapter 1 — Design basis & codes ==============================
     parts.append(_chapter(1))
@@ -2833,7 +2847,7 @@ def build_report(name, root=None):
     if Fx is not None and reX is not None:
         Rx = sum(r[2][0] for r in reX); Rz = sum(r[2][2] for r in reX)
         parts.append("<h3>Equilibrium check (seismic X combination)</h3>")
-        parts.append(f"<p>|&Sigma;R<sub>x</sub>| = {abs(Rx):.0f} kip vs applied base shear {sum(Fx.values()):.0f} kip "
+        parts.append(f"<p>|&Sigma;R<sub>x</sub>| = {abs(Rx):.0f} kip vs applied base shear {sum(_FxX.values()):.0f} kip "
                      f"(equal and opposite); &Sigma;R<sub>z</sub> = {abs(Rz):.0f} kip factored gravity delivered to the "
                      "ground. Reactions balance the applied loads in all three axes (load path verified).</p>")
         if eX is not None and eY is not None:

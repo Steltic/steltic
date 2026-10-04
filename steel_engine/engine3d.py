@@ -93,9 +93,9 @@ def _xy_in(cfg, i, j):
 def grid(cfg,k):
     # set of (i,j) present at floor k (k=0 = base footprint = floor1).
     # Priority: cfg['present'] (per-level footprint captured from custom_build on first engine3d.build,
-    # or declared by the agent) > cfg['plan'] callable > full NX x NY rectangle. This keeps areas,
-    # perimeters, masses, wind widths and ELF weights consistent with the ACTUAL framed footprint for
-    # non-rectangular / setback buildings instead of silently assuming the full plate.
+    # or declared by the agent) > cfg['plan'] callable > full NX x NY rectangle. These are COLUMN
+    # positions; the floor plate (areas, perimeters, masses, cladding, wind silhouette, ELF weights) is
+    # floor_bays(), which keeps the bays around an omitted interior column (HR-11).
     NX,NY=cfg["NX"],cfg["NY"]
     kk=1 if k==0 else k
     pr=cfg.get("present")
@@ -260,43 +260,145 @@ def add_beam(tag, n1, n2, sec, releases=None):
     return tag
 
 
+# ---------------------------------------------------------------------------------------------------
+# FLOOR PLATE (HR-11). `present` lists COLUMN positions; the floor/roof plate is a set of BAYS. A bay is
+# in the plate when its 4 corner grid nodes are present -- EXCEPT that a grid node with no column must
+# not punch a hole in the slab:
+#   * cfg['omitted_columns'] = {k: [(i,j),...]} (or a list for every level / f(k,NX,NY)) -- grid nodes
+#     that have NO column but ARE inside the floor plate (long-span transfer, gym, lobby);
+#   * auto: an INTERIOR grid node missing from `present` whose 8 neighbours are all present at that
+#     level is an omitted column (a printed note says so) -- a 2x2-bay hole around one missing node is
+#     an opening only when declared;
+#   * cfg['openings'] = {k: [(i,j),...]} (bay = lower-left node index) -- bays that are genuinely open
+#     (atrium, shaft) even though their corner columns exist;
+#   * cfg['floor_bays'] = {k: [(i,j),...]} -- explicit plate per level, overrides all of the above;
+#   * cfg['auto_omitted_columns'] = False disables the auto rule (old behaviour).
+# All keys optional; with none of them the plate is the old "4 corners present" set except for the
+# interior-isolated-missing-node case, which used to delete 4 bays (Ex16: -3136 ft2, -12 % of W).
+# ---------------------------------------------------------------------------------------------------
+_PLATE_NOTES = set()
+
+def _note_once(msg):
+    if msg not in _PLATE_NOTES:
+        _PLATE_NOTES.add(msg); print("[engine3d] " + msg)
+
+def _per_level(cfg, key, k):
+    """Per-level set of (i,j) tuples from cfg[key]: dict {k: [...]}, callable f(k,NX,NY) or a plain
+    list (same for every level). None when the key is absent / has no entry for level k."""
+    spec = cfg.get(key)
+    if spec is None or spec is False: return None
+    if callable(spec): v = spec(k, cfg["NX"], cfg["NY"])
+    elif isinstance(spec, dict): v = spec.get(k, spec.get(str(k)))
+    else: v = spec
+    return None if v is None else {tuple(p) for p in v}
+
+def _auto_omitted(cfg, k, P):
+    if cfg.get("auto_omitted_columns", True) is False: return set()
+    NX, NY = cfg["NX"], cfg["NY"]; out = set()
+    for i in range(1, NX):
+        for j in range(1, NY):
+            if (i, j) in P: continue
+            if all((i+a, j+b) in P for a in (-1, 0, 1) for b in (-1, 0, 1) if (a, b) != (0, 0)):
+                out.add((i, j))
+                _note_once("level %d: grid node (%d,%d) has no column but all 8 neighbours are framed -> treated "
+                           "as an OMITTED COLUMN; its 4 bays stay in the floor plate (area, W, cladding, wind). "
+                           "Declare cfg['openings'] if those bays are really open." % (k, i, j))
+    return out
+
+def floor_bays(cfg, k):
+    """Set of bays (i,j) (lower-left grid node index, 0<=i<NX, 0<=j<NY) carrying floor/roof plate at
+    level k (k=0 -> level 1). See the FLOOR PLATE note above for the cfg keys (HR-11)."""
+    NX, NY = cfg["NX"], cfg["NY"]; kk = 1 if k == 0 else k
+    fb = _per_level(cfg, "floor_bays", kk)
+    if fb is not None:
+        bays = {b for b in fb if 0 <= b[0] < NX and 0 <= b[1] < NY}
+    else:
+        P = set(grid(cfg, kk))
+        P |= (_per_level(cfg, "omitted_columns", kk) or set())
+        P |= _auto_omitted(cfg, kk, P)
+        bays = {(i, j) for i in range(NX) for j in range(NY)
+                if (i, j) in P and (i+1, j) in P and (i, j+1) in P and (i+1, j+1) in P}
+    op = _per_level(cfg, "openings", kk)
+    if op: bays -= op
+    return bays
+
+def _bay_dims_ft(cfg, i, j):
+    """(dx, dy) of bay (i,j) in ft, honoring xcoords/ycoords (skew does not change the bay area)."""
+    dx = _xy_in(cfg, i+1, j)[0] - _xy_in(cfg, i, j)[0]
+    dy = _xy_in(cfg, i, j+1)[1] - _xy_in(cfg, i, j)[1]
+    return abs(dx)/12.0, abs(dy)/12.0
+
 def nbays(cfg,k):
-    P=grid(cfg,k); n=0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]):
-            if (i,j) in P and (i+1,j) in P and (i,j+1) in P and (i+1,j+1) in P: n+=1
-    return n
+    return len(floor_bays(cfg, k))
 
 def floor_area_ft2(cfg,k):
-    """Framed floor area (ft^2): sum of ACTUAL bay areas (honors non-rectangular footprints via
-    grid() and non-uniform xcoords/ycoords).  Full uniform rectangle reduces to NX*NY*SX*SY."""
-    P=grid(cfg,k); a=0.0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]):
-            if (i,j) in P and (i+1,j) in P and (i,j+1) in P and (i+1,j+1) in P:
-                dx=_xy_in(cfg,i+1,j)[0]-_xy_in(cfg,i,j)[0]
-                dy=_xy_in(cfg,i,j+1)[1]-_xy_in(cfg,i,j)[1]
-                a+=abs(dx*dy)/144.0
+    """Floor-plate area (ft^2) of level k: sum of the bays in floor_bays(cfg,k) (HR-11: an omitted column
+    no longer deletes its surrounding bays; openings are declared with cfg['openings']). Honors
+    non-rectangular footprints and non-uniform xcoords/ycoords; a full uniform rectangle = NX*NY*SX*SY."""
+    a = 0.0
+    for (i, j) in floor_bays(cfg, k):
+        dx, dy = _bay_dims_ft(cfg, i, j); a += dx*dy
     return a
 
 def perim_ft(cfg,k):
-    """Exposed floor-edge length (ft) for cladding: bay edges bordered by exactly ONE framed bay.
-    Handles non-rectangular footprints (L/T/U, notches, setbacks) and non-uniform xcoords/ycoords.
-    A full uniform rectangle reduces to the old 2*(NX*SX + NY*SY) bounding-box value."""
-    P=grid(cfg,k)
-    def framed(i,j):
-        return (0<=i<cfg["NX"] and 0<=j<cfg["NY"] and (i,j) in P and (i+1,j) in P
-                and (i,j+1) in P and (i+1,j+1) in P)
-    per=0.0
-    for i in range(cfg["NX"]):
-        for j in range(cfg["NY"]+1):          # X-running edges between nodes (i,j)-(i+1,j)
-            if framed(i,j-1) != framed(i,j):
-                per+=abs(_xy_in(cfg,i+1,j)[0]-_xy_in(cfg,i,j)[0])/12.0
-    for j in range(cfg["NY"]):
-        for i in range(cfg["NX"]+1):          # Y-running edges between nodes (i,j)-(i,j+1)
-            if framed(i-1,j) != framed(i,j):
-                per+=abs(_xy_in(cfg,i,j+1)[1]-_xy_in(cfg,i,j)[1])/12.0
+    """Exposed floor-edge length (ft) of the level-k plate: bay edges bordered by exactly ONE plate bay.
+    Handles L/T/U plans, notches, setbacks, openings (atrium edges count) and non-uniform grids.
+    A full uniform rectangle reduces to 2*(NX*SX + NY*SY)."""
+    B = floor_bays(cfg, k); per = 0.0
+    for (i, j) in B:
+        dx, dy = _bay_dims_ft(cfg, i, j)
+        if (i, j-1) not in B: per += dx
+        if (i, j+1) not in B: per += dx
+        if (i-1, j) not in B: per += dy
+        if (i+1, j) not in B: per += dy
     return per
+
+# ---------------------------------------------------------------------------------------------------
+# BUILDING VOLUME (bay stacks) -- shared by cladding weight and MWFRS wind. Each plan bay b has a stack
+# of levels whose plate contains it; the enclosed volume of b runs from grade to its top level (plus
+# parapet). An exterior wall exists on an edge of b wherever b is taller than the bay across that edge.
+# Wall height between two consecutive levels of b's stack is shared half/half (bottom half of the
+# lowest storey -> grade). This replaces the old "storey below x level perimeter" tributary, so split
+# levels (Ex13), setbacks and lean-tos get the wall that actually spans to each diaphragm.
+# ---------------------------------------------------------------------------------------------------
+def _stacks(cfg):
+    """{bay: [(k, z_ft), ...] ascending} over all levels, and z (ft) per level."""
+    NF = len(cfg["heights"]); z = [v/12.0 for v in zlevels(cfg)]; st = {}
+    for k in range(1, NF+1):
+        for b in floor_bays(cfg, k):
+            st.setdefault(b, []).append((k, z[k]))
+    return st, z
+
+def _band_split(stack, za, zb):
+    """Split wall segment [za,zb] (ft) carried by a bay with level stack [(k,z),...] into {k: height};
+    key 0 = grade (bottom half of the lowest storey); above the top level -> top level."""
+    out = {}; zs = [s[1] for s in stack]; ks = [s[0] for s in stack]
+    bounds = [zs[0]/2.0] + [(zs[n]+zs[n+1])/2.0 for n in range(len(zs)-1)] + [float("inf")]
+    lo = 0.0; owners = [0] + ks
+    for n, hi in enumerate(bounds):
+        a, b2 = max(za, lo), min(zb, hi)
+        if b2 > a: out[owners[n]] = out.get(owners[n], 0.0) + (b2 - a)
+        lo = hi
+    return out
+
+def clad_areas_ft2(cfg):
+    """{k: exterior wall area (ft^2) tributary to level k} from the bay-stack volume (mid-height
+    tributaries; parapet cfg['wind']['parapet_ft'] adds to the top level). Grade portion excluded."""
+    st, z = _stacks(cfg); NF = len(cfg["heights"]); out = {k: 0.0 for k in range(1, NF+1)}
+    par = float((cfg.get("wind") or {}).get("parapet_ft", 0.0) or 0.0)
+    top = {b: s[-1][1] for b, s in st.items()}
+    for (i, j), s in st.items():
+        dx, dy = _bay_dims_ft(cfg, i, j)
+        for nb, L in (((i, j-1), dx), ((i, j+1), dx), ((i-1, j), dy), ((i+1, j), dy)):
+            lo = top.get(nb, 0.0); hi = top[(i, j)]
+            if nb in top and lo >= hi: continue
+            for k, hgt in _band_split(s, lo, hi + par).items():
+                if k: out[k] += hgt*L
+    return out
+
+def _clad_kip(cfg, k):
+    c = cfg.get("clad", 0.0) or 0.0
+    return c*clad_areas_ft2(cfg).get(k, 0.0)/1000.0 if c else 0.0
 
 def _Dlev(cfg, k, roof):
     """Dead load (psf) at level k: cfg['D_by_level'][k] override, else D_roof (top level) / D_floor.
@@ -318,16 +420,28 @@ def _is_storage(cfg, k):
     lv = cfg.get("storage_levels")
     return bool(lv) and k in {int(i) for i in lv}
 
+def _lvl_val(spec, k):
+    """Per-level scalar from a {k: v} dict (int or str keys); 0.0 when absent."""
+    if not spec: return 0.0
+    v = spec.get(k, spec.get(str(k), 0.0)) if isinstance(spec, dict) else 0.0
+    return float(v or 0.0)
+
 def floor_w(cfg,k):
     """Effective seismic weight of level k (ASCE 7-22 sec.12.7.2): dead + cladding + 25% of the
     floor live where the area is storage (item 1) + 15% of the uniform design snow load where the
-    flat-roof snow load pf exceeds 45 psf (item 4)."""
+    flat-roof snow load pf exceeds 45 psf (item 4) + extra_mass_floors (psf, ALSO gravity dead).
+    Cladding = clad (psf) x exterior wall area tributary to the level by MID-HEIGHT bands of the actual
+    building volume (clad_areas_ft2: half the storey below + half the storey above, true wall heights at
+    split levels / setbacks / lean-tos; the bottom half of the lowest storey goes to grade).
+    Seismic-weight-only inputs (HR-39, never added to gravity): cfg['seismic_mass_only'] = {k: psf}
+    (e.g. the 12.7.2 item-2 partition allowance) and cfg['seismic_weight_kip'] = {k: kip} (lumped
+    equipment / tanks)."""
     NF=len(cfg["heights"]); roof=(k==NF)
     d=_Dlev(cfg,k,roof)
     w=d*floor_area_ft2(cfg,k)/1000.0
-    th=cfg["heights"][k-1]/12.0
-    th=th if not roof else th/2
-    w+=cfg["clad"]*perim_ft(cfg,k)*th/1000.0
+    w+=_clad_kip(cfg,k)
+    w+=_lvl_val(cfg.get("seismic_mass_only"),k)*floor_area_ft2(cfg,k)/1000.0
+    w+=_lvl_val(cfg.get("seismic_weight_kip"),k)
     if roof:
         snow=cfg.get("snow",0.0)
         if snow>45.0:                          # 12.7.2 item 4: 15% of snow ONLY where pf > 45 psf
@@ -349,8 +463,7 @@ def floor_dead(cfg,k):
     NF=len(cfg["heights"]); roof=(k==NF)
     d=_Dlev(cfg,k,roof)
     w=d*floor_area_ft2(cfg,k)/1000.0
-    th=cfg["heights"][k-1]/12.0; th=th if not roof else th/2
-    w+=cfg["clad"]*perim_ft(cfg,k)*th/1000.0
+    w+=_clad_kip(cfg,k)                         # same mid-height wall tributary as floor_w
     w+=cfg.get("extra_mass_floors",{}).get(k,0.0)*floor_area_ft2(cfg,k)/1000.0
     return w
 
@@ -877,20 +990,25 @@ def _model_gate(cfg):
 
 
 def floor_beam_gaps(cfg, transf="Linear"):
-    """Column-line floor-grid beam positions that have NO beam element in the model = the un-modelled
-    gravity girders. Coordinate-based, so it works for the parametric builder AND any custom_build.
+    """Column-line floor-grid beam positions that have NO beam in the model = the un-modelled gravity
+    girders. Coordinate-based, so it works for the parametric builder AND any custom_build.
+    A grid pair counts as modelled when ONE horizontal element joins the two grid nodes OR a CHAIN of
+    horizontal elements joins them through off-grid nodes that lie on the straight segment between
+    them -- a girder subdivided at a chevron / EBF-link / two-storey-X work point or at infill-beam
+    nodes is continuous, not a gap (HR-12). A chain that leaves the line, stops short, or passes
+    through another column-grid node does not count, so a genuinely missing girder is still reported.
     Returns a list of (z,(x1,y1),(x2,y2)); EMPTY means every column-line floor beam is modelled."""
     from collections import defaultdict
     info = build(cfg, transf)
-    coord = {}; modelled = set()
+    coord = {}; adj = defaultdict(set)
     for (et, kind, sec, n1, n2) in info["ele"]:
         for t in (n1, n2):
             if t not in coord:
                 try: coord[t] = ops.nodeCoord(t)
                 except Exception: coord[t] = None
         a, b = coord.get(n1), coord.get(n2)
-        if a and b and abs(a[2]-b[2]) < 1e-6:
-            modelled.add(frozenset((n1, n2)))
+        if a and b and abs(a[2]-b[2]) < 1e-6 and n1 != n2:
+            adj[n1].add(n2); adj[n2].add(n1)
     zmin = min((c[2] for c in coord.values() if c), default=0.0)
     # Build the adjacency grid ONLY from real column-grid nodes (tag == ntag(i,j,k) in range), so
     # legitimate off-grid work points -- brace crossing nodes, beam-subdivision nodes -- do not register
@@ -899,9 +1017,30 @@ def floor_beam_gaps(cfg, transf="Linear"):
     def _isgrid(t):
         k = t // 100000; r = t % 100000; i = r // 100; j = r % 100
         return 0 <= k <= NFc and 0 <= i <= NXc and 0 <= j <= NYc and t == ntag(i, j, k)
+    gridtags = {t for t, c in coord.items() if c and _isgrid(t)}
+    def _on_segment(p, a, b, tol=1e-3):
+        ab = [b[q]-a[q] for q in range(3)]; ap = [p[q]-a[q] for q in range(3)]
+        L2 = sum(v*v for v in ab)
+        if L2 <= 0: return False
+        u = sum(ab[q]*ap[q] for q in range(3))/L2
+        if not (1e-9 < u < 1-1e-9): return False
+        d2 = sum((ap[q]-u*ab[q])**2 for q in range(3))
+        return d2 <= (tol*max(1.0, math.sqrt(L2)))**2
+    def _joined(t1, t2):
+        if t2 in adj[t1]: return True
+        a, b = coord[t1], coord[t2]; seen = {t1}; stack = [t1]
+        while stack:                      # walk the collinear chain through OFF-grid nodes only
+            u = stack.pop()
+            for v in adj[u]:
+                if v == t2: return True
+                if v in seen or v in gridtags or not coord.get(v): continue
+                if _on_segment(coord[v], a, b):
+                    seen.add(v); stack.append(v)
+        return False
     byz = defaultdict(list)
-    for t, c in coord.items():
-        if c and c[2] > zmin + 1e-6 and _isgrid(t):
+    for t in gridtags:
+        c = coord[t]
+        if c[2] > zmin + 1e-6:
             byz[round(c[2], 3)].append((c[0], c[1], t))
     gaps = []
     for z, pts in byz.items():
@@ -911,7 +1050,7 @@ def floor_beam_gaps(cfg, transf="Linear"):
         for (gi, gj), (x, y, t) in at.items():
             for (di, dj) in ((1, 0), (0, 1)):
                 nb = at.get((gi+di, gj+dj))
-                if nb and frozenset((t, nb[2])) not in modelled:
+                if nb and not _joined(t, nb[2]):
                     gaps.append((z, (x, y), (nb[0], nb[1])))
     return gaps
 
@@ -1022,23 +1161,336 @@ def kz_exposure(zft,exp):
     elif exp=="B": zg,al=3280.0,7.5
     else: zg,al=2460.0,9.8
     return 2.41*(z/zg)**(2.0/al)
+
+def _kz_integral(zft, exp):
+    """Exact integral of Kz dz from grade to z (ft*-) for the Table 26.10-1 power law (constant below 15 ft)."""
+    if exp=="D": zg,al=1935.0,11.5
+    elif exp=="B": zg,al=3280.0,7.5
+    else: zg,al=2460.0,9.8
+    e = 2.0/al; k15 = kz_exposure(15.0, exp)
+    if zft <= 15.0: return k15*max(zft, 0.0)
+    return k15*15.0 + 2.41*zg**(-e)*(zft**(1+e) - 15.0**(1+e))/(1+e)
+
+# ASCE 7-22 Table 26.11-1 (customary): alpha_bar, b_bar, c, l (ft), eps_bar, z_min (ft)
+_T2611 = {"B": (1/4.5, 0.47, 0.30, 320.0, 1/3.0, 30.0),
+          "C": (1/6.4, 0.66, 0.20, 500.0, 1/5.0, 15.0),
+          "D": (1/8.0, 0.78, 0.15, 650.0, 1/8.0, 7.0)}
+
+def _gust_flexible(V, exp, n1, beta, h, B, L):
+    """Gust-effect factor Gf for a flexible building, ASCE 7-22 Sec. 26.11.5 Eqs. 26.11-6..-16
+    (customary units: V mph, lengths ft)."""
+    ab, bb, c, l, eb, zmin = _T2611.get(exp, _T2611["C"])
+    zb = max(0.6*h, zmin)
+    Iz = c*(33.0/zb)**(1.0/6.0)                                   # Eq. 26.11-7
+    Lz = l*(zb/33.0)**eb                                          # Eq. 26.11-9
+    Q = math.sqrt(1.0/(1.0 + 0.63*((B + h)/Lz)**0.63))            # Eq. 26.11-8
+    Vz = bb*(zb/33.0)**ab*(88.0/60.0)*V                           # Eq. 26.11-16 (ft/s)
+    N1 = n1*Lz/Vz                                                 # Eq. 26.11-14
+    Rn = 7.47*N1/(1.0 + 10.3*N1)**(5.0/3.0)                       # Eq. 26.11-13
+    def _R(eta): return 1.0 if eta <= 0 else 1.0/eta - (1.0 - math.exp(-2.0*eta))/(2.0*eta**2)   # Eq. 26.11-15
+    Rh = _R(4.6*n1*h/Vz); RB = _R(4.6*n1*B/Vz); RL = _R(15.4*n1*L/Vz)
+    R = math.sqrt(Rn*Rh*RB*(0.53 + 0.47*RL)/beta)                 # Eq. 26.11-12
+    lg = math.sqrt(2.0*math.log(3600.0*n1))
+    gR = lg + 0.577/lg                                            # Eq. 26.11-11
+    gQ = gv = 3.4
+    return 0.925*(1.0 + 1.7*Iz*math.sqrt(gQ**2*Q**2 + gR**2*R**2))/(1.0 + 1.7*gv*Iz)   # Eq. 26.11-10
+
+def _cp_leeward(LB):
+    """Leeward-wall Cp, ASCE 7-22 Fig. 27.3-1 (0-1: -0.5, 2: -0.3, >=4: -0.2, linear between)."""
+    if LB <= 1.0: return -0.5
+    if LB <= 2.0: return -0.5 + 0.2*(LB - 1.0)
+    if LB <= 4.0: return -0.3 + 0.05*(LB - 2.0)
+    return -0.2
+
+# ASCE 7-22 Fig. 27.3-1 roof Cp, wind NORMAL to ridge, theta >= 10 deg, rows h/L = 0.25 / 0.5 / 1.0.
+# _ROOF_WW = the MOST POSITIVE windward value (the one that maximises the horizontal MWFRS force);
+# '0.0*' table entries are the interpolation zeros of note 2. theta = 60 deg -> 0.01*theta.
+_ROOF_TH = (10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 45.0, 60.0)
+_ROOF_WW = {0.25: (-0.18, 0.0, 0.2, 0.3, 0.3, 0.4, 0.4, 0.6),
+            0.5:  (-0.18, -0.18, 0.0, 0.2, 0.2, 0.3, 0.4, 0.6),
+            1.0:  (-0.18, -0.18, -0.18, 0.0, 0.2, 0.2, 0.3, 0.6)}
+_ROOF_LW = {0.25: (-0.3, -0.5, -0.6, -0.6, -0.6, -0.6, -0.6, -0.6),
+            0.5:  (-0.5, -0.5, -0.6, -0.6, -0.6, -0.6, -0.6, -0.6),
+            1.0:  (-0.7, -0.6, -0.6, -0.6, -0.6, -0.6, -0.6, -0.6)}
+
+def _interp(x, xs, ys):
+    if x <= xs[0]: return ys[0]
+    for n in range(len(xs)-1):
+        if x <= xs[n+1]: return ys[n] + (ys[n+1]-ys[n])*(x-xs[n])/(xs[n+1]-xs[n])
+    return ys[-1]
+
+def _roof_cp(table, theta, hL):
+    """Fig. 27.3-1 roof Cp interpolated in theta (theta < 10 deg uses the 10-deg row; theta > 60 uses
+    0.01*theta for the windward table) and in h/L between the 0.25/0.5/1.0 rows."""
+    if table is _ROOF_WW and theta > 60.0: return 0.01*theta
+    th = min(max(theta, 10.0), 60.0)
+    rows = sorted(table); vals = [_interp(th, _ROOF_TH, table[r]) for r in rows]
+    return _interp(min(max(hL, rows[0]), rows[-1]), rows, vals)
+
+def _wind_frame_type(cfg, w):
+    """'mrf' (steel moment frame: Eq. 26.11-3 na = 22.2/h^0.8) or 'other' (Eq. 26.11-4 na = 75/h).
+    cfg['wind']['frame'] overrides; otherwise inferred (braced / dual / shear-wall systems -> 'other',
+    unknown -> 'mrf', the lower and therefore conservative na)."""
+    f = str(w.get("frame", "")).lower()
+    if f: return "mrf" if ("mrf" in f or "moment" in f) else "other"
+    txt = (str(cfg.get("system", "")) + " " + str(cfg.get("arch", ""))).lower()
+    if cfg.get("braces") or cfg.get("brace") or any(t in txt for t in
+            ("brac", "cbf", "ebf", "brb", "spsw", "shear wall", "plate shear", "dual", "core", "truss")):
+        return "other"
+    return "mrf"
+
+def _wind_override(cfg, direction):
+    """Hand MWFRS story forces supplied by the agent (HR-10 override hook). First of:
+    cfg['wind_forces_override'], cfg['wind']['story_forces'], cfg['wind_by_level'] -- each either
+    {'X': {k: kip}, 'Y': {k: kip}} or a callable f(cfg, direction) -> {k: kip}."""
+    NF = len(cfg["heights"])
+    for name, src in (("cfg['wind_forces_override']", cfg.get("wind_forces_override")),
+                      ("cfg['wind']['story_forces']", (cfg.get("wind") or {}).get("story_forces")),
+                      ("cfg['wind_by_level']", cfg.get("wind_by_level"))):
+        if not src: continue
+        v = src(cfg, direction) if callable(src) else src.get(direction, src.get(direction.lower()))
+        if v is None:
+            raise ValueError("%s has no '%s' entry -- give story forces for BOTH wind directions" % (name, direction))
+        out = {k: 0.0 for k in range(1, NF+1)}
+        for kk, F in dict(v).items():
+            k = int(kk)
+            if not 1 <= k <= NF:
+                raise ValueError("%s['%s'] level %r outside 1..%d" % (name, direction, kk, NF))
+            out[k] = float(F)
+        return out, name
+    return None
+
+def wind_detail(cfg, direction):
+    """ASCE 7-22 Ch. 27 directional-procedure MWFRS story forces (kip) for wind along `direction`
+    ('X' = wind blowing along X, force in X) with the full breakdown. Returns a dict with F {k: kip}
+    (the envelope used by wind_forces), the per-level parts and every parameter used.
+
+    Method (HR-10):
+      * qz = 0.00256 Kz Kzt Ke V^2 (Eq. 26.10-1); p = q Kd G Cp (Eq. 27.3-1). Internal pressure
+        (GCpi) acts equally on opposite walls and CANCELS in the net MWFRS story shear, so it is
+        omitted here (it matters for roof uplift / components, which this function does not give).
+      * Windward walls Cp = +0.8 with qz at each height (integrated exactly over the wall);
+        leeward walls Cp(L/B) = -0.5 / -0.3 / -0.2 (L/B <= 1 / 2 / >= 4, Fig. 27.3-1) with qh at the
+        mean roof height h; L, B = plan dimensions parallel / normal to the wind (all levels).
+      * Geometry from the building volume: every plan bay has the stack of levels whose floor plate
+        contains it; in each strip parallel to the wind the FRONT-most bay that reaches a height is the
+        windward wall there and the BACK-most is the leeward wall (projected silhouette: setbacks,
+        podiums, split levels, lean-tos and courtyards handled). Each wall height is shared between
+        the two diaphragms it spans (mid-height bands) and the top band runs to the true roof line
+        (the old code dropped the top half-storey and used the storey below). The bottom half of the
+        lowest storey spans to the foundation and is reported separately as F_base_direct (it is part
+        of the foundation base shear, not of any frame storey shear); set cfg['wind']['ground_band'] =
+        'lowest' to lump it into the lowest level instead (conservative for single-storey frames).
+      * Gable roofs (cfg['wind']['roofs'] = {k: {'eave_ft', 'ridge_ft', 'ridge': 'X'|'Y',
+        'ridge_at' (ft, default plate centre)}}): wind along the ridge loads the triangular gable-end
+        walls; wind normal to the ridge adds the roof-surface horizontal component
+        qh G (Cp_windward - Cp_leeward) x (ridge - eave) (Fig. 27.3-1 roof table, the windward value
+        that maximises shear; never negative, Fig. 27.3-1 note 6). Walls stop at the eave there.
+      * Parapets: cfg['wind']['parapet_ft'] (flat roofs): GCpn = +1.5 windward / -1.0 leeward with qp
+        at the parapet top (Sec. 27.3.4).
+      * G per Sec. 26.11: low-rise (h <= 60 ft and h <= least plan width) or n1 >= 1 Hz -> rigid,
+        G = cfg['wind'].get('G', 0.85). Otherwise FLEXIBLE: Gf by Eq. 26.11-10 with n1 from
+        cfg['wind']['n1'] (or 'n1X'/'n1Y', Hz = 1/T1) else the approximate lower bound na of Sec. 26.11.3
+        (steel MRF 22.2/h^0.8, other 75/h; a loud warning if the Sec. 26.11.2.1 limits are not met),
+        damping cfg['wind']['beta'] (default 0.01). cfg['wind']['Gf'] overrides.
+      * Sec. 27.1.5 minimum: 16 psf x projected wall area + 8 psf x projected roof area, applied
+        level by level; the larger of the two loadings governs each level.
+      * Both senses (wind from -X and from +X) are evaluated; each level takes the larger.
+      * Override hook: cfg['wind_forces_override'] / cfg['wind']['story_forces'] / cfg['wind_by_level']
+        = {'X': {k: kip}, 'Y': {...}} (or f(cfg, direction)) replaces the computation (hand MWFRS).
+      * NOT included (give them by hand / the override if they govern): Fig. 27.3-8 Cases 2-4
+        (eccentric / torsional wind), roof uplift, monoslope / hip / arched roofs.
+    'Cpnet' in old cfgs is ignored (it lumped windward+leeward at one qz)."""
+    w = cfg.get("wind") or {}; NF = len(cfg["heights"])
+    direction = "Y" if str(direction).upper().startswith("Y") else "X"
+    ov = _wind_override(cfg, direction)
+    if ov is not None:
+        return dict(F=ov[0], method="override", source=ov[1], direction=direction, warnings=[])
+    if cfg.get("custom_build") is not None and "present" not in cfg:
+        build(cfg, "Linear")                 # capture the real footprint first (call-order independent)
+    exp = str(w.get("exposure", "C")).upper()[:1]
+    if exp not in "BCD": exp = "C"
+    V = float(w["V"]); Kd = float(w.get("Kd", 0.85))
+    q0 = 0.00256*float(w.get("Kzt", 1.0))*float(w.get("Ke", 1.0))*V**2*Kd    # Eq. 26.10-1 (x Kd of Eq. 27.3-1)
+    par = float(w.get("parapet_ft", 0.0) or 0.0)
+    roofs = {int(k): v for k, v in (w.get("roofs") or {}).items()}
+    lump = str(w.get("ground_band", "base")).lower() == "lowest"
+    st, z = _stacks(cfg)
+    warns = []
+    if not st:
+        raise ValueError("wind_detail: no floor plate at any level (floor_bays empty) -- check cfg['present']")
+    def xedge(i): xc = cfg.get("xcoords"); return (xc[i] if xc else i*cfg["SX"])/12.0
+    def yedge(j): yc = cfg.get("ycoords"); return (yc[j] if yc else j*cfg["SY"])/12.0
+    bays_all = set(st)
+    xs = [xedge(i) for i, j in bays_all] + [xedge(i+1) for i, j in bays_all]
+    ys = [yedge(j) for i, j in bays_all] + [yedge(j+1) for i, j in bays_all]
+    Lx, Ly = max(xs)-min(xs), max(ys)-min(ys)
+    Lw, Bw = (Lx, Ly) if direction == "X" else (Ly, Lx)            # L parallel, B normal to the wind
+    # ---- roof geometry per gable level ----
+    gable = {}
+    for k, r in roofs.items():
+        if not 1 <= k <= NF: continue
+        if str(r.get("type", "gable")).lower() != "gable":
+            warns.append("roof type %r at level %d not supported -- treated as flat; give story forces by "
+                         "override if its roof pressures govern" % (r.get("type"), k)); continue
+        rax = str(r.get("ridge", "X")).upper()[:1]
+        pb = floor_bays(cfg, k)
+        if not pb: continue
+        if rax == "X": lo_, hi_ = min(yedge(j) for i, j in pb), max(yedge(j+1) for i, j in pb)
+        else:          lo_, hi_ = min(xedge(i) for i, j in pb), max(xedge(i+1) for i, j in pb)
+        sr = float(r.get("ridge_at", (lo_+hi_)/2.0))
+        eave, ridge = float(r["eave_ft"]), float(r["ridge_ft"])
+        d_lo, d_hi = max(sr-lo_, 0.0), max(hi_-sr, 0.0)
+        if min(d_lo, d_hi) <= 1e-6:
+            warns.append("level %d: ridge at the plate edge (monoslope) -- the high-side wall above the eave is "
+                         "not modelled; verify by hand" % k)
+        gable[k] = dict(ax=rax, sr=sr, lo=lo_, hi=hi_, eave=eave, ridge=ridge, d_lo=d_lo, d_hi=d_hi)
+    def roof_mean(k):
+        gr = gable.get(k)
+        if not gr: return z[k]
+        dmin = min([d for d in (gr["d_lo"], gr["d_hi"]) if d > 1e-6] or [1.0])
+        th = math.degrees(math.atan2(gr["ridge"]-gr["eave"], dmin))
+        return gr["eave"] if th <= 10.0 else 0.5*(gr["eave"]+gr["ridge"])
+    h = float(w.get("h_ft") or max(roof_mean(s[-1][0]) for s in st.values()))
+    qh = q0*kz_exposure(h, exp)
+    # ---- gust-effect factor (Sec. 26.11) ----
+    least = min(Lx, Ly); n1 = w.get("n1"+direction, w.get("n1")); n1_src = "cfg['wind']['n1']"
+    if w.get("Gf") is not None:
+        G = float(w["Gf"]); rigid = False; n1_src = "cfg['wind']['Gf'] given"
+    elif h <= 60.0 and h <= least:
+        G = float(w.get("G", 0.85)); rigid = True; n1_src = "low-rise (Sec. 26.2) -> rigid permitted (26.11.2)"
+    else:
+        if n1 is None:
+            ft = _wind_frame_type(cfg, w)
+            n1 = 22.2/h**0.8 if ft == "mrf" else 75.0/h            # Eqs. 26.11-3 / 26.11-4
+            n1_src = "approximate na (Sec. 26.11.3, %s)" % ("steel MRF 22.2/h^0.8" if ft == "mrf" else "75/h")
+            Leff = (sum(z[k]*_plate_len(cfg, k, direction) for k in range(1, NF+1))
+                    / max(sum(z[k] for k in range(1, NF+1)), 1e-9))   # Eq. 26.11-1
+            if h > 300.0 or h >= 4.0*Leff:
+                warns.append("Sec. 26.11.2.1 limits not met (h=%.0f ft, Leff=%.0f ft): the approximate na=%.3f Hz is "
+                             "NOT permitted -- set cfg['wind']['n1'] (=1/T1 from the modal analysis) or a "
+                             "rational Gf (26.11.6)" % (h, Leff, n1))
+        n1 = float(n1)
+        if n1 >= 1.0:
+            G = float(w.get("G", 0.85)); rigid = True
+        else:
+            beta = float(w.get("beta", 0.01)); rigid = False
+            G = _gust_flexible(V, exp, n1, beta, h, Bw, Lw)
+            warns.append("FLEXIBLE building (n1=%.3f Hz < 1 Hz, %s): Gf=%.3f by Eq. 26.11-10 (beta=%.3f) replaces "
+                         "G=%.2f" % (n1, n1_src, G, beta, float(w.get("G", 0.85))))
+    LB = Lw/Bw if Bw > 0 else 1.0
+    cpl = _cp_leeward(LB)
+    hL = h/Lw if Lw > 0 else 0.25
+    # ---- strips parallel to the wind, cells along the wind ----
+    NX, NY = cfg["NX"], cfg["NY"]
+    if direction == "X":
+        nstrip, ncell = NY, NX
+        cellbay = lambda s_, c_: (c_, s_)
+        strip_rng = lambda s_: (yedge(s_), yedge(s_+1))
+    else:
+        nstrip, ncell = NX, NY
+        cellbay = lambda s_, c_: (s_, c_)
+        strip_rng = lambda s_: (xedge(s_), xedge(s_+1))
+    along = [k for k, g in gable.items() if (g["ax"] == direction)]       # ridge parallel to the wind
+    normal = [k for k, g in gable.items() if (g["ax"] != direction)]
+    nsub = 16 if along else 1
+    zero = lambda: {k: 0.0 for k in range(1, NF+1)}
+    res = {}
+    for sense in (+1, -1):
+        Fw, Fl, Fp, Fr, Amin, roofA = zero(), zero(), zero(), zero(), zero(), zero()
+        Fb = {"walls": 0.0, "min": 0.0}                     # wall load straight to the foundation
+        for s_ in range(nstrip):
+            a0, a1 = strip_rng(s_)
+            order = list(range(ncell)) if sense > 0 else list(range(ncell-1, -1, -1))
+            cells = [(cellbay(s_, c_), st.get(cellbay(s_, c_))) for c_ in order]
+            cells = [(b, sk) for b, sk in cells if sk]
+            if not cells: continue
+            for m in range(nsub):
+                u0 = a0 + (a1-a0)*m/nsub; u1 = a0 + (a1-a0)*(m+1)/nsub; um = 0.5*(u0+u1); wd = u1-u0
+                tops = []
+                for b, sk in cells:
+                    kt = sk[-1][0]; gr = gable.get(kt)
+                    if gr is None: T = z[kt]; Tp = T + par
+                    elif gr["ax"] == direction:                      # gable end wall: triangular top
+                        d = gr["d_lo"] if um < gr["sr"] else gr["d_hi"]
+                        f = 1.0 - abs(um - gr["sr"])/d if d > 1e-6 else 0.0
+                        T = Tp = gr["eave"] + (gr["ridge"]-gr["eave"])*max(min(f, 1.0), 0.0)
+                    else:
+                        T = Tp = gr["eave"]                          # eave wall; roof added below
+                    tops.append((b, sk, T, Tp))
+                brk = {0.0}
+                for b, sk, T, Tp in tops:
+                    brk.update((T, Tp)); zs = [x[1] for x in sk]
+                    brk.add(zs[0]/2.0); brk.update((zs[n]+zs[n+1])/2.0 for n in range(len(zs)-1))
+                brk = sorted(x for x in brk if x >= 0.0)
+                for za, zb in zip(brk[:-1], brk[1:]):
+                    if zb - za < 1e-9: continue
+                    zm = 0.5*(za+zb)
+                    hit = [t for t in tops if t[3] >= zb - 1e-9]
+                    if not hit: continue
+                    for role, (b, sk, T, Tp) in (("w", hit[0]), ("l", hit[-1])):
+                        bs = _band_split(sk, za, zb); kk = max(bs, key=bs.get)
+                        if kk == 0: kk = sk[0][0] if lump else 0
+                        if kk == 0:
+                            Fb["walls"] += ((0.8*G*q0*(_kz_integral(zb, exp)-_kz_integral(za, exp))) if role == "w"
+                                            else -cpl*G*qh*(zb-za))*wd/1000.0
+                            if role == "w": Fb["min"] += 16.0*(zb-za)*wd/1000.0
+                            continue
+                        if zm > T + 1e-9:                             # parapet band (Sec. 27.3.4)
+                            qp = q0*kz_exposure(Tp, exp)
+                            Fp[kk] += (1.5 if role == "w" else 1.0)*qp*(zb-za)*wd/1000.0
+                            if role == "w": Amin[kk] += (zb-za)*wd
+                        elif role == "w":
+                            Fw[kk] += 0.8*G*q0*(_kz_integral(zb, exp)-_kz_integral(za, exp))*wd/1000.0
+                            Amin[kk] += (zb-za)*wd
+                        else:
+                            Fl[kk] += -cpl*G*qh*(zb-za)*wd/1000.0
+            # gable roof surfaces, wind normal to the ridge (horizontal component on projected height)
+            for kt in normal:
+                gr = gable[kt]
+                if not any(sk[-1][0] == kt for b, sk in cells): continue
+                if sense > 0: d_up, d_dn = gr["d_lo"], gr["d_hi"]
+                else:         d_up, d_dn = gr["d_hi"], gr["d_lo"]
+                dh = gr["ridge"] - gr["eave"]
+                th_up = math.degrees(math.atan2(dh, d_up)) if d_up > 1e-6 else 0.0
+                th_dn = math.degrees(math.atan2(dh, d_dn)) if d_dn > 1e-6 else 0.0
+                cww = _roof_cp(_ROOF_WW, th_up, hL) if d_up > 1e-6 else 0.0
+                clw = _roof_cp(_ROOF_LW, th_dn, hL) if d_dn > 1e-6 else 0.0
+                Fr[kt] += max(qh*G*(cww - clw)*dh*(a1-a0)/1000.0, 0.0)   # Fig. 27.3-1 note 6: >= 0
+                roofA[kt] += dh*(a1-a0)
+        Fpress = {k: Fw[k]+Fl[k]+Fp[k]+Fr[k] for k in range(1, NF+1)}
+        Fmin = {k: (16.0*Amin[k] + 8.0*roofA[k])/1000.0 for k in range(1, NF+1)}   # Sec. 27.1.5
+        res[sense] = dict(windward=Fw, leeward=Fl, parapet=Fp, roof=Fr, pressure=Fpress, minimum=Fmin,
+                          base_direct=max(Fb["walls"], Fb["min"]),
+                          F={k: max(Fpress[k], Fmin[k]) for k in range(1, NF+1)})
+    F = {k: max(res[+1]["F"][k], res[-1]["F"][k]) for k in range(1, NF+1)}
+    gov = {k: ("27.1.5 minimum" if max(res[+1]["minimum"][k], res[-1]["minimum"][k]) >=
+               max(res[+1]["pressure"][k], res[-1]["pressure"][k]) - 1e-12 and F[k] > 0 else "pressure")
+           for k in range(1, NF+1)}
+    for m in warns: _note_once("WIND " + m)
+    Fbase = max(res[+1]["base_direct"], res[-1]["base_direct"])
+    return dict(F=F, F_base_direct=Fbase, V_foundation=sum(F.values())+Fbase,
+                method="ASCE 7-22 Ch.27 directional", direction=direction, G=G, rigid=rigid,
+                n1=n1, n1_source=n1_src, Cp_windward=0.8, Cp_leeward=cpl, L_over_B=LB, L_ft=Lw, B_ft=Bw,
+                h_ft=h, qh_psf=qh/Kd, Kd=Kd, exposure=exp, governs=gov, senses={"+": res[+1], "-": res[-1]},
+                warnings=warns)
+
+def _plate_len(cfg, k, direction):
+    """Plan length (ft) of the level-k plate parallel to `direction` (Eq. 26.11-1 L_i)."""
+    B = floor_bays(cfg, k)
+    if not B: return 0.0
+    if direction == "X":
+        xc = cfg.get("xcoords"); f = lambda i: (xc[i] if xc else i*cfg["SX"])/12.0
+        return max(f(i+1) for i, j in B) - min(f(i) for i, j in B)
+    yc = cfg.get("ycoords"); f = lambda j: (yc[j] if yc else j*cfg["SY"])/12.0
+    return max(f(j+1) for i, j in B) - min(f(j) for i, j in B)
+
 def wind_forces(cfg,direction):
-    w=cfg["wind"]; exp=w.get("exposure","C"); NF=len(cfg["heights"]); zlev=zlevels(cfg)
-    F={}
-    for k in range(1,NF+1):
-        # projected width of the ACTUAL level-k footprint (real coords: non-rectangular and
-        # non-uniform xcoords/ycoords safe; setback levels get their own, smaller width)
-        P=grid(cfg,k)
-        xs=[_xy_in(cfg,i,j)[0] for i,j in P]; ys=[_xy_in(cfg,i,j)[1] for i,j in P]
-        width=(max(ys)-min(ys))/12 if direction=="X" else (max(xs)-min(xs))/12
-        zmid=(zlev[k-1]+zlev[k])/2/12; Kz=kz_exposure(zmid,exp)
-        # ASCE 7-22 Eq. 26.10-1: qz = 0.00256*Kz*Kzt*Ke*V^2 (Ke optional cfg wind key, default 1.0).
-        # Kd belongs to the design-pressure equation (Eq. 27.3-1); it is multiplied here in the same
-        # product for numerical convenience only.
-        qz=0.00256*Kz*w.get("Kzt",1.0)*w.get("Ke",1.0)*w["V"]**2*w.get("Kd",0.85)
-        p=qz*w.get("G",0.85)*w.get("Cpnet",1.3); h=cfg["heights"][k-1]/12; th=h if k<NF else h/2
-        F[k]=p*width*th/1000.0
-    return F
+    """MWFRS story forces {level k: kip} for wind along `direction` ('X'/'Y'), ASCE 7-22 Ch. 26-27
+    directional procedure -- see wind_detail() for the method, cfg keys and the per-level breakdown
+    (HR-10). An agent's hand MWFRS forces are used verbatim when cfg['wind_forces_override'] /
+    cfg['wind']['story_forces'] / cfg['wind_by_level'] = {'X': {k: kip}, 'Y': {k: kip}} is given."""
+    return wind_detail(cfg, direction)["F"]
 def tors2(k,NX,NY): return [("X",0,0),("X",NX-1,0),("Y",0,0),("Y",0,NY-1)]
 def tors3(k,NX,NY): return [("X",0,0),("X",NX-1,0),("X",0,NY),("X",NX-1,NY),("Y",0,0),("Y",0,NY-1)]
 def weak1(k,NX,NY): return [] if k==1 else perim_braces(k,NX,NY)

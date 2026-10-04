@@ -501,18 +501,39 @@ def _wind_section(cfg):
     if not cfg.get("wind"):
         return "<p class='note'>No wind parameters defined for this building.</p>", None, None
     try:
-        w = cfg["wind"]; FX = E.wind_forces(cfg, "X"); FY = E.wind_forces(cfg, "Y")
+        w = cfg["wind"]; DX = E.wind_detail(cfg, "X"); DY = E.wind_detail(cfg, "Y")
+        FX = E.wind_forces(cfg, "X"); FY = E.wind_forces(cfg, "Y")      # honours any cfg-level patch
         VwX = sum(FX.values()); VwY = sum(FY.values()); NF = len(cfg["heights"])
-        rows = [[k, f"{FX[k]:.1f}", f"{FY[k]:.1f}"] for k in range(1, NF+1)]
-        h = ["<p>ASCE 7-22 §27 MWFRS. Velocity pressure qz = 0.00256·Kz·Kzt·Ke·V² (Eq. 26.10-1); design "
-             "pressure p = qz·Kd·G·Cpnet (Kd applied in the pressure equation per Eq. 27.3-1); story force "
-             "= p × tributary width × tributary height.</p>",
+        rows = [[k, f"{FX.get(k, 0.0):.1f}", f"{FY.get(k, 0.0):.1f}"] for k in range(1, NF+1)]
+        patched = any(abs(FX.get(k, 0.0)-DX["F"].get(k, 0.0)) > 1e-6 or abs(FY.get(k, 0.0)-DY["F"].get(k, 0.0)) > 1e-6
+                      for k in range(1, NF+1))
+        if DX["method"] == "override" or DY["method"] == "override" or patched:
+            src = DX.get("source") or DY.get("source") or "a patched engine3d.wind_forces"
+            h = ["<p>ASCE 7-22 §27 MWFRS story forces supplied by the designer's hand calculation "
+                 f"({_esc(src)}); the engine's directional-procedure forces are not used.</p>",
+                 "<p><b>Story wind forces (kip):</b></p>",
+                 _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
+                 f"<p><b>Wind base shear:</b> X = {VwX:.0f} kip, Y = {VwY:.0f} kip.</p>"]
+            return "".join(h), VwX, VwY
+        def g(D): return f"{D['G']:.3f} ({'rigid' if D['rigid'] else 'flexible, Gf Eq. 26.11-10'})"
+        h = ["<p>ASCE 7-22 Ch. 27 directional procedure (MWFRS). qz = 0.00256·Kz·Kzt·Ke·V² (Eq. 26.10-1); "
+             "p = q·Kd·G·Cp (Eq. 27.3-1): windward walls Cp = +0.8 with qz at each height, leeward walls "
+             "Cp(L/B) per Fig. 27.3-1 with qh at the mean roof height h; internal pressure cancels in the net "
+             "story shear. Wall loads are shared between the two diaphragms each wall spans (mid-height "
+             "bands of the actual building volume); the bottom half of the lowest storey goes straight to "
+             "the foundation. Each level is not less than the §27.1.5 minimum (16 psf walls, 8 psf roof). "
+             "Fig. 27.3-8 Cases 2–4 (eccentric/torsional) and roof uplift are not included here.</p>",
              _table(["Parameter", "Value"], [["Basic wind speed V", f"{w.get('V')} mph"],
-                    ["Exposure", w.get("exposure", "C")],
-                    ["Kd / Ke / G / Cpnet", f"{w.get('Kd',0.85)} / {w.get('Ke',1.0)} / {w.get('G',0.85)} / {w.get('Cpnet',1.3)}"]]),
+                    ["Exposure / Kd / Kzt / Ke", f"{DX['exposure']} / {w.get('Kd',0.85)} / {w.get('Kzt',1.0)} / {w.get('Ke',1.0)}"],
+                    ["Mean roof height h", f"{DX['h_ft']:.1f} ft"],
+                    ["G (X / Y)", f"{g(DX)} / {g(DY)}"],
+                    ["L/B, leeward Cp (X / Y)", f"{DX['L_over_B']:.2f}, {DX['Cp_leeward']:.2f} / {DY['L_over_B']:.2f}, {DY['Cp_leeward']:.2f}"]]),
              "<p><b>Story wind forces (kip):</b></p>",
              _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
-             f"<p><b>Wind base shear:</b> X = {VwX:.0f} kip, Y = {VwY:.0f} kip.</p>"]
+             f"<p><b>Wind base shear (frame):</b> X = {VwX:.0f} kip, Y = {VwY:.0f} kip "
+             f"(plus {DX['F_base_direct']:.0f} / {DY['F_base_direct']:.0f} kip delivered directly to the foundation).</p>"]
+        for m in sorted(set(DX["warnings"]) | set(DY["warnings"])):
+            h.append(f"<p class='note'>Wind note: {_esc(m)}</p>")
         return "".join(h), VwX, VwY
     except Exception as ex:
         return f"<p class='note'>[wind determination failed: {ex}]</p>", None, None
@@ -1046,7 +1067,7 @@ def _gravity_loads_note():
 
 def _wind_cc_note():
     return ("<p class='cnote'>The forces above are the MWFRS (main wind force-resisting system) for the overall "
-            "building (windward + leeward combined via C<sub>p,net</sub>). Components &amp; cladding (C&amp;C) "
+            "building (windward C<sub>p</sub> = 0.8 at q<sub>z</sub> plus leeward C<sub>p</sub>(L/B) at q<sub>h</sub>). Components &amp; cladding (C&amp;C) "
             "pressures &mdash; zone GC<sub>p</sub> of &sect;30 for cladding, fasteners and their supports &mdash; "
             "and across-wind/torsional MWFRS load cases are part of the (delegated) cladding design.</p>")
 

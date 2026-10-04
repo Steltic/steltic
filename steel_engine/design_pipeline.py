@@ -679,7 +679,8 @@ def design(name, outdir=None):
         f.write("# %s - demand summary\n\n" % name)
         _sx, _sy = E.seis_dir(cfg, "X"), E.seis_dir(cfg, "Y")
         f.write("Archetype: %s; %d storeys; system %s; R=%s, Ie=%s.\n\n"
-                % (cfg["arch"], len(cfg["heights"]), "CBF/dual" if cfg.get("braces") else "moment frame",
+                % (cfg.get("arch", ""), len(cfg["heights"]),
+                   cfg.get("system") or "NOT DECLARED (set cfg['system']; HR-26)",
                    _sx["R"] if _sx["R"] == _sy["R"] else "%s (X) / %s (Y)" % (_sx["R"], _sy["R"]),
                    cfg["seis"]["Ie"]))
         f.write("- Load combinations run: **%d** (LRFD, second-order each; %s).\n"

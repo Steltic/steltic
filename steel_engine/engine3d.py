@@ -100,7 +100,9 @@ def grid(cfg,k):
     kk=1 if k==0 else k
     pr=cfg.get("present")
     if pr:
-        P = pr.get(kk, pr.get(str(kk)))
+        # HR-38: a custom_build's own base footprint (present[0]) wins at k=0 -- e.g. columns that start
+        # at a transfer level are absent at the base; only without it does k=0 fall back to level 1
+        P = (pr.get(0, pr.get("0")) if k==0 else None) or pr.get(kk, pr.get(str(kk)))
         if P: return {tuple(p) for p in P}
     f=cfg.get("plan")
     if f is None:
@@ -142,6 +144,8 @@ def build(cfg,transf="Linear"):
     cfg["custom_build"] = f, where f(cfg, transf) builds the model and returns that dict -- see
     engine/example_build.py for a complete worked reference to copy.  When no custom_build is given
     (the built-in B-archetypes and quick self-checks) the model is built by example_build()."""
+    global _BUILD_TRANSF
+    _BUILD_TRANSF = "PDelta" if transf == "PDelta" else "Linear"   # honoured by _ensure_col_transf (HR-38)
     cb = cfg.get("custom_build")
     if cb is not None and "present" not in cfg:
         # PROBE build: run the custom builder once, throw the ops domain away, and capture the
@@ -153,8 +157,11 @@ def build(cfg,transf="Linear"):
             probe = cb(cfg, transf)
             cfg["present"] = {int(kk): {tuple(p) for p in v}
                               for kk, v in (probe.get("present") or {}).items()}
-        except Exception:
+        except Exception as _pex:
             cfg["present"] = None          # don't re-probe every build; fall back to plan/full grid
+            cfg["_probe_error"] = str(_pex)
+            print("[engine3d] WARNING: custom_build probe failed (%s) -- floor areas, masses and wind widths "
+                  "fall back to the plan/full grid until the builder runs cleanly (HR-38)" % _pex)
     _MOMENT_NODES.clear()                  # repopulated by add_beam for THIS build (B3)
     _BEAM_REL.clear(); _COL_DIR.clear()    # repopulated by add_beam/add_column for THIS build (viewer3d)
     if cb is not None:
@@ -202,7 +209,10 @@ def col_transf(strong_dir):
     return 2 if ("X" in d or "E" in d) else 1
 
 
-def _ensure_col_transf(transf="PDelta"):
+_BUILD_TRANSF = "PDelta"
+
+
+def _ensure_col_transf(transf=None):
     """Make sure the engine's STANDARD column/beam geomTransf tags (1,2,3) exist with the correct
     vectors, so add_column/add_beam work even when a custom_build never calls register_col_transf().
     Registers once, right before the first element; a no-op once any element exists. Benign OpenSees
@@ -210,6 +220,7 @@ def _ensure_col_transf(transf="PDelta"):
     if ops.getEleTags():                      # elements already built -> transforms are in place
         return
     import os
+    if transf is None: transf = _BUILD_TRANSF    # the transf build(cfg, transf) was called with (HR-38)
     cT = "PDelta" if transf == "PDelta" else "Linear"
     rows = ((1,1.0,0.0,0.0,cT),(2,0.0,1.0,0.0,cT),(3,0.0,0.0,1.0,"Linear"))
     saved = None
@@ -1426,6 +1437,48 @@ def drift_allowable(cfg, direction=None):
     return dl, False
 
 
+def rbs_drift_factor(cfg, direction=None):
+    """(factor, basis) on ELASTIC drifts of reduced-beam-section moment frames -- AISC 358-22 sec.5.7
+    Step 1: "effective elastic drifts may be calculated by multiplying elastic drifts based on gross beam
+    sections by 1.1 for flange reductions up to 50% of the beam flange width. Linear interpolation may
+    be used for lesser values of beam width reduction."  Inputs (all optional, first match wins):
+      cfg['rbs_drift_factor'] = 1.07 or {'X': 1.1, 'Y': 1.0}   -- explicit factor (never < 1.0);
+      cfg['rbs'] = True | {'flange_reduction': 2c/bbf, or 'c_over_bf': c/bbf, 'dirs': ['X','Y']}
+                   -> 1 + 0.1*min(2c/bbf, 0.5)/0.5 (True / no reduction given -> 50%, i.e. 1.1);
+      'RBS' / 'reduced beam section' named in cfg['system'|'arch'|'connection'|'mf_connection']
+                   -> 1.1 (conservative), only in the directions the text gives the moment frame
+                      (e.g. 'SMF in X') when it says so.
+    Returns (1.0, reason) where no RBS is declared."""
+    import re as _re
+    d=(str(direction).upper() if direction else None)
+    f=cfg.get("rbs_drift_factor")
+    if isinstance(f,dict): f=f.get(d) if d else max(f.values())
+    if f is not None:
+        f=float(f)
+        return (max(f,1.0),"cfg['rbs_drift_factor'] = %.3f%s"%(f," (raised to 1.0)" if f<1.0 else ""))
+    rbs=cfg.get("rbs")
+    if rbs:
+        o=rbs if isinstance(rbs,dict) else {}
+        dirs=[str(x).upper() for x in (o.get("dirs") or ["X","Y"])]
+        if d and d not in dirs: return (1.0,"no RBS frames in %s (cfg['rbs']['dirs'])"%d)
+        red=o.get("flange_reduction")
+        if red is None and o.get("c_over_bf") is not None: red=2.0*float(o["c_over_bf"])
+        if red is None: return (1.1,"cfg['rbs'] with no flange reduction given -> 50% (factor 1.1)")
+        red=float(red)
+        if red>0.5:
+            return (1.0+0.2*red,"flange reduction %.0f%% EXCEEDS the 50%% covered by AISC 358-22 5.7 (c <= 0.25bbf, 5.3) -- "
+                    "factor extrapolated; compute the drift with the reduced section"%(100*red))
+        return (1.0+0.1*red/0.5,"flange reduction 2c/bbf = %.0f%% -> 1 + 0.1 x %.2f/0.50"%(100*red,red))
+    txt=" ".join(str(cfg.get(k) or "") for k in ("system","arch","connection","mf_connection"))
+    if _re.search(r"\bRBS\b|reduced[- ]beam[- ]section",txt,_re.I):
+        mfd=set(m.group(1).upper() for m in _re.finditer(
+            r"(?:SMF|IMF|OMF|moment\s+frame)\w*\W+(?:\([^)]*\)\s*)?(?:in|along)\s+(?:the\s+)?([XY])\b",txt,_re.I))
+        if d and mfd and d not in mfd: return (1.0,"RBS moment frames are in %s only"%"/".join(sorted(mfd)))
+        return (1.1,"'RBS' named in the cfg text without cfg['rbs'] -> 50% flange reduction assumed (factor 1.1); "
+                    "declare cfg['rbs']={'c_over_bf': c/bbf} for the interpolated value")
+    return (1.0,"no RBS declared")
+
+
 def _drift_env(cfg, drifts):
     """Max |story drift| honoring cfg['drift_exempt_stories'] = {story_index(1-based): reason}.
     Declared inter-diaphragm offsets (split-level steps) are excluded from the code story-drift
@@ -1447,15 +1500,21 @@ def seismic_drift(cfg):
     SF = seismic_design_forces(cfg); ts = torsion_summary(cfg); out = {}
     for d in ("X", "Y"):
         P = SF[d]; amp = P["Cd"]/P["Ie"]
-        el = list(ts[d]["drift_elastic"])
-        dd = dict(location=ts[d]["drift_location"], elf=[amp*v for v in el], mrsa=None, Cd=P["Cd"])
-        if P["rs"] is not None:
-            dd["mrsa"] = [amp*v for v in P["rs"]["drift_elastic"]]
+        # AISC 358-22 5.7 Step 1 (HR-22, hr-report): RBS moment frames -- the elastic drift (and so the
+        # design drift, theta's stiffness basis, the gate, the report and the package) is multiplied by
+        # the RBS factor of this direction; dd['rbs'] tells the report it is already applied
+        _rf, _rwhy = rbs_drift_factor(cfg, d)
+        el = [_rf*v for v in ts[d]["drift_elastic"]]
+        rs_el = [_rf*v for v in P["rs"]["drift_elastic"]] if P["rs"] is not None else None
+        dd = dict(location=ts[d]["drift_location"], elf=[amp*v for v in el], mrsa=None, Cd=P["Cd"],
+                  rbs=(_rf, _rwhy))
+        if rs_el is not None:
+            dd["mrsa"] = [amp*v for v in rs_el]
         if SF["basis"] == "MRSA":
-            dd["design"] = dd["mrsa"]; dd["elastic"] = list(P["rs"]["drift_elastic"])
+            dd["design"] = dd["mrsa"]; dd["elastic"] = list(rs_el)
         elif SF["basis"] == "envelope":
             dd["design"] = [max(a, b) for a, b in zip(dd["elf"], dd["mrsa"])]
-            dd["elastic"] = [max(a, b) for a, b in zip(el, P["rs"]["drift_elastic"])]
+            dd["elastic"] = [max(a, b) for a, b in zip(el, rs_el)]
         else:
             dd["design"] = dd["elf"]; dd["elastic"] = el
         dd["max"] = _drift_env(cfg, dd["design"])
@@ -1486,7 +1545,10 @@ def _seismic_gate(cfg, chk, out, nm):
                       "TIR": round(ts["TIR"], 3), "classification": ts["classification"],
                       "Ax_max": ts["Ax_max"], "Ax_X": ts["X"]["Ax"], "Ax_Y": ts["Y"]["Ax"],
                       "drift_location": sd["X"]["location"]}
-    out["edge_drift"] = {d: [round(SF[d]["Cd"]/SF[d]["Ie"]*v, 5) for v in ts[d]["edge_drift"]] for d in ("X", "Y")}
+    out["edge_drift"] = {d: [round(SF[d]["Cd"]/SF[d]["Ie"]*sd[d]["rbs"][0]*v, 5) for v in ts[d]["edge_drift"]]
+                         for d in ("X", "Y")}                    # design edge drift incl. the RBS factor
+    if any(sd[d]["rbs"][0] > 1.0 for d in ("X", "Y")):
+        out["rbs_drift_factor"] = {d: sd[d]["rbs"] for d in ("X", "Y")}
     out["seismic_basis"] = SF["basis"]
     if "RS" in (cfg.get("analyses") or []):
         # 12.9.1.4.1: the design forces actually handed to the demands must reach 100 % of the ELF base
@@ -1533,7 +1595,7 @@ def run(cfg):
         try:
             _rLL,_rTL=beam_serviceability(cfg); chk["beam_deflection"]=(_rLL<1.0 and _rTL<1.0)
         except Exception as _ex:
-            chk["beam_deflection"]=True; out["beam_defl_warning"]=str(_ex)
+            chk["beam_deflection"]=False; out["beam_defl_warning"]=str(_ex)   # HR-28: never pass on an error
     try:
         _th=stability_theta(cfg,SF["X"]["F_elf"],SF["Y"]["F_elf"]); out["theta"]=_th; chk["stability_theta"]=bool(_th["ok"])
     except Exception as _tex:
@@ -1605,24 +1667,85 @@ def _footprint_at(cfg,k,NX,NY):
         except Exception: pass
     return {(i,j) for i in range(NX+1) for j in range(NY+1)}
 
+def _footprint_geometry(cfg,k,fp=None):
+    """Framed-bay geometry of level k (grid-cell resolution, real xcoords/ycoords): bounding-box
+    dimensions, framed area, boundary cutouts (re-entrant notches) with their X/Y extents, and
+    interior holes (diaphragm openings). Cells are bays whose four corner columns are present."""
+    NX,NY=cfg["NX"],cfg["NY"]; fp=fp if fp is not None else _footprint_at(cfg,k,NX,NY)
+    cells={(i,j) for i in range(NX) for j in range(NY)
+           if (i,j) in fp and (i+1,j) in fp and (i,j+1) in fp and (i+1,j+1) in fp}
+    if not cells: return None
+    X=lambda i:_xy_in(cfg,i,0)[0]; Y=lambda j:_xy_in(cfg,0,j)[1]
+    i0=min(i for i,j in cells); i1=max(i for i,j in cells); j0=min(j for i,j in cells); j1=max(j for i,j in cells)
+    Lx=abs(X(i1+1)-X(i0)); Ly=abs(Y(j1+1)-Y(j0))
+    area=lambda cs: sum(abs((X(i+1)-X(i))*(Y(j+1)-Y(j)))/144.0 for i,j in cs)
+    miss={(i,j) for i in range(i0,i1+1) for j in range(j0,j1+1)}-cells
+    comps=[]; seen=set()
+    for c in miss:
+        if c in seen: continue
+        st=[c]; comp=set(); seen.add(c)
+        while st:
+            ci,cj=st.pop(); comp.add((ci,cj))
+            for n in ((ci+1,cj),(ci-1,cj),(ci,cj+1),(ci,cj-1)):
+                if n in miss and n not in seen: seen.add(n); st.append(n)
+        comps.append(comp)
+    cut=[]; holes=[]
+    for comp in comps:
+        ii=[i for i,j in comp]; jj=[j for i,j in comp]
+        edge=min(ii)==i0 or max(ii)==i1 or min(jj)==j0 or max(jj)==j1
+        ex=abs(X(max(ii)+1)-X(min(ii))); ey=abs(Y(max(jj)+1)-Y(min(jj)))
+        (cut if edge else holes).append(dict(cells=len(comp),px=ex,py=ey,rx=ex/Lx if Lx else 0.0,
+                                             ry=ey/Ly if Ly else 0.0,area_ft2=area(comp)))
+    A=area(cells)
+    return dict(Lx=Lx,Ly=Ly,area_ft2=A,cutouts=cut,holes=holes,
+                gross_ft2=A+sum(h["area_ft2"] for h in holes))
+
 def plan_irregularities(cfg):
-    """FIRM ASCE 7-22 Table 12.3-1/-2 plan screen from the ACTUAL per-level footprint (custom_build
-    present-sets OR a plan= fn OR the full grid). Replaces the old 'cfg.get(plan) is None -> rectangular'
-    guess that let L/T/U/cruciform custom_build models be reported as 'uniform rectangular'."""
+    """Boolean flags only (see plan_irregularity_levels for the per-level detail)."""
+    r=plan_irregularity_levels(cfg)
+    return {k:v for k,v in r.items() if k!="levels"}
+
+def plan_irregularity_levels(cfg):
+    """ASCE 7-22 Table 12.3-1 / 12.3-2 geometric screens from the ACTUAL per-level footprint
+    (custom_build present-sets OR a plan= fn OR the full grid), at bay resolution:
+      reentrant -- Type 2: BOTH plan projections beyond a re-entrant corner > 20% of the plan
+                   dimension in that direction (cutout extents vs bounding box); reentrant_any keeps the
+                   old "any notch" flag for information;
+      opening   -- Type 3 (part): interior open area > 25% of the gross enclosed diaphragm area
+                   (interior holes in the bay grid + cfg['diaphragm_openings'] = {level: ft2});
+      setback   -- vertical Type 2 proxy: an adjacent-level footprint dimension ratio > 1.30
+                   (the report evaluates the 130% rule on the SFRS extent itself);
+      nonparallel -- cfg['skew'] (the report also checks the lateral elements' orientation).
+    Split-level buildings: cfg['level_groups'] = [[1,2],[3,4],...] screens the UNION footprint of the
+    engine levels that form one floor (wings at offset elevations); default one group per level.
+    Details per group are in 'levels' (keyed by the first level of the group, with 'group')."""
     NX,NY=cfg["NX"],cfg["NY"]; NF=len(cfg.get("heights",[1]))
     full={(i,j) for i in range(NX+1) for j in range(NY+1)}
-    reentrant=setback=nonrect=False; prev=None
-    for k in range(1,NF+1):
-        fp=_footprint_at(cfg,k,NX,NY)
-        if not fp: continue
-        if fp!=full: nonrect=True
-        xs=[i for i,j in fp]; ys=[j for i,j in fp]
-        bbox={(i,j) for i in range(min(xs),max(xs)+1) for j in range(min(ys),max(ys)+1)}
-        if len(fp)<len(bbox): reentrant=True                 # non-convex footprint => re-entrant / notch
-        if prev is not None and len(fp)<len(prev): setback=True
-        prev=fp
-    return dict(reentrant=reentrant, setback=setback,
-                nonparallel=bool(cfg.get("skew")), nonrect=nonrect)
+    reentrant=reany=setback=nonrect=opening=False; levels={}; prev=None
+    extra=cfg.get("diaphragm_openings") or {}
+    groups=[sorted(int(x) for x in g) for g in (cfg.get("level_groups") or [[k] for k in range(1,NF+1)]) if g]
+    for grp in groups:
+        k=grp[0]; fp=set()
+        for kk in grp: fp|=set(_footprint_at(cfg,kk,NX,NY))
+        if fp and fp!=full: nonrect=True
+        g=_footprint_geometry(cfg,k,fp)
+        if g is None: continue
+        g["group"]=grp
+        worst=max(g["cutouts"],key=lambda c:min(c["rx"],c["ry"]),default=None)
+        g["reentrant"]=bool(worst and worst["rx"]>0.20 and worst["ry"]>0.20)
+        g["worst_cutout"]=worst
+        gh=sum(h["area_ft2"] for h in g["holes"])          # interior bays with no framing
+        hole=gh+sum(float(extra.get(kk,extra.get(str(kk),0.0)) or 0.0) for kk in grp)   # + declared openings in framed bays
+        gross=g["area_ft2"]+gh
+        g["open_ratio"]=hole/gross if gross>0 else 0.0
+        reany=reany or bool(g["cutouts"]); reentrant=reentrant or g["reentrant"]
+        opening=opening or g["open_ratio"]>0.25
+        if prev is not None:
+            for a_,b_ in ((g["Lx"],prev["Lx"]),(g["Ly"],prev["Ly"])):
+                if min(a_,b_)>0 and max(a_,b_)/min(a_,b_)>1.30: setback=True
+        levels[k]=g; prev=g
+    return dict(reentrant=reentrant, setback=setback, nonparallel=bool(cfg.get("skew")), nonrect=nonrect,
+                reentrant_any=reany, opening=opening, levels=levels)
 
 CFG={}
 CFG["B02"]=dict(arch="mid-rise office",NX=6,NY=4,SX=360,SY=360,heights=[162]*6,base="fixed",col="W14X311",beam="W33X130",seis=seis(1.0,0.6,0.6,8,0.028,0.8,1.4),wind=dict(V=115,exposure="C",Kd=0.85,Kzt=1.0,G=0.85,Cpnet=1.3),analyses=["ELF","RS"],**D)
@@ -1638,7 +1761,7 @@ def _ss_beam_defl(sec,L,w):
     """Mid-span deflection (in) of a pinned-pinned beam (2 elements + mid-node) under UDL w
     (k/in), using build()'s exact beam element signature (J,Ix,Iy + transf vecxz=(0,0,1)),
     so the check reflects the model's actual member orientation."""
-    A,Ix,Iy,J=SEC[sec]
+    A,Ix,Iy,J=Ipack(sec)          # case-insensitive + aisc_shapes.csv fallback (HR-28: SEC[sec] raised on 'w24x76')
     ops.wipe(); ops.model("basic","-ndm",3,"-ndf",6)
     ops.node(1,0.,0.,0.); ops.node(2,L/2,0.,0.); ops.node(3,L,0.,0.)
     ops.fix(1,1,1,1,1,0,0); ops.fix(3,0,1,1,1,0,0)
@@ -1672,34 +1795,63 @@ def _service_beam(cfg):
 
 def beam_serviceability(cfg):
     """Floor/roof beam vertical deflection vs IBC/ASCE limits: live L/360, total L/240.
+    Returns (worst_LL, worst_TL) ratios over EVERY distinct beam group -- see
+    beam_serviceability_detail(). A group that cannot be evaluated (unknown section, solver error) or a
+    model that cannot be built returns an INFINITE ratio so the gate FAILS instead of passing silently
+    (HR-28); the detail lists what was skipped and why."""
+    d=beam_serviceability_detail(cfg)
+    return d["LL"],d["TL"]
+
+
+def beam_serviceability_detail(cfg):
+    """Per-group beam deflection check behind the beam_deflection gate (and the report's table).
     Checks EVERY distinct beam GROUP (section x span x level) in the built model -- NOT one
     representative -- so a too-light beam in ANY group, including the roof (different load + often
-    different section) and any heavier-loaded level, is caught. Returns (worst_LL, worst_TL) ratios.
-    FE-based on build()'s beam definition, so a wrong strong/weak-axis assignment fails the ratio."""
-    SX,SY=cfg["SX"],cfg["SY"]; NF=len(cfg["heights"])
+    different section) and any heavier-loaded level, is caught. FE-based on build()'s beam definition,
+    so a wrong strong/weak-axis assignment fails the ratio. Roof live = snow, else Lr (default 20 psf).
+    Returns dict(groups=[{sec,L,trib,roof,dLL,dTL,rLL,rTL}], skipped=[(group, reason)], LL, TL, error)."""
+    SX,SY=cfg["SX"],cfg["SY"]; NF=len(cfg["heights"]); inf=float("inf")
+    out=dict(groups=[],skipped=[],LL=0.0,TL=0.0,error=None,basis="")
     if cfg.get("lean_gravity"):
         # Perimeter MF beams carry spandrel CLADDING only (floor gravity goes to the leaning
         # columns); checking them against a full-bay floor tributary is a false alarm.
+        out["basis"]="lean_gravity: perimeter beams for cladding dead load only"
         bsec=_service_beam(cfg)
-        if not bsec: return 0.0, 0.0
+        if not bsec:
+            out["error"]="no beam section found for the lean_gravity check"; out["LL"]=out["TL"]=inf; return out
         th=max(cfg["heights"])/12.0; wD=cfg.get("clad",0.0)*th/1000.0/12.0
-        L=max(SX,SY); return 0.0, _ss_beam_defl(bsec,L,wD)/(L/240.0)
+        L=max(SX,SY)
+        try:
+            dT=_ss_beam_defl(bsec,L,wD)
+        except Exception as ex:
+            out["skipped"].append(((bsec,L,False),str(ex))); out["LL"]=out["TL"]=inf; return out
+        out["groups"].append(dict(sec=bsec,L=L,trib=0.0,roof=False,dLL=0.0,dTL=dT,rLL=0.0,rTL=dT/(L/240.0)))
+        out["TL"]=dT/(L/240.0); return out
     try:
         info=build(cfg,"Linear")
-    except Exception:
-        return 0.0,0.0
-    # HR-27: deflections from the SOLVED static model on the same tributary basis as the demand model
-    # (static_model.service_deflections: releases, continuity, split/propped spans, per-level D/L, roof
-    # Lr|S|R, cladding); the full-bay simple-span estimate below is only the fallback.
+    except Exception as ex:
+        out["error"]="model build failed: %s"%ex; out["LL"]=out["TL"]=inf; return out
+    # HR-27 (hr-demands): deflections from the SOLVED static model on the same tributary basis as the
+    # demand model (static_model.service_deflections: releases, continuity, split/propped spans, per-level
+    # D/L, roof Lr|S|R, cladding). The full-bay simple-span estimate below is only the fallback, used
+    # (and said so in 'basis') when the solved model fails or returns nothing -- never a silent pass (HR-28).
     try:
         import static_model as _SM
         sd=_SM.service_deflections(cfg)
-    except Exception:
-        sd={}
+    except Exception as ex:
+        sd={}; out["solved_model_error"]=str(ex)
     if sd:
-        rLL=max((v["LL"]/(v["L"]/360.0) for v in sd.values() if v["L"]>0), default=0.0)
-        rTL=max((v["TL"]/(v["L"]/240.0) for v in sd.values() if v["L"]>0), default=0.0)
-        return rLL,rTL
+        out["basis"]="solved static model (static_model.service_deflections): live = L + governing roof branch, total = D + live"
+        wLLr=wTLr=0.0
+        for (k,dd,i,j),v in sorted(sd.items()):
+            L=v["L"]
+            if L<=0: continue
+            rL=v["LL"]/(L/360.0); rT=v["TL"]/(L/240.0)
+            out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=(k>=NF),dLL=v["LL"],dTL=v["TL"],
+                                      rLL=rL,rTL=rT,span=(k,dd,i,j)))
+            wLLr=max(wLLr,rL); wTLr=max(wTLr,rT)
+        out["LL"],out["TL"]=wLLr,wTLr
+        return out
     groups={}                                      # (sec, round(L), roof) -> (L, trib, roof, sec)
     for (t,kind,sec,n1,n2) in info["ele"]:
         if kind!="beam": continue
@@ -1709,21 +1861,27 @@ def beam_serviceability(cfg):
         if L<1e-6: continue
         roof=((n1//100000)>=NF)                     # top framed level = roof load case
         trib=SY if Lx>=Ly else SX                   # full perpendicular bay (matches _beam_grav, conservative)
-        key=(str(sec),round(L,1),roof)
+        key=(str(sec).upper().strip(),round(L,1),roof)
         if key not in groups or trib>groups[key][1]:
             groups[key]=(L,trib,roof,sec)
+    out["basis"]="simple span, full perpendicular bay tributary"
     wLLr=wTLr=0.0
-    for (L,trib,roof,sec) in groups.values():
+    for key,(L,trib,roof,sec) in groups.items():
         try:
             Dp=cfg["D_roof"] if roof else cfg["D_floor"]
             Lp=((cfg.get("snow",0.0) or cfg.get("Lr",20.0)) if roof else cfg["L_floor"])
             wLL=Lp/1000.0/144.0*trib; wTL=(Dp+Lp)/1000.0/144.0*trib
             dLL=_ss_beam_defl(sec,L,wLL) if wLL>0 else 0.0
             dTL=_ss_beam_defl(sec,L,wTL)
-            wLLr=max(wLLr,dLL/(L/360.0)); wTLr=max(wTLr,dTL/(L/240.0))
-        except Exception:
-            continue
-    return wLLr,wTLr
+            rL=dLL/(L/360.0); rT=dTL/(L/240.0)
+            out["groups"].append(dict(sec=sec,L=L,trib=trib,roof=roof,dLL=dLL,dTL=dTL,rLL=rL,rTL=rT))
+            wLLr=max(wLLr,rL); wTLr=max(wTLr,rT)
+        except Exception as ex:
+            out["skipped"].append((key,str(ex)))     # counted and reported -- never a silent pass
+    if out["skipped"]:
+        wLLr=wTLr=inf
+    out["LL"],out["TL"]=wLLr,wTLr
+    return out
 
 def _infer_model(cfg):
     """Infer {bases,joints,gravity} from a cfg's implementation -- used to back-fill the built-in
@@ -2214,6 +2372,9 @@ def run_one(name):
     # serviceability: beam vertical deflection (live L/360, total L/240). Long-span bays
     # framed with trusses/joists (beam_framing="truss") are exempt from the W-shape limit.
     rLL,rTL=beam_serviceability(cfg); extra["beam_defl_LL_ratio"]=rLL; extra["beam_defl_TL_ratio"]=rTL
+    if math.isinf(rLL) or math.isinf(rTL):
+        extra["beam_defl_warning"]=("beam deflection could not be evaluated for every beam group (unknown section or "
+            "failed solve) -- the gate FAILS; see engine3d.beam_serviceability_detail(cfg)['skipped']")
     if cfg.get("beam_framing")=="truss":
         chk["beam_deflection"]=True; extra["beam_framing"]="truss (W-shape deflection check N/A)"
     else:

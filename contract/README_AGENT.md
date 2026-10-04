@@ -72,9 +72,9 @@ apply the cited equation to the demands, compute the capacity and D/C, and write
 - Beams/flexure -> *"flexural strength F2 lateral-torsional buckling"* (compact vs noncompact flange -> F2 vs F3; weak-axis F6; HSS F7/F8)
 - Beam-columns -> *"combined axial and flexure interaction H1-1"*; Shear -> *"shear strength G2 web"*
 - Braces -> A360 E3 + **A341** seismic detailing; Connections -> A360 Ch. J (*"bolt shear J3"*, *"fillet weld J2"*, *"block shear J4"*); prequalified moment connections -> **A358**
-- Also derive the App.8 **B2** amplifier and the AISC 341 **SCWB / Omega0** column check. Cite the version (AISC 360-22).
+- Also derive the App.8 **B2** amplifier where the stability method needs it (see pipeline output for the method applied) and the AISC 341 capacity design of the DECLARED system: **SCWB** for SMF (E3.4a; not required for IMF, E2), the capacity-limited E_cl / expected-strength column and connection forces for braced systems (F2.3, F3.3, F4.3), and the Omega0 cases where 341 permits them. Cite the version (AISC 360-22 / 341-22).
 
-**Phase 4 - Resize, reconcile, finish.** If any D/C > 1.0 or SCWB < 1.0, change the section in the cfg,
+**Phase 4 - Resize, reconcile, finish.** If any D/C > 1.0 or (SMF) SCWB < 1.0, change the section in the cfg,
 re-run the pipeline for fresh demands, and re-derive. When all D/C <= 1.0 and drift/serviceability pass,
 run `consistency.check(name)`, reconcile every flag, re-render with `report.build_report(name)`, and end
 by OFFERING an optimisation pass.
@@ -143,7 +143,7 @@ A model is `validated` when ALL pass: equilibrium (ΣR = Σapplied, both dirs);
 stability (lowest eigenvalue > 0); period (T1 within 0.5×–3× of ASCE 7 Ta — bare
 centreline models run flexible); cumulative effective modal mass ≥ 90% each
 direction; max interstorey drift < the ASCE 7 limit; ELF base shear recovered and
-RS ≥ 0.85·ELF; plus torsion < 1.5 and dual ≥ 25% MF where applicable.
+modal (RS) base shear compared with the ELF V and scaled to 100 % V where smaller (ASCE 7-22 §12.9.1.4.1); plus torsion < 1.5 and dual ≥ 25% MF where applicable.
 
 ---
 
@@ -205,16 +205,17 @@ combinations**, not any single case. Procedure:
 D, L, Lr/S, W (±X, ±Y), and E (seismic: ELF ±X, ±Y, or RS). Record element forces
 for each.
 
-**b) Form the LRFD combinations (§2.3.1 + seismic §2.3.6 / §12.4):**
-1. 1.4D
-2. 1.2D + 1.6L + 0.5(Lr or S)
-3. 1.2D + 1.6(Lr or S) + (L or 0.5W)
-4. 1.2D + 1.0W + L + 0.5(Lr or S)
-5. 0.9D + 1.0W
-6. (1.2 + 0.2·SDS)D + ρ·QE + L + 0.2S   ← seismic
-7. (0.9 − 0.2·SDS)D + ρ·QE              ← seismic
-where E includes the **vertical term Ev = 0.2·SDS·D** and the **redundancy factor ρ**
-(1.0 or 1.3 per §12.3.4), and QE is the horizontal seismic effect.
+**b) Form the LRFD combinations (ASCE 7-22 §2.3.1 + seismic §2.3.6 / §12.4):**
+1a. 1.4D
+2a. 1.2D + 1.6L + (0.5Lr or 0.3S or 0.5R)
+3a. 1.2D + (1.6Lr or 1.0S or 1.6R) + (L or 0.5W)
+4a. 1.2D + 1.0W + L + (0.5Lr or 0.3S or 0.5R)
+5a. 0.9D + 1.0W
+6.  1.2D + Ev + Eh + L + 0.15S  = (1.2 + 0.2·SDS)D + ρ·QE + L + 0.15S   ← seismic
+7.  0.9D − Ev + Eh             = (0.9 − 0.2·SDS)D + ρ·QE              ← seismic
+where **Ev = 0.2·SDS·D**, **Eh = ρ·QE** (ρ = 1.0 or 1.3 per §12.3.4) and QE is the horizontal seismic
+effect; with overstrength, Emh = Ω0·QE (§12.4.3) in 6/7. The L factor in 3a, 4a and 6 may be 0.5 where
+L0 ≤ 100 psf except garages / public assembly (§2.3.1 Exc. 1, §2.3.6 Exc. 1).
 
 **c) Apply the required permutations to each lateral combo:**
 - **Sign:** ±W and ±E (both directions of action).
@@ -254,7 +255,8 @@ brace) via the engine's tagging.
 ### 10b. Member capacities (LRFD φ) — ground each in A360 (query the spec RAG, cite)
 - **Tension:** φtPn = min(0.90·Fy·Ag [D2-1], 0.75·Fu·Ae [D2-2, D3]).
 - **Compression:** φcPn = 0.90·Fn·Ag; Fn from **E3** (E3-2/E3-3) using Lc/r = K·L/r
-  (DAM ⇒ K=1).
+  (K = 1 only when the Direct Analysis Method is applied — C2.2 imperfections + C2.3 stiffness
+  reduction — see the pipeline output for the method actually applied; otherwise Appendix 7).
 - **Flexure:** φbMn = 0.90·Mn; Mn = Mp = Fy·Zx for compact, braced [F2-1], reduced for
   LTB [F2-2/F2-3] using Lb, Cb; check both axes.
 - **Shear:** φvVn per **G2** (= 1.00·0.6·Fy·Aw·Cv1 for rolled I webs).
@@ -275,8 +277,8 @@ column splice, **column base plate/anchorage**, collector/diaphragm chord.
   **seismic** systems, use **capacity-design** demands per A341 (e.g., brace expected
   strength RyFyAg; amplified collector forces with Ω₀) — query `engineering_standards_A341`.
 - **Capacity** per A360 **Chapter J** (bolts J3 + Table J3.2, welds J2 + Table J2.5,
-  block shear J4, bearing/tearout J3.10, base plates J8) and **A358** for prequalified
-  moment connections.
+  block shear J4.3, bearing/tearout J3.11, base plates J8 + anchor rods J9) and **A358** for the
+  prequalified SMF/IMF moment connection (AISC 341-22 E3.6c / E2.6c).
 **Connection schedule columns:**
 `conn_id | location | type | demand(V,N,M) | governing_combo | limit_states | capacity |
 D/C | A360/A358/A341_refs | status`
@@ -287,14 +289,17 @@ D/C | A360/A358/A341_refs | status`
 
 The job is satisfactorily complete when ALL hold:
 1. **Model valid** — every sanity check passes (equilibrium, stability, period band,
-   ≥90% modal mass, base-shear recovery, RS ≥ 0.85 ELF).
+   ≥90% modal mass, base-shear recovery; where MRSA is run, its base shear scaled to 100 % of the
+   ELF V per ASCE 7-22 §12.9.1.4.1 — the 7-16 85 % floor no longer applies).
 2. **Loads complete & checked** — all §2.3 combos formed with ±, 100/30 directional,
    accidental torsion, ρ and Ev included; Cs/V/qz spot-checked by hand.
 3. **Every member D/C ≤ 1.0** under the governing envelope (members that fail were
    resized and re-run; final sections reflected in `model.py` and the schedule).
-4. **Drift OK** — max **design** drift δ = Cd·δ_elastic/Ie (§12.8.6) ≤ ASCE 7 limit
-   (0.020·hsx, or 0.015/0.010 for Risk III/IV) in both directions; stability coefficient
-   θ (or B₂) within §12.8.7.
+4. **Drift OK** — max **design** drift δ = Cd·δ_elastic/Ie (§12.8.6; at the edge for a Type 1
+   torsional irregularity in SDC C-F, §12.8.6.5; ×1.1 for RBS moment frames, AISC 358-22 §5.7) ≤ ASCE 7
+   limit (0.020·hsx, or 0.015/0.010 for Risk III/IV; ÷ρ for moment-frame-only SFRS in SDC D-F,
+   §12.12.1.1) in both directions; stability coefficient θ ≤ θmax = 0.5/(βCd) ≤ 0.25 (not less than 0.10)
+   in both directions (§12.8.7).
 5. **Irregularities addressed** — torsional/vertical irregularities identified, and
    the required amplifications/restrictions applied (or the building confirmed regular).
 6. **System rules met** — for seismic systems, R/ρ/height limits and detailing per
@@ -338,7 +343,8 @@ nonlinear handling -- no superposition), **envelopes the per-member DEMANDS** (P
 combo), writes the demand package, and builds the report scaffold.
 
 It computes **NO AISC 360 capacity.** There is no coded E3/D2/F2-F6/G2/H1, no App.8 B2, and no
-AISC 341 SCWB/Omega0 anywhere in this repo. For **every** governing member and connection, the B2
+AISC 341 SCWB check anywhere in this repo (the Ω0 column combinations — and the capacity-limited E_cl
+cases where the pipeline generates them, see pipeline output — are DEMANDS only). For **every** governing member and connection, the B2
 amplifier, and the seismic capacity-design check, **you** query the AISC 360 / 341 RAG, select the
 governing limit state, implement the exact equation (phi, limits, clause), compute the capacity and
 D/C, cite the Section + equation, and write `limit_state` / `cited` / `capacity` / `DC` into

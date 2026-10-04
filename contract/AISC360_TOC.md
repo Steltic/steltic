@@ -9,10 +9,14 @@ D, E, F, G, H; connections are J; serviceability is L; stability is C + App. 7/8
 ## Chapters
 - **A — General Provisions** (A1 scope, A2 referenced standards, A3 material, A4 drawings)
 - **B — Design Requirements** — B1 general; B2 loads & load combinations; B3 design basis
-  (B3.1 LRFD, φRn ≥ Ru; B3.2 ASD); **B4 member properties** (B4.1 classification of elements:
+  (B3.1 LRFD, φRn ≥ Ru; B3.2 ASD; **B3.10 design for ponding** — moved here from the former
+  Appendix 2); **B4 member properties** (B4.1 classification of elements:
   compact / noncompact / slender, width-to-thickness λ, λp, λr; Tables B4.1a/B4.1b)
-- **C — Design for Stability** — C1 general; C2 required strengths; **C3 Direct Analysis
-  Method** (reduced stiffness 0.8τb, notional loads)
+- **C — Design for Stability** — **C1 general stability requirements** (the Direct Analysis
+  Method is the C1–C3 procedure); **C2 calculation of required strengths** (C2.1 general analysis
+  requirements; C2.2 initial imperfections — C2.2a direct modeling, **C2.2b notional loads**;
+  **C2.3 adjustments to stiffness**, 0.8τb·EI and 0.8·EA); **C3 calculation of available
+  strengths** (K = 1 for members designed by the DAM)
 - **D — Tension** — D1 slenderness; **D2 tensile strength** (yielding D2-1 = Fy·Ag, φt=0.90;
   rupture D2-2 = Fu·Ae, φt=0.75); D3 effective net area Ae; D4 built-up; D5 pin-connected; D6 eyebars
 - **E — Compression** — E1 general; E2 effective length (KL/r); **E3 flexural buckling**
@@ -32,17 +36,24 @@ D, E, F, G, H; connections are J; serviceability is L; stability is C + App. 7/8
   combined torsion; H4 rupture with combined forces
 - **I — Composite Members** (I1 general; I2 axial; I3 flexure; I4 shear; I5 combined;
   I6 load transfer; I7 diaphragms/collectors; I8 steel anchors)
-- **J — Connections** — J1 general; J2 welds; J3 bolts (J3.2 min pretension/Table J3.2;
-  J3.6 spacing; J3.7 bearing & tearout); J4 affected elements (J4.1 shear yield/rupture,
-  **J4.3 block shear**); J5 fillers; J6 splices; J7 bearing strength; J8 column bases &
-  anchor rods; J9 stiffeners; J10 flanges/webs with concentrated forces
-- **K — HSS & Box-Section Connections** (K1–K5)
-- **L — Serviceability** — L1 general; L2 camber; **L3 deflections**; **L4 drift**;
-  L5 vibration; L6 wind-induced motion; L7 thermal; L8 connection slip
+- **J — Connections** — J1 general; J2 welds; J3 bolts (J3.1 common bolts; J3.2 high-strength
+  bolts, Table J3.1 min pretension; J3.3 holes; J3.4/J3.5 min spacing & edge distance; J3.6 max
+  spacing & edge distance; **J3.7 tensile & shear strength** (Table J3.2); J3.8 combined tension &
+  shear (bearing-type); J3.9 slip-critical; J3.10 combined tension & shear (slip-critical);
+  **J3.11 bearing & tearout at bolt holes**); J4 affected elements (J4.1 tension, J4.2 shear
+  yield/rupture, **J4.3 block shear**); J5 fillers; J6 splices; J7 bearing strength; **J8 column
+  bases & bearing on concrete**; **J9 anchor rods & embedments**; J10 flanges/webs with
+  concentrated forces (and stiffeners)
+- **K — HSS & Box-Section Connections** (K1 general; K2 concentrated forces on HSS; K3 HSS-to-HSS
+  truss; K4 HSS-to-HSS moment; K5 welds of plates and branches to HSS)
+- **L — Serviceability** — L1 general; **L2 deflections** (incl. camber); **L3 drift**;
+  L4 vibration; L5 wind-induced motion; L6 thermal expansion & contraction; L7 connection slip
 - **M — Fabrication & Erection**;  **N — Quality Control / Quality Assurance**
 
 ## Appendices (NOT primary design clauses)
-1 Design by Advanced Analysis · 2 Ponding · 3 Fatigue · **4 Fire conditions** (elevated-temp;
+1 Design by Advanced Analysis · 2 Design of filled composite members (high strength) — the
+former "Ponding" appendix was removed in 360-22 (ponding is now **B3.10**) · 3 Fatigue ·
+**4 Fire conditions** (elevated-temp;
 do not use for ambient design) · 5 Existing structures · 6 Member stability bracing ·
 **7 Alternative methods for stability (Effective Length Method)** · **8 Approximate
 second-order analysis (B1/B2 amplifiers)**

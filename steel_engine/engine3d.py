@@ -1640,6 +1640,18 @@ def beam_serviceability(cfg):
         info=build(cfg,"Linear")
     except Exception:
         return 0.0,0.0
+    # HR-27: deflections from the SOLVED static model on the same tributary basis as the demand model
+    # (static_model.service_deflections: releases, continuity, split/propped spans, per-level D/L, roof
+    # Lr|S|R, cladding); the full-bay simple-span estimate below is only the fallback.
+    try:
+        import static_model as _SM
+        sd=_SM.service_deflections(cfg)
+    except Exception:
+        sd={}
+    if sd:
+        rLL=max((v["LL"]/(v["L"]/360.0) for v in sd.values() if v["L"]>0), default=0.0)
+        rTL=max((v["TL"]/(v["L"]/240.0) for v in sd.values() if v["L"]>0), default=0.0)
+        return rLL,rTL
     groups={}                                      # (sec, round(L), roof) -> (L, trib, roof, sec)
     for (t,kind,sec,n1,n2) in info["ele"]:
         if kind!="beam": continue

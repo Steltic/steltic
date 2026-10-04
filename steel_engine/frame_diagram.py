@@ -57,7 +57,7 @@ def _accessors(cfg, direction, line="perimeter"):
 
 
 def _key(b):
-    return (b["i"], b["j"], b["k"], b.get("dir"))
+    return (b["i"], b["j"], b["k"], b.get("dir"), b["A"], b["B"])   # A/B: split spans hold several beams
 
 
 def _draw_frame(cfg, acc, lbeams_d, lcols_d, combo, nseg, title):

@@ -800,40 +800,36 @@ def beam_serviceability(cfg):
         info=build(cfg,"Linear")
     except Exception:
         return 0.0,0.0
-    # HR-27: service line loads on the SAME tributary basis as the static demand model (one-way girder
-    # rule per side / declared deck span / two-way; per-level D, L, roof Lr|S|R, cladding), for beams that
-    # are alone on their grid span (static_model.service_loads); others keep the full-bay fallback.
-    ele_list=list(info["ele"])
+    # HR-27: deflections from the SOLVED static model on the same tributary basis as the demand model
+    # (static_model.service_deflections: releases, continuity, split/propped spans, per-level D/L, roof
+    # Lr|S|R, cladding); the full-bay simple-span estimate below is only the fallback.
     try:
         import static_model as _SM
-        svc=_SM.service_loads(cfg)
-        info=build(cfg,"Linear")                     # service_loads rebuilt the domain
+        sd=_SM.service_deflections(cfg)
     except Exception:
-        svc={}
-    groups={}                                      # (sec, round(L), roof) -> (L, wLL, roof, sec, wTL)
-    for (t,kind,sec,n1,n2) in ele_list:
+        sd={}
+    if sd:
+        rLL=max((v["LL"]/(v["L"]/360.0) for v in sd.values() if v["L"]>0), default=0.0)
+        rTL=max((v["TL"]/(v["L"]/240.0) for v in sd.values() if v["L"]>0), default=0.0)
+        return rLL,rTL
+    groups={}                                      # (sec, round(L), roof) -> (L, trib, roof, sec)
+    for (t,kind,sec,n1,n2) in info["ele"]:
         if kind!="beam": continue
         try: c1=ops.nodeCoord(n1); c2=ops.nodeCoord(n2)
         except Exception: continue
         Lx=abs(c1[0]-c2[0]); Ly=abs(c1[1]-c2[1]); L=max(Lx,Ly)
         if L<1e-6: continue
-        sv=svc.get(frozenset((n1,n2)))
-        if sv:
-            L,wD_,wLv_,roof=sv; wLL=wLv_; wTL=wD_+wLv_
-        elif svc:
-            continue                                # sub-element of a split span: not a simple span
-        else:
-            roof=((n1//100000)>=NF)                 # fallback: full perpendicular bay
-            trib=SY if Lx>=Ly else SX
+        roof=((n1//100000)>=NF)                     # top framed level = roof load case
+        trib=SY if Lx>=Ly else SX                   # full perpendicular bay (matches _beam_grav, conservative)
+        key=(str(sec),round(L,1),roof)
+        if key not in groups or trib>groups[key][1]:
+            groups[key]=(L,trib,roof,sec)
+    wLLr=wTLr=0.0
+    for (L,trib,roof,sec) in groups.values():
+        try:
             Dp=cfg["D_roof"] if roof else cfg["D_floor"]
             Lp=((cfg.get("snow",0.0) or cfg.get("Lr",20.0)) if roof else cfg["L_floor"])
             wLL=Lp/1000.0/144.0*trib; wTL=(Dp+Lp)/1000.0/144.0*trib
-        key=(str(sec),round(L,1),roof)
-        if key not in groups or wTL>groups[key][4]:
-            groups[key]=(L,wLL,roof,sec,wTL)
-    wLLr=wTLr=0.0
-    for (L,wLL,roof,sec,wTL) in groups.values():
-        try:
             dLL=_ss_beam_defl(sec,L,wLL) if wLL>0 else 0.0
             dTL=_ss_beam_defl(sec,L,wTL)
             wLLr=max(wLLr,dLL/(L/360.0)); wTLr=max(wTLr,dTL/(L/240.0))

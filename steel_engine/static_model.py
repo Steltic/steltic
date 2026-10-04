@@ -1227,34 +1227,58 @@ def _floor_plist(pcs, par):
     return plist
 
 
-def service_loads(cfg, nseg=2):
-    """Unfactored line loads for the beam deflection gate on the SAME basis as the demand model (HR-27):
-    {frozenset(A, B): (Lp, wD, wLive, roof)} for beams that are alone on their grid span, with w the
-    uniform load giving the same simple-span midspan moment as the tributary loads (one-way girder rule
-    where the deck span is undeclared, the applied one-way / two-way distribution otherwise). Live = floor
-    live + the largest of Lr / S / R on roof bays."""
+def _ss_mid_defl(plist, Lp):
+    """Simple-span midspan deflection x EI of a load list (virtual work, unit load at midspan)."""
+    if not plist:
+        return 0.0
+    xs, M, _vl, _vr = _simple_span(plist, Lp)
+    m = [(x / 2.0 if x <= Lp / 2.0 else (Lp - x) / 2.0) for x in xs]
+    return sum((xs[q + 1] - xs[q]) * 0.5 * (M[q] * m[q] + M[q + 1] * m[q + 1]) for q in range(len(xs) - 1))
+
+
+def service_deflections(cfg, nseg=6):
+    """Beam deflections for the serviceability gate from the SOLVED static model (HR-27): unfactored
+    live (floor L + the governing roof branch Lr / S / R) and total (D + live) on a nominal-stiffness
+    first-order model, so releases, continuity, propping by braces and split spans are real. Per grid
+    span: max |vertical displacement - chord between the span's end nodes|; where the deck span is
+    undeclared the value is scaled by the simple-span deflection ratio (half-bay girder-rule load /
+    analysed load) on that span (conservative for the non-girder direction; declare deck_span).
+    Returns {(k, dir, i, j): dict(L=Lp, LL=in, TL=in, sec=section)}."""
     model = build_static(cfg, "Linear", nseg)
-    zero = RoofFactors()
-    pD = _case_pieces(cfg, model, 1.0, 0.0, zero)
-    pL = _case_pieces(cfg, model, 0.0, 1.0, zero)
-    pR = [_case_pieces(cfg, model, 0.0, 0.0, RoofFactors(**{b: 1.0})) for b in ("Lr", "S", "R")]
-    def weq(pcs, par, Lp):
-        pl = _floor_plist(pcs, par)
-        if not pl:
-            return 0.0
-        xs, M, _vl, _vr = _simple_span(pl, Lp)
-        return 8.0 * max(abs(m) for m in M) / (Lp * Lp)
+    modes = bay_modes(cfg, model)
+    NF = model["NF"]
+    tot = {}
+    for b in ("Lr", "S", "R"):
+        tot[b] = sum(roof_psf(cfg, k)[("Lr", "S", "R").index(b)] for k in range(1, NF + 1))
+    rb = max(tot, key=lambda b: tot[b])
+    rf = RoofFactors(**{rb: 1.0})
     out = {}
-    for par, bms in model["by_span"].items():
-        if len(bms) != 1:
+    for name, fD in (("LL", 0.0), ("TL", 1.0)):
+        _reset(); ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        g = apply_case_gravity(cfg, model, fD, 1.0, rf, modes=modes)
+        if _solve() != 0:
             continue
-        bm = bms[0]; Lp = bm["Lp"]
-        k, d, i, j = par
-        sides = [(k, i, jj) for jj in (j - 1, j)] if d == "X" else [(k, ii, j) for ii in (i - 1, i)]
-        roof = any(model["bays"].get(sd, {}).get("roof") for sd in sides)
-        wD = weq(pD, par, Lp)
-        wLv = weq(pL, par, Lp) + max(weq(p, par, Lp) for p in pR)
-        out[frozenset((bm["A"], bm["B"]))] = (Lp, wD, wLv, roof)
+        pcs = g["pieces"]
+        for par, bms in model["by_span"].items():
+            k, d, i, j = par
+            A, B, _xa, _ya, _xb, _yb, Lp = model["spans"][k][(d, i, j)]
+            zA = ops.nodeDisp(A, 3); zB = ops.nodeDisp(B, 3)
+            dmax = 0.0
+            for bm in bms:
+                n = len(bm["nodes"]) - 1
+                for q, nd in enumerate(bm["nodes"]):
+                    sp = bm["sA"] + (bm["sB"] - bm["sA"]) * q / max(n, 1)
+                    chord = zA + (zB - zA) * sp / Lp
+                    dmax = max(dmax, abs(ops.nodeDisp(nd, 3) - chord))
+            lam = 1.0
+            sides = [(k, i, jj) for jj in (j - 1, j)] if d == "X" else [(k, ii, j) for ii in (i - 1, i)]
+            if any(modes.get(sd, ("",))[0] == "default" for sd in sides):
+                dg = _ss_mid_defl(_floor_plist(pcs, par), Lp)
+                da = _ss_mid_defl(pcs["span"].get(par, []), Lp)
+                if da > 1e-12 and dg > da:
+                    lam = dg / da                  # simple-span deflection ratio girder rule / analysed
+            e = out.setdefault(par, dict(L=Lp, LL=0.0, TL=0.0, sec=bms[0].get("sec")))
+            e[name] = dmax * lam
     return out
 
 

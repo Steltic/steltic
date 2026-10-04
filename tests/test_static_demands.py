@@ -386,3 +386,18 @@ def test_ocbf_v_beam_unbalanced_load_f1_4a():
     assert env[beam]["Mz"] == pytest.approx(Pu * 360.0 / 4.0, rel=0.02)
     other = [fs for fs, kv in kinds.items() if kv[0] == "beam" and 180000 not in fs]
     assert all(env.get(fs, {}).get("Mz", 0.0) == 0.0 for fs in other)     # only the V-braced beam
+
+
+def test_service_deflection_from_solved_model():
+    # deck spans X, no infill: each Y edge beam carries p * SX/2 -> 5 w L^4 / (384 E I), simple span
+    cfg = _cfg(NX=1, NY=1, SX=360.0, SY=300.0, heights=[144.0], D_roof=50.0, Lr=20.0,
+               floor_system="one-way", deck_span="X")
+    sd = SM.service_deflections(cfg)
+    Ix = E.Ipack("W24X76")[1]
+    for (k, d, i, j), v in sd.items():
+        if d != "Y":
+            continue
+        wT = (50.0 + 20.0) * 180.0 / 144000.0; wL = 20.0 * 180.0 / 144000.0
+        assert v["TL"] == pytest.approx(5 * wT * 300.0 ** 4 / (384 * E.E * Ix), rel=0.02)
+        assert v["LL"] == pytest.approx(5 * wL * 300.0 ** 4 / (384 * E.E * Ix), rel=0.02)
+    assert SM._ss_mid_defl([(("uni", 1.0), "")], 480.0) == pytest.approx(5 * 480.0 ** 4 / 384, rel=1e-4)

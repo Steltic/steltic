@@ -662,6 +662,10 @@ def run(cfg):
             _rLL,_rTL=beam_serviceability(cfg); chk["beam_deflection"]=(_rLL<1.0 and _rTL<1.0)
         except Exception as _ex:
             chk["beam_deflection"]=True; out["beam_defl_warning"]=str(_ex)
+    try:
+        _th=stability_theta(cfg,Fx,Fx); out["theta"]=_th; chk["stability_theta"]=bool(_th["ok"])
+    except Exception as _tex:
+        out["theta"]={"error":str(_tex)}; chk["stability_theta"]=False
     out["checks"]=chk; out["all"]=all(chk.values())
     return out
 
@@ -870,11 +874,304 @@ def _model_gate(cfg):
                 probs.append("arch says LEANING gravity but you declared gravity='%s' on an all-framed model" % gravity)
             elif "perimeter" in arch and "frame" in arch and "mixed" not in bases and "lean" not in gravity:
                 probs.append("arch says a PERIMETER frame (interior leans on mixed bases) but the model is uniform all-rigid -- use a custom_build")
+    # HR-21: the BUILT model (custom_build included) must implement the declaration -- column-base
+    # fixities, beam end releases (add_beam) and leaning columns are read from the OpenSees domain
+    _bnotes = []
+    try:
+        _b = built_scheme(cfg)
+        probs += _built_mismatch(decl, _b)
+        _bnotes = _b["notes"]
+    except Exception as _ex:
+        probs.append("the built model could not be inspected (%s) -- model_consistent cannot be verified" % _ex)
     if probs:
         return True, False, ("MODEL does not match its declaration / system: " + "; ".join(probs)
-                             + ". Fix the cfg (or use a custom_build) and re-run BEFORE delivering.")
+                             + ". Fix the cfg / custom_build (or the declaration) and re-run BEFORE delivering.")
+    if _bnotes:
+        return True, True, "model declaration verified where possible; " + "; ".join(_bnotes)
     return True, True, None
 
+
+# ---------------------------------------------------------------------------------------------
+# HR-21: verify the DECLARED scheme against the BUILT model (custom_build included)
+# ---------------------------------------------------------------------------------------------
+def built_scheme(cfg, transf="Linear"):
+    """Classify the model build() ACTUALLY makes (bases from the column-base node fixities,
+    joints from the beam end releases add_beam recorded, gravity from columns with no rigid beam
+    and no brace at either end). Returns dict(bases, joints, gravity_leaning_cols, counts, notes);
+    'bases'/'joints' are 'fixed'|'pinned'|'mixed'|'spring'|'unverified' / 'rigid'|'pinned'|'mixed'|
+    'unverified'. Works for the parametric builder AND any custom_build."""
+    info = build(cfg, transf)
+    ele = info.get("ele", [])
+    coord = {}
+    def _c(n):
+        if n not in coord:
+            try: coord[n] = ops.nodeCoord(n)
+            except Exception: coord[n] = None
+        return coord[n]
+    cols = [e for e in ele if str(e[1]).lower() in ("col", "column")]
+    beams = [e for e in ele if str(e[1]).lower() == "beam"]
+    brace_nodes = set(n for e in ele if str(e[1]).lower() == "brace" for n in (e[3], e[4]))
+    zs = [c[2] for c in (_c(n) for e in cols for n in (e[3], e[4])) if c]
+    notes = []
+    # ---- bases ----
+    bcls = {}
+    if zs:
+        zmin = min(zs)
+        fixed = set(ops.getFixedNodes())
+        for e in cols:
+            for n in (e[3], e[4]):
+                c = _c(n)
+                if not c or abs(c[2] - zmin) > 1e-6 or n in bcls:
+                    continue
+                dofs = set(ops.getFixedDOFs(n)) if n in fixed else set()
+                if {1, 2, 3, 4, 5} <= dofs:
+                    bcls[n] = "fixed"
+                elif {1, 2, 3} <= dofs and not ({4, 5} & dofs):
+                    bcls[n] = "pinned"
+                elif dofs:
+                    bcls[n] = "partial"
+                else:
+                    bcls[n] = "spring"          # supported through another element / constraint
+    kinds = set(bcls.values())
+    bases = ("unverified" if not kinds else kinds.pop() if len(kinds) == 1 else "mixed")
+    # ---- joints ----
+    rel = info.get("beam_rel") or {}
+    known = [rel[e[0]][0] for e in beams if e[0] in rel]
+    unknown = len(beams) - len(known)
+    rigid = sum(1 for r in known if r in ("none", None))
+    pinned = sum(1 for r in known if r == "both")
+    partial = len(known) - rigid - pinned
+    if not known:
+        joints = "unverified"
+    elif rigid == len(known):
+        joints = "rigid"
+    elif pinned == len(known):
+        joints = "pinned"
+    else:
+        joints = "mixed"
+    if unknown:
+        notes.append("%d of %d beams were not built with engine3d.add_beam, so their end releases are "
+                     "NOT verifiable" % (unknown, len(beams)))
+    # ---- gravity: columns with no rigid beam and no brace at either end lean ----
+    mn = info.get("moment_nodes") or set()
+    leaning = sum(1 for e in cols if not ({e[3], e[4]} & mn) and not ({e[3], e[4]} & brace_nodes))
+    return dict(bases=bases, joints=joints, gravity_leaning_cols=leaning, unknown_beams=unknown,
+                counts=dict(base_nodes={k: sum(1 for v in bcls.values() if v == k) for k in set(bcls.values())},
+                            beams=dict(rigid=rigid, pinned=pinned, one_end=partial, unverified=unknown),
+                            columns=len(cols)), notes=notes)
+
+
+def _built_mismatch(decl, b):
+    """Problems where the declared {'bases','joints','gravity'} contradicts built_scheme() b."""
+    probs = []
+    bases = str(decl.get("bases", "")).lower(); joints = str(decl.get("joints", "")).lower()
+    gravity = str(decl.get("gravity", "")).lower()
+    bc = b["counts"]["base_nodes"]; jc = b["counts"]["beams"]
+    if b["bases"] != "unverified":
+        if "mixed" in bases and b["bases"] in ("fixed", "pinned"):
+            probs.append("bases='mixed' but EVERY built column base is %s (%s)" % (b["bases"], bc))
+        elif "fixed" in bases and "mixed" not in bases and b["bases"] != "fixed":
+            probs.append("bases='fixed' but the built column bases are %s (%s)" % (b["bases"], bc))
+        elif "pinned" in bases and "mixed" not in bases and b["bases"] != "pinned":
+            probs.append("bases='pinned' but the built column bases are %s (%s)" % (b["bases"], bc))
+    else:
+        probs.append("no column base node could be classified -- the model has no 'col' elements reaching the base")
+    if b["joints"] != "unverified":
+        if joints.startswith("rigid") and (jc["pinned"] or jc["one_end"]):
+            probs.append("joints='rigid' but %d beam(s) are built with end releases" % (jc["pinned"] + jc["one_end"]))
+        elif joints.startswith("pinned") and jc["rigid"]:
+            probs.append("joints='pinned' but %d beam(s) are built RIGID (no release)" % jc["rigid"])
+        elif "mixed" in joints and not b["unknown_beams"] and b["joints"] in ("rigid", "pinned"):
+            probs.append("joints='mixed' but EVERY built beam is %s" % b["joints"])
+    if "lean" in gravity and not b["gravity_leaning_cols"]:
+        probs.append("gravity='leaning' but every built column has a rigid beam or a brace at an end (no leaning column)")
+    return probs
+
+
+# ---------------------------------------------------------------------------------------------
+# HR-16: dual system (ASCE 7-22 12.2.5.1) -- moment-frame share from the ANALYSED model
+# ---------------------------------------------------------------------------------------------
+def _strip_braces_builder(cfg):
+    """A builder that runs the cfg's own builder (custom_build or the parametric one) and then
+    REMOVES every 'brace' element from the built OpenSees domain -- the moment-frame-only model.
+    Nodes left without any element (brace work points) are restrained in the DOFs no constraint
+    carries, so the MF-only model stays solvable."""
+    orig = cfg.get("custom_build")
+    def _mf_build(c, transf="PDelta"):
+        if orig is not None:
+            info = orig(c, transf)
+        else:
+            from example_build import example_build as _eb
+            info = _eb(c, transf)
+        for e in [e for e in info["ele"] if str(e[1]).lower() == "brace"]:
+            try: ops.remove("element", e[0])
+            except Exception: pass
+        info["ele"] = [e for e in info["ele"] if str(e[1]).lower() != "brace"]
+        used = set()
+        for t in ops.getEleTags():
+            used.update(ops.eleNodes(t))
+        retained = set(ops.getRetainedNodes()); constrained = set(ops.getConstrainedNodes())
+        fixed = set(ops.getFixedNodes())
+        for n in ops.getNodeTags():
+            if n in used or n in retained:
+                continue
+            need = {3, 4, 5} if n in constrained else {1, 2, 3, 4, 5, 6}
+            have = set(ops.getFixedDOFs(n)) if n in fixed else set()
+            miss = need - have
+            if miss:
+                ops.fix(n, *[1 if d in miss else 0 for d in range(1, 7)])
+        return info
+    return _mf_build
+
+
+def _story_split(info, cfg, di, brace_tags):
+    """After an analysis in the live domain: per story k, (total, brace) horizontal shear in global
+    direction di (0=X, 1=Y), summed over every element crossing the story mid-height plane."""
+    z = zlevels(cfg); NF = len(cfg["heights"])
+    tot = [0.0] * NF; br = [0.0] * NF
+    for t in ops.getEleTags():
+        nd = ops.eleNodes(t)
+        if len(nd) != 2:
+            continue
+        try:
+            c1, c2 = ops.nodeCoord(nd[0]), ops.nodeCoord(nd[1])
+        except Exception:
+            continue
+        if abs(c1[2] - c2[2]) < 1e-6:
+            continue
+        f = ops.eleForce(t); n = len(f) // 2
+        if n <= di:
+            continue
+        lo = 0 if c1[2] < c2[2] else 1
+        h = f[lo * n + di]
+        zl, zh = min(c1[2], c2[2]), max(c1[2], c2[2])
+        for k in range(1, NF + 1):
+            zm = 0.5 * (z[k - 1] + z[k])
+            if zl < zm < zh:
+                tot[k - 1] += h
+                if t in brace_tags:
+                    br[k - 1] += h
+    return tot, br
+
+
+def dual_mf_share(cfg, FxX, FxY, scale=0.25):
+    """ASCE 7-22 12.2.5.1 for a dual system, from the ANALYSED model (custom_build included):
+      * share[d][k] = moment-frame share of the story-k shear in direction d in the combined model
+        = 1 - (horizontal shear carried by the 'brace' elements) / (total story shear);
+      * MF-only model (every 'brace' element removed) under scale*V (default 25 %) in X and in Y:
+        whether it solves, its drift ratios, and the per-element force envelope due to 0.25E
+        (gravity-only run subtracted) -- the forces the moment frames must be DESIGNED for when a
+        share is below 25 %.
+    Returns a dict; 'min_share' < 0.25 means the MF must be shown (by design) to resist 25 % V."""
+    out = {"scale": scale, "share": {}, "mf_only": {}}
+    info = build(cfg, "PDelta")
+    brace_tags = set(e[0] for e in info["ele"] if str(e[1]).lower() == "brace")
+    out["n_brace_elements"] = len(brace_tags)
+    if not brace_tags:
+        out["error"] = "no 'brace' elements in the built model -- the dual split cannot be computed"
+        out["min_share"] = None
+        return out
+    for d, Fx in (("X", FxX), ("Y", FxY)):
+        static_lateral(cfg, Fx, d)
+        tot, br = _story_split(info, cfg, 0 if d == "X" else 1, brace_tags)
+        out["share"][d] = [round(1.0 - (b / t), 4) if abs(t) > 1e-9 else None for t, b in zip(tot, br)]
+    vals = [v for d in out["share"] for v in out["share"][d] if v is not None]
+    out["min_share"] = min(vals) if vals else None
+    # MF-only model under 25 % of the design forces, both directions (lateral effect only:
+    # the gravity-only run is subtracted from each lateral run)
+    mf = dict(cfg); mf["custom_build"] = _strip_braces_builder(cfg)
+    NF = len(cfg["heights"])
+    try:
+        reg = {e[0]: e for e in build_info_cache(mf)}
+        static_lateral(mf, {k: 0.0 for k in range(1, NF + 1)}, "X")
+        g0 = {t: list(ops.eleResponse(t, "localForce")) for t in reg}
+        env = {}
+        for d, Fx in (("X", FxX), ("Y", FxY)):
+            res = static_lateral(mf, {k: scale * Fx[k] for k in range(1, NF + 1)}, d)
+            out["mf_only"][d] = {"converged": res[0] == 0, "drift_ratio": [round(x, 6) for x in res[2]]}
+            for t, e in reg.items():
+                f = list(ops.eleResponse(t, "localForce")); f0 = g0.get(t) or []
+                if len(f) < 12 or len(f0) != len(f):
+                    continue
+                dl = [a_ - b_ for a_, b_ in zip(f, f0)]
+                N = max(abs(dl[0]), abs(dl[6])); V = max(abs(dl[1]), abs(dl[2]), abs(dl[7]), abs(dl[8]))
+                M = max(abs(dl[4]), abs(dl[5]), abs(dl[10]), abs(dl[11])) / 12.0
+                cur = env.get(t, [e[1], e[2], 0.0, 0.0, 0.0])
+                env[t] = [e[1], e[2], round(max(cur[2], N), 1), round(max(cur[3], V), 1), round(max(cur[4], M), 1)]
+        out["mf_only"]["forces_0.25E"] = {"columns": "tag: [kind, section, N_kip, V_kip, M_kipft] -- envelope of "
+                                          "0.25 x the ELF story forces in X and in Y on the MF-only model "
+                                          "(unfactored E effect; apply rho and the 2.3.6 combinations)",
+                                          "by_element": env}
+    except Exception as ex:
+        out["mf_only"]["error"] = "MF-only analysis failed: %s" % ex
+    return out
+
+
+def build_info_cache(cfg):
+    """Element list of the model currently described by cfg (one build)."""
+    return build(cfg, "PDelta").get("ele", [])
+
+
+# ---------------------------------------------------------------------------------------------
+# HR-14: story stability coefficient theta (ASCE 7-22 12.8.7) -- a sanity GATE, both directions
+# ---------------------------------------------------------------------------------------------
+def _edge_story_drifts(cfg, Fx, direction):
+    """Per-story drift RATIO at the diaphragm edge with the largest drift (12.8.6 / Table 12.3-1a):
+    |CM drift| + |story rotation| x (largest distance from the CM to a diaphragm node), from a
+    P-Delta static_lateral run (gravity included). Returns (static_lateral result, [ratio per story])."""
+    s = static_lateral(cfg, Fx, direction)
+    NF = len(cfg["heights"]); di = 0 if direction == "X" else 1; z = zlevels(cfg)
+    byz = {}
+    for t in ops.getNodeTags():
+        try:
+            c = ops.nodeCoord(t)
+        except Exception:
+            continue
+        byz.setdefault(round(c[2], 3), []).append((t, c))
+    out = []; pd_ = 0.0; pr_ = 0.0
+    for k in range(1, NF + 1):
+        m = mtag(k)
+        u = ops.nodeDisp(m, di + 1); rz = ops.nodeDisp(m, 6); cm = ops.nodeCoord(m)
+        pts = [c for (t, c) in byz.get(round(z[k], 3), []) if t != m]
+        edge = max((abs(c[1 - di] - cm[1 - di]) for c in pts), default=0.0)
+        out.append((abs(u - pd_) + abs(rz - pr_) * edge) / cfg["heights"][k - 1])
+        pd_, pr_ = u, rz
+    return s, out
+
+
+def stability_theta(cfg, FxX, FxY):
+    """theta per story, both directions (ASCE 7-22 12.8.7). Px = 1.0D + 0.5L with L = 0.4L0
+    (0.8L0 where L0 > 100 psf) on the ACTUAL floor area (12.8.6.1; no load factor > 1.0);
+    Delta_xe = the story drift at the diaphragm EDGE with the largest drift (12.8.6), from P-Delta
+    static analyses under the design story forces; theta = Px*Delta_xe/(Vx*hsx) (Eq. 12.8-18 with
+    Delta = Cd*Delta_xe/Ie), divided by (1+theta) because the analysis already includes P-Delta
+    (12.8.7); theta_max = 0.5/(beta*Cd) <= 0.25 with beta = 1.0 (permitted), not less than 0.10
+    (Eq. 12.8-19). Declared drift-exempt inter-diaphragm offsets are skipped."""
+    NF = len(cfg["heights"]); Cd = float(cfg["seis"]["Cd"])
+    tmax = max(min(0.5 / (1.0 * Cd), 0.25), 0.10)
+    dex = set(int(k) for k in (cfg.get("drift_exempt_stories") or {}))
+    P = []
+    for k in range(1, NF + 1):
+        L0 = floor_live(cfg, k)
+        lf = 0.8 if (k < NF and _Llev(cfg, k) > 100.0) else 0.4
+        P.append(floor_dead(cfg, k) + 0.5 * lf * L0)
+    out = {"theta_max": round(tmax, 4), "beta": 1.0,
+           "basis": "ASCE 7-22 12.8.7 Eq. 12.8-18/-19; Px = D + 0.5(0.4L0) (12.8.6.1); largest-edge story drift; "
+                    "/(1+theta) for the P-Delta analysis; drift-exempt offsets skipped"}
+    worst = 0.0
+    for d, Fx in (("X", FxX), ("Y", FxY)):
+        _s, dr = _edge_story_drifts(cfg, Fx, d); vals = []
+        for k in range(1, NF + 1):
+            Vx = sum(Fx[i] for i in range(k, NF + 1)); Px = sum(P[k - 1:])
+            if k in dex or abs(Vx) < 1e-9:
+                vals.append(None); continue
+            th = Px * abs(dr[k - 1]) / abs(Vx)
+            th = th / (1.0 + th)
+            vals.append(round(th, 4)); worst = max(worst, th)
+        out[d] = vals
+    out["max"] = round(worst, 4)
+    out["ok"] = worst <= tmax + 1e-9
+    return out
 
 def floor_beam_gaps(cfg, transf="Linear"):
     """Column-line floor-grid beam positions that have NO beam element in the model = the un-modelled
@@ -971,9 +1268,23 @@ def run_one(name):
             extra["cr_offset_warning"]=("centric-load torsion ratio %.2f > 1.15: the lateral system's centre "
                 "of rigidity is offset from the centre of mass (asymmetric brace/frame layout), inducing "
                 "INHERENT torsion with no accidental eccentricity -- prefer a symmetric layout."%_cr_tr)
-    if cfg.get("dual_check"):
-        mf=copy.deepcopy(cfg); mf["braces"]=None; smf=static_lateral(mf,FxX,"X")
-        frac=sx[1][NF]/smf[1][NF]; extra["MF_fraction"]=frac; chk["dual_25pct"]=frac>=0.25
+    if cfg.get("dual_check") or "dual" in str(cfg.get("system") or "").lower():
+        # HR-16: ASCE 7-22 12.2.5.1 from the ANALYSED model (custom_build braces removed by kind),
+        # story-shear split in BOTH directions + the MF-only model under 25 % of the design forces
+        _du=dual_mf_share(cfg,Fx,Fx); extra["dual"]=_du
+        extra["MF_fraction"]=_du.get("min_share")
+        chk["dual_25pct"]=(_du.get("min_share") is not None and _du["min_share"]>=0.25)
+        if not chk["dual_25pct"]:
+            extra["dual_warning"]=("12.2.5.1: the moment frames carry %s of the story shear in the combined "
+                "analysis (min over stories, X and Y) -- below 25 %%, so design the moment frames for the MF-only "
+                "run at 25 %% of the design forces (extra['dual']['mf_only']) and record it in "
+                "calc_package capacity_design['dual_25pct'] with the D/C values"
+                % ("%.0f%%"%(100*_du["min_share"]) if _du.get("min_share") is not None else "an UNKNOWN share"))
+    # HR-14: story stability coefficient (12.8.7) -- theta <= theta_max is a gate, both directions
+    try:
+        _th=stability_theta(cfg,FxX,FxY); extra["theta"]=_th; chk["stability_theta"]=bool(_th["ok"])
+    except Exception as _tex:
+        extra["theta"]={"error":str(_tex)}; chk["stability_theta"]=False
     if cfg.get("softstorey_check"):
         extra["softstorey_driftratio"]=sx[2][0]/sx[2][1] if sx[2][1] else 0
     # serviceability: beam vertical deflection (live L/360, total L/240). Long-span bays
@@ -999,6 +1310,9 @@ def report(name):
     if r["extra"].get("orientation_warning"): print("   [WARN] ORIENTATION: "+r["extra"]["orientation_warning"])
     if r["extra"].get("model_warning"): print("   [GATE] MODEL: "+r["extra"]["model_warning"])
     if r["extra"].get("incomplete_model"): print("   [GATE] INCOMPLETE MODEL: "+r["extra"]["incomplete_model"])
+    _th=r["extra"].get("theta") or {}
+    if "max" in _th: print("   [INFO] stability theta max %.3f vs theta_max %.3f (12.8.7)"%(_th["max"],_th["theta_max"]))
+    if r["extra"].get("dual_warning"): print("   [GATE] DUAL: "+r["extra"]["dual_warning"])
     print("RESULT:", "ALL PASS" if r["allp"] else "FAIL"); return r
 def _demo():
     import sys

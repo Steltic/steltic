@@ -1068,6 +1068,13 @@ def _lateral_runs(cfg, Fx, sf=None):
     ASCE 7-22 12.8.6.5: where a Type 1 irregularity exists in SDC C-F the design drift is taken at the
     edge; otherwise at the centre of mass. 'basis' records which one the report uses."""
     FxX, FxY = _fx_by_dir(Fx)
+    SF = None
+    if hasattr(E, "seismic_design_forces"):        # per-direction seismic engine: use ITS ELF forces
+        try:
+            SF = E.seismic_design_forces(cfg)
+            FxX, FxY = dict(SF["X"]["F_elf"]), dict(SF["Y"]["F_elf"])
+        except Exception:
+            SF = None
     NF = len(cfg["heights"]); h = cfg["heights"]
     out = {}
     for d, F in (("X", FxX), ("Y", FxY)):
@@ -1122,23 +1129,55 @@ def _lateral_runs(cfg, Fx, sf=None):
             r["drift_edge"] = list(dr); r["tir"] = [1.0] * NF; r["ax"] = [1.0] * NF; r["tor_error"] = str(ex)
         out[d] = r
     exempt = _drift_exempt(cfg)
-    tir_max = max([t for d in ("X", "Y") for s, t in enumerate(out[d]["tir"], 1) if s not in exempt] or [1.0])
     try:
         sdc = E.sdc_of(cfg)
     except Exception:
         sdc = "D"
-    edge_basis = tir_max > 1.2 and sdc in ("C", "D", "E", "F")
+    # the engine's single torsion / design-drift source, when present (per-direction seismic engine):
+    # TIR per story, Ax per level and the 12.8.6.5 drift profile come from it, so the report prints the
+    # gate's numbers; otherwise the runs above are used.
+    ts = sd_eng = None
+    if hasattr(E, "torsion_summary") and hasattr(E, "seismic_drift"):
+        try:
+            ts = E.torsion_summary(cfg); sd_eng = E.seismic_drift(cfg)
+        except Exception:
+            ts = sd_eng = None
+    if ts is not None:
+        for d in ("X", "Y"):
+            out[d]["tir"] = [t if t is not None else 1.0 for t in ts[d].get("TIR_story", out[d]["tir"])]
+            out[d]["ax"] = [ts[d]["Ax"].get(k, 1.0) for k in range(1, NF + 1)]
+            out[d]["drift_edge"] = list(ts[d].get("edge_drift", out[d]["drift_edge"]))
+    tir_max = max([t for d in ("X", "Y") for s, t in enumerate(out[d]["tir"], 1) if s not in exempt] or [1.0])
+    edge_basis = (bool(ts["edges"]) if ts is not None else (tir_max > 1.2 and sdc in ("C", "D", "E", "F")))
     for d in ("X", "Y"):
-        f, why = rbs_drift_factor(cfg, d)
-        r = out[d]; r["rbs"] = (f, why)
-        base = r["drift_edge"] if edge_basis else r["drift_cm"]
-        r["basis"] = ("diaphragm edge incl. accidental torsion (Type 1 TIR %.2f &gt; 1.2, SDC %s: &sect;12.8.6.5)"
-                      % (tir_max, sdc)) if edge_basis else "centre of mass (&sect;12.8.6.5; no Type 1 irregularity)"
-        r["dxe"] = [abs(v) * f for v in base]                      # elastic drift ratio at the design-drift location
-        sd = _seis_d(cfg, d); Cd = float(sd.get("Cd", 5.0) or 5.0); Ie = float(sd.get("Ie", 1.0) or 1.0)
+        r = out[d]
+        sdd = _seis_d(cfg, d)
+        if hasattr(E, "seis_dir"):
+            try: sdd = E.seis_dir(cfg, d)
+            except Exception: pass
+        Cd = float(sdd.get("Cd", 5.0) or 5.0); Ie = float(sdd.get("Ie", 1.0) or 1.0)
         r["Cd"], r["Ie"] = Cd, Ie
-        r["design"] = [v * Cd / Ie for v in r["dxe"]]              # Eq. 12.8-16 design drift ratio
-        lim, rho = _drift_limit_d(cfg, d); r["limit"], r["limit_rho"] = lim, rho
+        if sd_eng is not None:
+            e = sd_eng[d]
+            f, why = e.get("rbs") or rbs_drift_factor(cfg, d)
+            pre = "rbs" in e                                       # factor already in the engine's profile
+            r["rbs"] = (f, why)
+            r["basis"] = ("diaphragm edge incl. accidental torsion &times; A<sub>x</sub> (Type 1, SDC %s: &sect;12.8.6.5)" % sdc
+                          if "edge" in str(e.get("location", "")) else "centre of mass (&sect;12.8.6.5)")
+            if e.get("mrsa") is not None:
+                r["basis"] += "; %s of ELF and scaled MRSA (&sect;12.9.1.4)" % ("envelope" if e.get("design") != e.get("elf") else "ELF")
+            r["dxe"] = [abs(v) * (1.0 if pre else f) for v in e["elastic"]]
+            r["design"] = [abs(v) * (1.0 if pre else f) for v in e["design"]]
+            r["limit"], r["limit_rho"] = e["limit"], e["rho_applied"]
+        else:
+            f, why = rbs_drift_factor(cfg, d)
+            r["rbs"] = (f, why)
+            base = r["drift_edge"] if edge_basis else r["drift_cm"]
+            r["basis"] = ("diaphragm edge incl. accidental torsion (Type 1 TIR %.2f &gt; 1.2, SDC %s: &sect;12.8.6.5)"
+                          % (tir_max, sdc)) if edge_basis else "centre of mass (&sect;12.8.6.5; no Type 1 irregularity)"
+            r["dxe"] = [abs(v) * f for v in base]                  # elastic drift ratio at the design-drift location
+            r["design"] = [v * Cd / Ie for v in r["dxe"]]          # Eq. 12.8-16 design drift ratio
+            lim, rho = _drift_limit_d(cfg, d); r["limit"], r["limit_rho"] = lim, rho
         gov = [v for s, v in enumerate(r["design"], 1) if s not in exempt]
         r["design_max"] = max(gov) if gov else max(r["design"])
     out["tir_max"] = tir_max; out["edge_basis"] = edge_basis; out["exempt"] = exempt; out["sdc"] = sdc

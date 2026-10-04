@@ -25,7 +25,10 @@ member type, e.g. `"E3 W-shape column compression flexural buckling Pn worked ex
   II.A-17A conventional single-plate, II.A-18 to a girder web, II.A-19A extended.
 - **Double-angle shear connection:** II.A-1A all-bolted, II.A-2A bolted/welded, II.A-3 welded.
 - **FR moment connection** (the E-W moment frame): II.B-1 bolted flange-plate,
-  II.B-2 welded flange-plate, II.B-3 directly-welded flange (prequalified detailing → A358).
+  II.B-2 welded flange-plate, II.B-3 directly-welded flange. These are AISC 360 Ch. J designs (an
+  R = 3 frame such as III-1). For an SMF or IMF (R > 3) the connection must be prequalified per
+  **AISC 358-22** (AISC 341-22 E3.6c / E2.6c) — query `engineering_standards_A358`; an OMF uses
+  AISC 341 E1.6.
 - **Brace / gusset connections (CBF):** II.C-1, II.C-2 truss/bracing support connections.
 - **Column base plate:** J.6 base plate bearing on concrete; HSS column base → K.9.
 - **Weld / bolt building blocks (Ch. J):** J.1/J.2 welds, J.3 bolts in tension + shear.

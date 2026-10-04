@@ -25,7 +25,12 @@ gravity member design.
    level. Use **reduced stiffness** (§C2.3: 0.80 on all stiffnesses, 0.80·τ_b on flexural).
    Apply **notional loads** N_i = 0.002·α·Y_i (Eq. C2-1) to gravity-only combinations (§C2.2b).
    Add a pin-ended **leaning column** carrying the tributary gravity so its P-Δ destabilizes
-   the frame. With DAM, design with **K = 1.0** (§C3).
+   the frame. With DAM, design with **K = 1.0** (§C3) — K = 1 is valid ONLY when the analysis
+   really carries the C2.2 imperfections (or notional loads) AND the C2.3 stiffness reduction.
+   In this framework the demand model always applies P-Δ; which stability method the pipeline
+   applied to the demands (DAM reduction / notional loads, or none) is declared by the cfg's
+   stability-method key and printed in the pipeline output — **see pipeline output** before you
+   take K = 1; otherwise use Appendix 7 (effective length) with the B1/B2 of Appendix 8.
 3. **Drift & stability:** take first-order (Δ_1) and second-order (Δ_2) first-story drifts from
    the run; story amplifier **B_2 = Δ_2/Δ_1** (consistent with App. 8 Eq. A-8-6); confirm every
    interstory drift ratio ≤ the ASCE 7 seismic limit (0.020·h_sx).

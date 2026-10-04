@@ -8,9 +8,10 @@ pipeline**, which you MUST run. Do **not** hand-write `report.html`, a `model.py
 analysis/design scripts; drive the framework instead.
 
 > ✅ **TWO THINGS YOU MUST DO AT THE END OF EVERY RUN** (the pipeline reprints this reminder):
-> **(1)** run `consistency.check(name)` and reconcile every flag; **(2)** END your final reply by asking
-> the user whether to run an **optimisation pass** to reduce member sizes (and whether to guide it or
-> proceed undirected). Do not finish the run without BOTH.
+> **(1)** run `consistency.check(name)` and reconcile every flag; **(2)** END your final reply with the
+> **VERBATIM closing note the pipeline prints in its NEXT_STEP** — it already offers the optimisation run,
+> the OFF-by-default figures and a change of system; do not reword it or add other offers (see
+> *Optimisation*). Do not finish the run without BOTH.
 
 > ⛔ **MANDATORY — run the turnkey pipeline; never hand-roll the deliverables.** A previous run hand-wrote a
 > compact `report.html` and bespoke scripts instead of the framework, and had to be redone. Run it straight
@@ -48,8 +49,10 @@ absolute path. If a `read_file` misses, it returns the folder's actual contents 
   - `cfg.py` — the cfg you wrote.
   - `design/` — `calc_package.json` (demands; **you** fill the capacities), `member_demands.md` (summary by
     type), `member_schedule.csv` (per-element demands), `connection_demands.csv`, and `design_report.md`
-    (the demand summary). **Drift, periods and base shear are in `design_report.md` and the report — not a
-    file you need to hunt for.**
+    (a short demand summary: archetype, declared system, number of combinations and members). **Periods,
+    base shear, drift and θ are NOT in `design_report.md`:** they are printed by the pipeline's sanity suite
+    and rendered in `report.html` (Chapter 3 periods/base shear, Chapter 7 θ, Chapter 8 drift, Chapter 13
+    scorecard).
   - `figs/` — the figures the report references; `report.html` — the deliverable; the activity log; `rag/`
     (your saved RAG hits).
 - **The ONE authoritative `calc_package.json` is `design/calc_package.json`** — edit it in place; never copy
@@ -76,7 +79,12 @@ framework; this list tells you what it does so you do not fight it.
 - **Braced systems are auto-detected.** The Omega0 capacity-design column combinations and the AISC 341/358
   grounding now key off *brace elements in the BUILT model* (`engine3d.is_braced`), not just `cfg['braces']`.
   A `custom_build` that builds its own braces is recognised automatically — you do **not** need to also set
-  `cfg['braces']`, and your SCBF/CBF columns WILL get the Omega0 forces. (Setting `cfg['braces']` still works.)
+  `cfg['braces']`. The Omega0 column combinations are generated for the braced columns, but **Omega0 is
+  not by itself the AISC 341 requirement**: SCBF/EBF/BRBF columns, beams and connections need the
+  capacity-limited seismic load effect E_cl (AISC 341-22 F2.3 / F3.3 / F4.3 — the expected brace / link
+  strengths) where it is less than the Omega0 effect only by the 341 exceptions. Where the pipeline
+  generates capacity-limited cases they appear in the combination list (see pipeline output); otherwise
+  derive the E_cl forces yourself and record them in `capacity_design`. (Setting `cfg['braces']` still works.)
 - **`run()` == `run_one()`.** The quick `engine3d.run(cfg)` now reports the SAME gates as the pipeline
   (`model_complete`, `model_declared`/`model_consistent`, `beam_deflection`), so a quick "ALL PASS" can be
   trusted. There is no longer a looser quick check that hides a failing `model_complete`.
@@ -140,11 +148,22 @@ On the FIRST OpenSees error (build, analysis, or `eigen`), STOP retrying blindly
 
 ## DESIGN BASIS -- declare it, do not let the report guess (R1/R2/R3)
 - **System:** set `cfg['system']` to the EXACT SFRS named in the brief ('SPSW','EBF','SCBF','BRBF','SMF','dual SMF+SCBF', ...). NEVER rely on the report inferring it from R (R=8 is EBF or BRBF or dual). `consistency.check` FAILS if cfg['system'] is unset.
-- **Analysis:** for a re-entrant / setback / nonparallel / torsionally-irregular building you MUST run MODAL RESPONSE SPECTRUM -- add 'RS' to `cfg['analyses']`. The irregularity screen now makes a FIRM determination from your actual footprint and `consistency.check` FAILS if MRSA is required but 'RS' is absent. Do not silently substitute ELF.
+- **Analysis:** ASCE 7-22 §12.6 permits the ELF procedure for ALL structures (the 7-16 Table 12.6-1
+  procedure matrix was deleted), so MRSA is NOT required for an irregular building. For a re-entrant /
+  setback / nonparallel / torsionally-irregular building the report's Chapter 2 screen RECOMMENDS MRSA
+  (add 'RS' to `cfg['analyses']`); the engine then reports the modal base shear against V (§12.9.1.4).
+  The member demands are the ELF-based combinations unless the pipeline output says otherwise. The
+  irregularity screen evaluates ASCE 7-22 Tables 12.3-1/12.3-1a/12.3-2 numerically from the model (TIR from
+  edge drifts, re-entrant 20 %/20 % projections, openings > 25 %, out-of-plane offset and in-plane
+  discontinuity from the lateral-element planes, soft story 70/80 % and 60/70 % with the 12.3.2.2
+  exceptions, SFRS dimension 130 %); anything it cannot compute is printed NOT EVALUATED. Optional inputs:
+  `cfg['level_groups']` (split-level engine levels screened as one floor, e.g. `[[1,2],[3,4],[5],[6]]`),
+  `cfg['diaphragm_openings'] = {level: ft2}`, `cfg['story_strength'] = {'X': [kip, ...], 'Y': [...]}` for the
+  weak-story test (Types 4a/4b).
 - **Risk Category:** set `cfg['seis']` Ie and `cfg['drift_limit']` together -- RC III -> 0.015, RC IV -> 0.010 h_sx (Table 12.12-1). The gate flags a mismatch.
 - **R=3 / "not specifically detailed":** if R<=3, AISC 341 does NOT apply -- no SCWB / capacity design; design members and connections to AISC 360 only, and PROVE whether wind or seismic governs each direction (wind usually governs at low seismicity). The gate reminds you.
-- **Transfer / appendage (R5/R7):** an appendage may be modelled as MASS only if it does NOT carry or anchor a lateral element. If an SPSW pier, brace or moment bay continues into it, or its piers/braces land on transfer HBEs/girders below (podium, penthouse, setback), design the TRANSFER members and their supporting columns for the Omega_0 overstrength forces (12.3.3.3) -- do not bury them in mass.
-- **Different system each direction (R13):** if the brief uses different SFRS per axis (e.g. SMF N-S, SCBF E-W), compute TWO base shears with each direction's R/Cd/Omega_0/rho and apply each system's capacity design (SCWB one way, brace expected strength the other); corner columns take the more stringent detail.
+- **Transfer / appendage (R5/R7):** an appendage may be modelled as MASS only if it does NOT carry or anchor a lateral element. If an SPSW pier, brace or moment bay continues into it, or its piers/braces land on transfer HBEs/girders below (podium, penthouse, setback), design the TRANSFER members and their supporting columns for the Omega_0 overstrength forces (ASCE 7-22 12.3.3.4, elements supporting discontinuous walls or frames; 12.3.3.3 is the SDC B/C extreme-weak-story limit) -- do not bury them in mass.
+- **Different system each direction (R13):** if the brief uses different SFRS per axis (e.g. SMF N-S, SCBF E-W), name both in `cfg['system']` with their directions (e.g. `"mixed: SMF in X + SCBF in Y"`) and declare each direction's seismic factors as optional per-direction blocks `cfg['seis_X']` / `cfg['seis_Y']` (same keys as `cfg['seis']`: R, Cd, Om0, Ct, x, ...; ASCE 7-22 §12.2.2 — each system's R, Cd and Ω0 apply in its direction). The engine's per-direction ELF / combinations use them where implemented — **see pipeline output** for the base shear and factors actually applied in each direction, and check them. Apply each system's capacity design (SCWB for the SMF direction, brace expected strength for the SCBF direction); corner columns take the more stringent detail.
 - **Preflight (R22):** `pipeline.design_and_report` now runs a cfg linter BEFORE the first solve (units,
   R/Cd/Om0 vs the declared system, drift limit vs Ie, height limits, model/diaphragm declarations) and
   prints the findings. Fix every `[ERROR]` in `cfg.py` before doing ANY member design.
@@ -164,7 +183,7 @@ On the FIRST OpenSees error (build, analysis, or `eigen`), STOP retrying blindly
 - **NG members block completion:** the app refuses your final answer while any member/connection has
   D/C > 1.0 or missing capacities. `consistency.check` NG messages now include a concrete resize hint
   ("try W14X605, next size up"); resize, re-run the pipeline, re-derive.
-- **Tall / performance-based (R18):** above ~240 ft or for a code-alternative PBSD, ELF is not permitted and MRSA is the minimum; a Chapter 16 NONLINEAR response-history verification (MCE, >=11 scaled motions, acceptance criteria) is required. If the framework runs only linear analysis, deliver the MRSA design and explicitly SCOPE the Ch. 16 verification -- never claim MCE performance is verified from a linear run.
+- **Tall / performance-based (R18):** ASCE 7-22 §12.6 permits ELF at any height, but above ~240 ft run MRSA as well (higher modes govern; report both). For a code-alternative PBSD a Chapter 16 NONLINEAR response-history verification (MCE, >=11 scaled motions, acceptance criteria) is required. If the framework runs only linear analysis, deliver the MRSA design and explicitly SCOPE the Ch. 16 verification -- never claim MCE performance is verified from a linear run.
 
 
 ## REAL-WORLD SCOPE GUARDS (R24) -- recognize these and SCOPE them; never silently pretend
@@ -260,11 +279,22 @@ fills each):
    `gravity_col`, `lateral_col`, `brace`, each tagged with a `role` — the governing combo, the limit
    state + φ + capacity + D/C, **grounded in `engineering_standards_A360` and cited**. Appendix A
    renders your calc. (A roof beam and an interior gravity column are *distinct* types.)
-7. **Stability & second-order** — *framework*: θ per story vs θ_max (P-Δ already in the demands).
-8. **Serviceability** — *framework*: seismic + wind drift, beam deflection (L/360, L/240) + camber.
-9. **Seismic / wind detailing (AISC 341)** — **YOU, if R > 3**: SCWB / capacity design / panel zone,
-   **grounded in `engineering_standards_A341`**, written as the `capacity_design` block. (R ≤ 3 → n/a,
-   say so.)
+7. **Stability & second-order** — *framework*: ASCE 7-22 §12.8.7 θ per story in BOTH directions —
+   θ = P_x·Δ_xe/(V_x·h_sx) with P_x = 1.0D + 0.5(0.4L₀) (no load factor > 1.0), Δ_xe at the design-drift
+   location, divided by (1+θ) because the drifts are from a P-Δ analysis — vs θ_max = 0.5/(βC_d) ≤ 0.25,
+   not taken less than 0.10 (β = 1.0 unless `cfg['theta_beta']`).
+8. **Serviceability** — *framework*: seismic design drift in both directions on the same basis as the
+   engine drift gate (edge drift where a Type 1 torsional irregularity exists in SDC C-F, §12.8.6.5),
+   wind drift, beam deflection (L/360, L/240 — the table IS the `beam_deflection` gate) + camber. For RBS
+   moment frames the elastic drifts are multiplied per AISC 358-22 §5.7 Step 1 (1.1 at a 50 % flange
+   reduction, interpolated): declare `cfg['rbs'] = {'c_over_bf': c/bbf}` (or `True` for 1.1, or
+   `cfg['rbs_drift_factor']`); the drift gate and the report use the same factor.
+9. **Seismic / wind detailing (AISC 341)** — **YOU, if R > 3**: the capacity design and ductile
+   detailing of the DECLARED system(s) — SMF: SCWB (E3.4a), panel zone, continuity plates; IMF: no SCWB
+   (E2 has no moment-ratio provision), panel zone/continuity plates per E2.6; STMF: special segment (E4);
+   SCBF/OCBF/EBF/BRBF/SPSW: expected brace / link / web strengths and the capacity-limited E_cl of
+   Chapter F — **grounded in `engineering_standards_A341`**, written as the `capacity_design` block.
+   (R ≤ 3 → n/a, say so.)
 10. **Connections** — **YOU**: each connection TYPE — components + every limit-state D/C — **grounded
     in `engineering_standards_A360` Ch. J (+ `engineering_standards_A358` for the prequalified moment
     connection type, `engineering_standards_A341` for seismic forces)**, written as the `connections`
@@ -281,8 +311,11 @@ shows your RAG-derived capacities, connection design, and capacity_design across
 
 ## The split — what the tooling does vs. what YOU do
 **Tooling does the analysis (you cannot reason these out — they require solving the model):**
-- builds the 3D OpenSees model from a `cfg`, runs modal/eigen, ELF, response spectrum, and the
-  Direct Analysis Method (reduced stiffness + P-Δ);
+- builds the 3D OpenSees model from a `cfg`, runs modal/eigen, ELF (per direction where declared),
+  the response-spectrum base-shear check, and P-Δ second-order analysis of every combination; the
+  stability method applied to the demands (Direct Analysis Method stiffness reduction §C2.3 and notional
+  loads §C2.2b where enabled, or none) is stated in the pipeline output — **see pipeline output**, and
+  take K = 1 only when the DAM was applied;
 - on request, runs **any factored load combination you specify** and returns the resulting
   member forces (N, Mz, My, V) per element — see `run_case` below;
 - reports story drifts, periods, base shears, and **connection demands** (beam-end M/V, brace
@@ -333,7 +366,9 @@ MF beam", "interior gravity column", "N-S brace"). Do NOT design members one-by-
      `capacity_design` block. (For **R ≤ 3** "not specifically detailed for seismic" systems, AISC 341
      does not apply — design per AISC 360; say so explicitly.)
    - **`engineering_standards_A358`** — REQUIRED to SELECT the prequalified moment-connection type
-     (RBS/WUF-W/BFP/end-plate) whenever a moment frame is detailed for seismic (R > 3).
+     (RBS/WUF-W/BFP/end-plate) for every SMF and IMF (AISC 341-22 E3.6c / E2.6c), including the moment
+     frames of a dual or mixed system. (STMF and OMF connections are not AISC 358 prequalified
+     connections.)
 2. **Loads are computed, not retrieved.** ASCE 7 is not in the RAG. Use the engine's load
    routines for the seismic/wind *magnitudes and patterns*, then spot-check Cs, V, and the
    vertical distribution by hand. The **pipeline** assembles the ASCE 7-22 §2.3 combinations from
@@ -349,7 +384,7 @@ MF beam", "interior gravity column", "N-S brace"). Do NOT design members one-by-
    `calc_package.json`. Use `design_post.run_case` only to pull demands; `sections.props` for
    properties. Then re-run `report.build_report` so the report shows your checks.
 4. **Check serviceability + drift the code way:** amplified story drift δ = Cd·δ_elastic/Ie
-   (§12.8.6) and beam vertical deflection (live L/360, total L/240).
+   (§12.8.6; ×1.1 for RBS per AISC 358-22 §5.7) and beam vertical deflection (live L/360, total L/240).
 5. **Do NOT read `eval_tests/answer_key/`** — off-limits and blocked.
 
 ## HOW TO ASK THE RAG — one document, the exact id, the printed words
@@ -456,7 +491,7 @@ each unique connection **type**, you design the joint:
   systems use **capacity design** — the expected strength of the connected member / Ω₀ demand,
   per AISC 341, not just the analysis force).
 - Work the limit states from **AISC 360 Chapter J**: bolt shear/tension and combined (J3),
-  bearing/tearout (J3.10), weld strength (J2), block shear (J4.3), and the strength of connecting
+  bearing/tearout (J3.11), weld strength (J2), block shear (J4.3), and the strength of connecting
   elements/plates (J4). For HSS use **Chapter K**. Cite each clause.
 - For seismic **moment-frame** connections, first **SELECT the prequalified connection type from
   AISC 358** — query `engineering_standards_A358`: e.g. RBS (reduced beam section), WUF-W, bolted
@@ -546,11 +581,14 @@ those three files must be complete.
 - **Per connection TYPE:** demand (and whether capacity-design governed), the components chosen,
   each AISC 360/341 limit-state check with cited clause, and D/C.
 - **Seismic capacity design / ductile detailing** (any R-based system) — write a `capacity_design`
-  block in `calc_package.json`, grounded in `engineering_standards_A341` (and A358 for the connection
-  type). For a **moment frame**: the strong-column-weak-beam ratio ΣM\*pc/ΣM\*pb at the governing
-  joint (AISC 341 §E3.4a, must be > 1.0) and the panel-zone shear / doubler check. For a **braced
-  frame**: the brace expected strength (RyFyAg in tension, 1.1RyPn in compression), the
-  capacity-limited column force, and brace slenderness / width-thickness ductility. Chapter 9 of the
+  block in `calc_package.json`, grounded in `engineering_standards_A341` (and A358 for an SMF/IMF
+  connection type). For an **SMF**: the strong-column-weak-beam ratio ΣM\*pc/ΣM\*pb at the governing
+  joint (AISC 341 §E3.4a, must be > 1.0) and the panel-zone shear / doubler check (an **IMF** has no SCWB
+  requirement — E2 — but keeps the panel-zone / continuity-plate checks). For an **SCBF**: the expected
+  brace strength (R_yF_yA_g in tension; in compression the lesser of R_yF_yA_g and F_neA_g/0.877 with
+  F_ne from Chapter E using R_yF_y — AISC 341-22 F2.3), the post-buckling 0.3× case, the capacity-limited
+  column/beam/connection forces, and brace slenderness / width-thickness ductility (EBF: link; BRBF:
+  adjusted brace strengths). Chapter 9 of the
   report renders this block; if you omit it the chapter shows "pending".
 - Confirmation the model passes the sanity-check suite.
 - **You MUST write `calc_package.json` yourself** (`write_file("calc_package.json", ...)` in your
@@ -565,7 +603,7 @@ those three files must be complete.
                {"id":"grav-col-...","inputs":{"role":"gravity_col",...},...},
                {"id":"mf-col-...","inputs":{"role":"lateral_col",...},...},
                {"id":"brace-...","inputs":{"role":"brace",...},...}],
-    "connections":[{"id":"MF-beam-col","demand":{...},"capacity_design":true,"components":"...","cited":"AISC 360 J... / 341 ... / 358 ...","checks":[{"limit_state":"bolt shear J3.6","DC":...}, ...]}],
+    "connections":[{"id":"MF-beam-col","demand":{...},"capacity_design":true,"components":"...","cited":"AISC 360 J... / 341 ... / 358 ...","checks":[{"limit_state":"bolt shear J3.7","DC":...}, ...]}],
     "capacity_design":{"system":"SMF","SCWB":{"joint":"...","ratio":1.34,"cite":"AISC 341 E3.4a"},"panel_zone":{...}}}`
 - The reviewer-grade figures (`plot_model.figures(...)`).
 
@@ -579,8 +617,8 @@ an AISC 360 section/equation you pulled from the RAG.
 >    brace-to-gusset, column splice, column base) with sized components and every limit-state D/C,
 >    grounded in A360 Ch. J (+ A358/A341 where seismic). **A member-only package is INCOMPLETE — do
 >    not skip connections, they are a required deliverable, not optional.**
-> 3. **Capacity design** — a `capacity_design` block **if R > 3** (SCWB/panel zone for moment frames,
->    brace expected strength + capacity-limited columns for braced frames), grounded in A341.
+> 3. **Capacity design** — a `capacity_design` block **if R > 3** (SCWB + panel zone for SMF; panel zone
+>    for IMF; brace / link expected strength + capacity-limited columns for braced frames), grounded in A341.
 > 4. **Numerical self-consistency** — run the self-consistency check (`import consistency;
 >    consistency.check("<building>")`) and resolve **every** flag before declaring done. The SAME quantity
 >    must carry the SAME value everywhere (a plate thickness, capacity, or D/C quoted in your narrative must

@@ -381,19 +381,32 @@ def _band_split(stack, za, zb):
         lo = hi
     return out
 
-def clad_areas_ft2(cfg):
-    """{k: exterior wall area (ft^2) tributary to level k} from the bay-stack volume (mid-height
-    tributaries; parapet cfg['wind']['parapet_ft'] adds to the top level). Grade portion excluded."""
-    st, z = _stacks(cfg); NF = len(cfg["heights"]); out = {k: 0.0 for k in range(1, NF+1)}
+def clad_edge_heights(cfg):
+    """{(k, dir, i, j): (wall height ft, edge length ft)} -- the exterior wall tributary to level k on
+    the bay edge (dir, i, j) (dir 'X': edge from grid (i,j) to (i+1,j); 'Y': (i,j) to (i,j+1)), by the
+    mid-height bands of the bay-stack volume (see clad_areas_ft2). The static demand model hangs the
+    cladding on exactly these edges, so its dead load equals floor_dead / floor_w per level."""
+    st, z = _stacks(cfg); out = {}
     par = float((cfg.get("wind") or {}).get("parapet_ft", 0.0) or 0.0)
     top = {b: s[-1][1] for b, s in st.items()}
     for (i, j), s in st.items():
         dx, dy = _bay_dims_ft(cfg, i, j)
-        for nb, L in (((i, j-1), dx), ((i, j+1), dx), ((i-1, j), dy), ((i+1, j), dy)):
+        for nb, L, ek in (((i, j-1), dx, ("X", i, j)), ((i, j+1), dx, ("X", i, j+1)),
+                          ((i-1, j), dy, ("Y", i, j)), ((i+1, j), dy, ("Y", i+1, j))):
             lo = top.get(nb, 0.0); hi = top[(i, j)]
             if nb in top and lo >= hi: continue
             for k, hgt in _band_split(s, lo, hi + par).items():
-                if k: out[k] += hgt*L
+                if k:
+                    h0, _L = out.get((k,) + ek, (0.0, L))
+                    out[(k,) + ek] = (h0 + hgt, L)
+    return out
+
+def clad_areas_ft2(cfg):
+    """{k: exterior wall area (ft^2) tributary to level k} from the bay-stack volume (mid-height
+    tributaries; parapet cfg['wind']['parapet_ft'] adds to the top level). Grade portion excluded."""
+    NF = len(cfg["heights"]); out = {k: 0.0 for k in range(1, NF+1)}
+    for (k, d, i, j), (hgt, L) in clad_edge_heights(cfg).items():
+        out[k] += hgt*L
     return out
 
 def _clad_kip(cfg, k):
@@ -513,8 +526,29 @@ def _model_key(cfg):
            # diaphragm-mass policy and the seismic demand basis all change the seismic results
            repr([(k, cfg.get(k)) for k in ("seis_X", "seis_Y", "seis_x", "seis_y", "rho", "rho_X", "rho_Y",
                                             "system", "system_X", "system_Y", "diaphragm_mass", "diaphragm",
-                                            "seismic_demand_basis", "analyses", "sdc", "drift_limit")]))
+                                            "seismic_demand_basis", "analyses", "sdc", "drift_limit")]),
+           # hr-geomwind (HR-10/11/39) floor-plate and seismic-weight inputs, by value -- and, because
+           # some may be callables, the RESOLVED floor plate and seismic weight of every level, so a
+           # changed opening / omitted column / partition allowance / parapet never reuses a stale
+           # modal / ELF / torsion entry; hr-report's RBS drift factor and theta inputs likewise
+           repr([(k, cfg.get(k)) for k in ("openings", "omitted_columns", "floor_bays", "auto_omitted_columns",
+                                            "seismic_mass_only", "seismic_weight_kip", "D_by_level", "L_by_level",
+                                            "present", "xcoords", "ycoords", "skew", "rbs", "rbs_drift_factor",
+                                            "theta_beta", "drift_exempt_stories", "level_groups", "story_strength",
+                                            "diaphragm_openings")]),
+           (cfg.get("wind") or {}).get("parapet_ft") if isinstance(cfg.get("wind"), dict) else None,
+           _resolved_plate_sig(cfg))
     return hashlib.md5(repr(sig).encode()).hexdigest()
+
+
+def _resolved_plate_sig(cfg):
+    """Resolved per-level floor bays and seismic weight (W, cladding) -- part of _model_key."""
+    try:
+        NF = len(cfg["heights"]); ca = clad_areas_ft2(cfg)
+        return tuple((tuple(sorted(floor_bays(cfg, k))), round(floor_w(cfg, k), 6), round(ca.get(k, 0.0), 4))
+                     for k in range(1, NF+1))
+    except Exception as ex:
+        return ("plate?", repr(ex))
 
 
 def _nm_default(NF):
@@ -597,16 +631,26 @@ def _diaphragm_props_live(cfg, info):
                 quad = [co[(i, j)][:2], co[(i+1, j)][:2], co[(i+1, j+1)][:2], co[(i, j+1)][:2]]
                 a, sx, sy, ip = _poly_props(quad); A += a; Sx += sx; Sy += sy; Ip += ip
         Ltot = Lx_ = Ly_ = Le = 0.0
-        for (i, j) in pts:                 # exposed panel edges (bordered by exactly one framed panel)
-            for (a, b, n1, n2) in (((i, j), (i+1, j), (i, j-1), (i, j)), ((i, j), (i, j+1), (i-1, j), (i, j))):
-                if b not in P: continue
-                if framed(*n1) != framed(*n2):
-                    p, q = co[a], co[b]; L = math.hypot(q[0]-p[0], q[1]-p[1])
-                    mx, my = 0.5*(p[0]+q[0]), 0.5*(p[1]+q[1])
-                    Ltot += L; Lx_ += L*mx; Ly_ += L*my; Le += L*(mx*mx + my*my + L*L/12.0)
+        # cladding mass on the wall edges that carry it, weighted by their tributary wall height
+        # (clad_edge_heights: the same mid-height bands as floor_w, so Wc below is exactly the cladding in W)
+        ceh = {(d, i, j): hL for (kk_, d, i, j), hL in clad_edge_heights(cfg).items() if kk_ == k} \
+            if cfg.get("clad") else {}
+        for (d, i, j), (hgt, _Lf) in ceh.items():
+            a, b = ((i, j), (i+1, j)) if d == "X" else ((i, j), (i, j+1))
+            if a not in co or b not in co: continue
+            p, q = co[a], co[b]; L = math.hypot(q[0]-p[0], q[1]-p[1]); wl = L*hgt
+            mx, my = 0.5*(p[0]+q[0]), 0.5*(p[1]+q[1])
+            Ltot += wl; Lx_ += wl*mx; Ly_ += wl*my; Le += wl*(mx*mx + my*my + L*L/12.0)
+        if not ceh:
+            for (i, j) in pts:             # exposed panel edges (bordered by exactly one framed panel)
+                for (a, b, n1, n2) in (((i, j), (i+1, j), (i, j-1), (i, j)), ((i, j), (i, j+1), (i-1, j), (i, j))):
+                    if b not in P: continue
+                    if framed(*n1) != framed(*n2):
+                        p, q = co[a], co[b]; L = math.hypot(q[0]-p[0], q[1]-p[1])
+                        mx, my = 0.5*(p[0]+q[0]), 0.5*(p[1]+q[1])
+                        Ltot += L; Lx_ += L*mx; Ly_ += L*my; Le += L*(mx*mx + my*my + L*L/12.0)
         W = floor_w(cfg, k); m = W/g
-        NFh = len(cfg["heights"]); th = cfg["heights"][k-1]/12.0; th = th if k != NFh else th/2
-        Wc = cfg.get("clad", 0.0)*perim_ft(cfg, k)*th/1000.0
+        Wc = _clad_kip(cfg, k)
         Wa = W - Wc
         if A <= 0 or Wa < -1e-9:
             # no framed panel (e.g. a single line of columns): node average + rectangle of the ACTUAL extent

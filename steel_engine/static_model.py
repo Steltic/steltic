@@ -23,8 +23,9 @@ Gravity loading (HR-03 / HR-13 / HR-27)
              when k is listed in cfg['roof_levels'], or when the same bay is not framed at ANY level
              above (setbacks / low roofs; split levels and double-height voids stay floors). Lr = cfg['Lr'] (default 20 psf, cfg['Lr_by_level'] per level),
              S = cfg['snow'] (cfg['snow_by_level']), R = cfg['rain'] (cfg['rain_by_level']).
-  plus cladding on the perimeter spans (clad * story height, half story at the top level) -- the same
-  quantities engine3d.floor_w / floor_dead use for the seismic weight.
+  plus cladding on the exterior bay edges, clad * the mid-height wall tributary of engine3d.clad_edge_heights
+  (half storey below + half above, true walls at setbacks / split levels) -- the same quantities
+  engine3d.floor_w / floor_dead use for the seismic weight.
 * Distribution per bay (cfg['floor_system'], optional cfg['deck_span'], cfg['infill_spacing']):
     "two-way"                     45-degree trapezoid / triangle onto the four bay edges.
     one-way, deck span declared   cfg['deck_span'] = 'X' or 'Y' (direction the DECK spans; may be a
@@ -932,20 +933,18 @@ def _case_pieces(cfg, model, fD, fL, fLr, uplift=None, modes=None):
                     P = w0 * trib[m] * dperp / 2.0
                     for g in (g0, g1):
                         span.setdefault((k,) + g, []).append((("pt", u, P), "oneway"))
-    # cladding on perimeter spans (exactly one framed bay at that level), as engine3d.floor_dead
+    # cladding on the exterior bay edges with the SAME mid-height wall tributary as engine3d.floor_dead /
+    # floor_w (engine3d.clad_edge_heights: half the storey below + half above, true wall heights at
+    # setbacks / split levels, parapet at the top; hr-geomwind HR-39), so static dead == seismic-weight dead
     if clad:
-        for k in range(1, NF + 1):
-            th = heights[k - 1] / 12.0
-            th = th / 2.0 if k == NF else th
+        for (k, d, i, j), (th, _L) in eng.clad_edge_heights(cfg).items():
+            if (d, i, j) not in model["spans"].get(k, {}):
+                model.setdefault("warnings", []).append(
+                    "cladding on edge %s%s level %d (%.1f ft wall) has no modelled span -- not applied" % (d, (i, j), k, th))
+                continue
             wcl = fD * clad * th * 12.0 * _PSF          # psf * ft  -> kip/in
-            for (d, i, j), sp in model["spans"].get(k, {}).items():
-                if d == "X":
-                    nb = sum(1 for jj in (j - 1, j) if (k, i, jj) in model["bays"])
-                else:
-                    nb = sum(1 for ii in (i - 1, i) if (k, ii, j) in model["bays"])
-                if nb == 1:
-                    span.setdefault((k, d, i, j), []).append((("uni", wcl), "clad"))
-                    girder.setdefault((k, d, i, j), []).append(("uni", wcl))
+            span.setdefault((k, d, i, j), []).append((("uni", wcl), "clad"))
+            girder.setdefault((k, d, i, j), []).append(("uni", wcl))
     return {"span": span, "infill": infill, "girder": girder, "modes": modes}
 
 
@@ -1966,7 +1965,11 @@ def _full_key(cfg, model, cases, nseg, floor_system, extras):
             src += "?"
     cs = [(repr(tuple(c)), repr(sorted((k, repr(v)) for k, v in getattr(c, "__dict__", {}).items())))
           for c in cases]
-    blob = repr((clean(cfg), repr(model["sig"]), cs, nseg, floor_system, clean(extras or {}), src))
+    try:      # callables in cfg ('present', 'openings', ...) hash as "<fn>": add the RESOLVED floor plate
+        plate = eng._resolved_plate_sig(cfg)          # and seismic weight per level (hr-geomwind keys)
+    except Exception as ex:
+        plate = repr(ex)
+    blob = repr((clean(cfg), repr(model["sig"]), cs, nseg, floor_system, clean(extras or {}), src, plate))
     return _hashlib.md5(blob.encode()).hexdigest()
 
 

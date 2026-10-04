@@ -1355,6 +1355,15 @@ def _sdc(SDS, SD1, S1=0.0, Ie=1.0):
     from preflight import asce_sdc, risk_cat_from_Ie
     return asce_sdc(SDS, SD1, S1, risk_cat_from_Ie(Ie))
 
+def _rcdo_txt(cfg, s):
+    """R / Cd / Omega0 -- per direction when the two directions differ (ASCE 7-22 12.2.2, engine3d.seis_dir)."""
+    try:
+        d = {k: E.seis_dir(cfg, k) for k in ("X", "Y")}
+        t = {k: "%s / %s / %s" % (d[k].get("R"), d[k].get("Cd"), d[k].get("Om0")) for k in d}
+        return t["X"] if t["X"] == t["Y"] else "X: %s; Y: %s" % (t["X"], t["Y"])
+    except Exception:
+        return "%s / %s / %s" % (s.get("R"), s.get("Cd"), s.get("Om0"))
+
 def _design_basis_codes(cfg, s, root=None):
     seismic = bool(s.get("R"))
     rows = [["International Building Code (IBC)", "adopting code &mdash; confirm locally adopted edition &amp; amendments"],
@@ -1369,11 +1378,12 @@ def _design_basis_codes(cfg, s, root=None):
     Ie = s.get("Ie", 1.0); RC = _risk_category(Ie)
     crows = [["Risk Category", RC], ["Importance factor I<sub>e</sub>", f"{Ie}"]]
     if seismic:
-        sdc = _sdc(s["SDS"], s["SD1"], s.get("S1", 0.0), Ie)
+        try: sdc = E.sdc_of(cfg)        # the SDC every gate uses (a declared lower SDC is overridden, HR-15)
+        except Exception: sdc = _sdc(s["SDS"], s["SD1"], s.get("S1", 0.0), Ie)
         crows += [["S<sub>DS</sub> / S<sub>D1</sub>", f"{s['SDS']} / {s['SD1']} g"],
                   ["Seismic Design Category", f"{sdc} <span class='cnote'>(Tables 11.6-1/2 incl. RC IV column; "
                    "S<sub>1</sub>&ge;0.75 &rarr; E/F applied; confirm mapped S<sub>1</sub>)</span>"],
-                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", f"{s['R']} / {s.get('Cd')} / {s.get('Om0')}"],
+                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", _rcdo_txt(cfg, s)],
                   ["Redundancy &rho;", f"{cfg.get('rho', 1.3)}"]]
         try:
             from preflight import drift_relief, relief_active
@@ -1808,7 +1818,7 @@ def _combo_legend(cfg):
     rho = cfg.get("rho", 1.3)
     s = cfg.get("seis") or {}
     try:
-        _sdc_txt = " (SDC %s)" % _sdc(s.get("SDS", 0), s.get("SD1", 0), s.get("S1", 0), s.get("Ie", 1.0))
+        _sdc_txt = " (SDC %s)" % E.sdc_of(cfg)
     except Exception:
         _sdc_txt = ""
     items = [("D", "dead load"),

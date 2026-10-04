@@ -431,3 +431,34 @@ def test_ecl_strut_axial_on_a_slaved_braced_bay_beam_is_reported_not_evaluated()
     info2 = {}
     SM.demand_envelope(cfg2, [case], nseg=4, info_out=info2)
     assert not any("Ecl AXIAL" in x for x in info2["not_evaluated"])
+
+
+def test_scbf_expected_compression_length_never_exceeds_the_work_point_length_rules():
+    """VERIFY (independent review), AISC 341-22 F2.3: 'the brace length used for the determination of Fne shall
+    not exceed the distance from brace end to brace end'. Crossing X-brace diagonals use half the work-point
+    length; cfg['brace_length'] / cfg['brace_length_factor'] give the end-to-end length; the work-point default
+    is flagged as underestimating C."""
+    row = SM._shape("HSS5X5X1/2"); A = row["A"]; r = min(row["rx"], row["ry"])
+    coord = {1: (0.0, 0.0, 0.0), 2: (480.0, 0.0, 180.0), 3: (0.0, 0.0, 180.0), 4: (480.0, 0.0, 0.0)}
+    b1 = {"sec": "HSS5X5X1/2", "n1": 1, "n2": 2}; b2 = {"sec": "HSS5X5X1/2", "n1": 3, "n2": 4}
+    m = {"coord": coord, "braces": [b1, b2]}
+    Lwp = math.hypot(480.0, 180.0)
+
+    def C_hand(L):
+        Fe = math.pi ** 2 * 29000.0 / (L / r) ** 2; RyFy = 1.3 * 50.0
+        Fne = 0.658 ** (RyFy / Fe) * RyFy if RyFy / Fe <= 2.25 else 0.877 * Fe
+        return min(RyFy * A, Fne * A / 0.877)
+    cap = SM.brace_capacity({"system": "SCBF"}, m, b1)                     # X-brace: half length
+    assert cap["L"] == pytest.approx(Lwp / 2) and cap["C"] == pytest.approx(C_hand(Lwp / 2), rel=1e-3)
+    assert not cap["L_default"] and cap["C"] > 3.0 * C_hand(Lwp)          # the full WP length was ~4x low here
+    cap = SM.brace_capacity({"system": "SCBF", "brace_length": {"HSS5X5X1/2": 200.0}}, m, b1)
+    assert cap["L"] == 200.0 and cap["C"] == pytest.approx(C_hand(200.0), rel=1e-3)
+    cap = SM.brace_capacity({"system": "SCBF", "brace_length_factor": 0.8}, {"coord": coord, "braces": [b1]}, b1)
+    assert cap["L"] == pytest.approx(0.8 * Lwp)
+    cap = SM.brace_capacity({"system": "SCBF"}, {"coord": coord, "braces": [b1]}, b1)   # single diagonal
+    assert cap["L"] == pytest.approx(Lwp) and cap["L_default"] and "UNDERESTIMATED" in cap["note"]
+    # the chevron model's braces share the apex (no crossing): the work-point default is reported in the notes
+    cfg = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="SCBF", D_roof=0.0, Lr=0.0)
+    model = SM.build_static(cfg, "Linear", 4)
+    plan = SM.ecl_plan(cfg, model, {"X": {"brace": {}, "beam": {}}, "Y": {"brace": {}, "beam": {}}})
+    assert any("WORK-POINT length" in n and "F2.3" in n for n in plan["notes"])

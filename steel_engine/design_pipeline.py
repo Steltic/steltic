@@ -243,12 +243,16 @@ def design(name, outdir=None):
     length = {t: math.dist(ops.nodeCoord(n1), ops.nodeCoord(n2)) for t, (k, s, n1, n2) in reg.items()}
     # expected / adjusted brace strengths for the brace-connection slots (AISC 341-22 F1.6a, F2.6c, F4.6c)
     brace_cap = {}
-    _bco = {"coord": {}}
+    _bco = {"coord": {}, "braces": []}
+    for t, (k, sec, n1, n2) in reg.items():                 # every brace: X-brace crossings (static_model._brace_length)
+        if k == "brace":
+            for n in (n1, n2):
+                _bco["coord"][n] = tuple(ops.nodeCoord(n))
+            _bco["braces"].append({"sec": sec, "n1": n1, "n2": n2, "etag": t})
     for t, (k, sec, n1, n2) in reg.items():
         if k == "brace" and sec not in brace_cap:
-            _bco["coord"] = {n1: tuple(ops.nodeCoord(n1)), n2: tuple(ops.nodeCoord(n2))}
             try:
-                bc = SM.brace_capacity(cfg, _bco, {"sec": sec, "n1": n1, "n2": n2, "etag": t})
+                bc = SM.brace_capacity(cfg, _bco, next(b for b in _bco["braces"] if b["etag"] == t))
             except Exception as ex:
                 bc = {"err": str(ex)}
             if bc.get("T"):

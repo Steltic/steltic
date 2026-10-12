@@ -46,7 +46,7 @@ steltic = "steltic.cli:main"
 
 # The wheel ships the app package plus its data folders (engine, contract, frontend, example briefs)
 # at site-packages top level; steltic/config.py resolves them relative to the package parent, which
-# works identically in a checkout and in an installed wheel. Install with uv/pipx (isolated venv).
+# works identically in a checkout and in an installed wheel. Install from a git clone with pip install -e . (see README).
 [tool.hatch.build.targets.wheel]
 packages = ["steltic", "steel_engine", "contract", "frontend", "test_buildings"]
 

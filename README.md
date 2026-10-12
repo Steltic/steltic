@@ -1,8 +1,22 @@
 # Steltic
 
-A free, open-source AISC 360/341 steel-design agent that runs locally. Paste a design brief and
-watch the agent build an OpenSees model + a stamped-style HTML report + an interactive 3D viewer —
-**bringing your own LLM** (your API base-url + key, held in memory only, never written to disk).
+[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Steltic/steltic?color=orange)](https://github.com/Steltic/steltic/releases)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](pyproject.toml)
+
+![Steltic](docs/img/social_hr.png)
+
+Free, open-source AI agent that designs steel buildings to **AISC 360** and **AISC 341** (with **AISC 358**
+where appropriate) and **ASCE 7-22** loads, on your own machine. Paste a design brief and get an OpenSees model,
+a calculation report written for senior review, and an interactive 3D viewer. Bring your own LLM API key
+(your API base URL and key are held in memory only, never written to disk).
+
+- **Easiest start:** [Steltic Hub](https://github.com/Steltic/steltic_hub) installs this and the other modules
+  in one window.
+- **See the output first:** 36 worked buildings with reports and 3D models at [stelticai.com](https://stelticai.com).
+- **Videos:** [initial design run](https://www.youtube.com/watch?v=BuBt1kWmodE) ·
+  [optimize and finalize](https://www.youtube.com/watch?v=A8bXbnNXxjE).
+- **Indian Standards edition:** [steltic_india](https://github.com/Steltic/steltic_india).
 
 ```
 browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory, never stored)
@@ -17,31 +31,39 @@ browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory,
 > incorrect, and must be independently checked and sealed by a licensed professional engineer before
 > any use for design, construction, or permitting. See [DISCLAIMER.md](DISCLAIMER.md).
 
-## For videos and demonstrations see [stelticai.com](https://stelticai.com)
-
 ## Install & run
 
-With [uv](https://docs.astral.sh/uv/) (recommended — no Python setup needed):
+Most people should start with [Steltic Hub](https://github.com/Steltic/steltic_hub), which clones and installs
+this module for you. To run this module on its own, install it from GitHub. It needs **Python 3.10–3.12**
+(openseespy, the analysis engine, ships compiled binaries for those versions only); 3.12 is recommended.
 
-```bash
-uv tool install --python 3.12 steltic
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/Steltic/steltic
+cd steltic
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
 steltic                      # starts on http://127.0.0.1:8000 and opens your browser
 ```
 
-The `--python 3.12` matters: openseespy (the analysis engine) ships compiled binaries for
-**Python 3.10–3.12 only**, and uv ignores the package's upper Python bound — without the flag it
-may install onto a newer interpreter where the engine can't load (Steltic will tell you and refuse
-to start). uv downloads 3.12 automatically if you don't have it. Or with pipx (which respects the
-bound): `pipx install --python 3.12 steltic`. The install includes the full engine
-(openseespy/numpy/scipy/matplotlib, ~400MB) so designs run out of the box without Docker. Or from
-a checkout:
+**macOS / Linux**
 
 ```bash
-git clone <this repo> && cd steltic
-python -m venv .venv && . .venv/bin/activate
+git clone https://github.com/Steltic/steltic
+cd steltic
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -e .
-./run_local.sh               # http://localhost:8000
+steltic                      # starts on http://127.0.0.1:8000 and opens your browser
 ```
+
+The install brings the full engine (openseespy, numpy, scipy, matplotlib, about 400 MB), so designs run without
+Docker. To run with a `.env` file of settings, use `./run_local.sh` instead of `steltic`.
+
+**Update:** in the repo folder, `git pull`, then `pip install -e .` again (needed only when `pyproject.toml`
+changed, harmless otherwise).
 
 First run: open **Settings**, enter your provider's **API base URL** (any OpenAI-compatible
 endpoint — OpenRouter, vLLM, Together, Fireworks, OpenAI, Anthropic…), your **API key**, and a
@@ -51,15 +73,16 @@ the 36 built-in example briefs — and click **Design building**.
 Offline smoke test: set Model to `MOCK` — it drives the whole pipeline (sandbox, engine, OpenSees,
 report) with no LLM.
 
-**Windows note:** if launching fails with *"Application Control policy has blocked this file"* or
-*"os error 4551"*, Windows **Smart App Control** is blocking uv's downloaded (unsigned) Python.
-Fix: install the signed python.org build and point uv at it —
+**Windows note:** if starting fails with *"Application Control policy has blocked this file"* or
+*"os error 4551"*, Windows **Smart App Control** is blocking an unsigned Python. Use the signed python.org
+build and recreate the environment:
 
 ```powershell
-winget install Python.Python.3.12       # then open a new terminal
-uv tool uninstall steltic
-$env:UV_PYTHON_PREFERENCE = "only-system"
-uv tool install --python 3.12 steltic
+winget install Python.Python.3.12       # then open a new terminal in the repo folder
+Remove-Item -Recurse -Force .venv
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
 ## Sandbox
@@ -78,7 +101,7 @@ with `DATA_DIR`.
 
 ## Engineering-standards, OpenSees & design-examples RAG (highly recommended)
 
-The hosted version of Steltic at [stelticai.com](https://stelticai.com) grounds the agent with RAG
+Steltic was validated with RAG
 vector databases of AISC 360, 341 and 358 (2022), the AISC Steel Construction Manual Design
 Examples (V16.0, 168 worked examples), an examples database of validated OpenSees models, and two
 databases of the OpenSees documentation. The specifications and design examples ground the LLM in
@@ -88,7 +111,7 @@ likely reduce without them.
 
 For copyright reasons the vector databases of AISC 360, 341 and 358 are **not** open-sourced in
 this project. The rest are freely downloadable from this repo's
-[Releases page](https://github.com/Steltic/steltic/releases) as portable `.jsonl.gz` dumps
+[v0.1.1 release](https://github.com/Steltic/steltic/releases/tag/v0.1.1) as portable `.jsonl.gz` dumps
 (pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant):
 `steel_design_examples` (168 original worked Q&A covering the AISC Design Examples scope),
 `opensees_buildings_3d` (40 validated 3D building models), `opensees_building_templates`, and the

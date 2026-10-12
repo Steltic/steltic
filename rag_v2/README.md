@@ -31,7 +31,7 @@ have — a non-2xx response makes the agent pause the run as "RAG unreachable".
 
 Five collections (`steel_design_examples`, `opensees_buildings_3d`, `opensees_building_templates`,
 `openseespy_documentation`, `opensees_documentation`) are published
-as `.jsonl.gz` dumps on the repo's [Releases page](https://github.com/Steltic/steltic/releases).
+as `.jsonl.gz` dumps on the repo's [v0.1.1 release](https://github.com/Steltic/steltic/releases/tag/v0.1.1).
 Each dump carries its vectors AS-IS (embedded with **nomic-embed-text**, 768-dim) — nothing is
 re-embedded on load, but your query server must embed queries with the same model for the vectors
 to match. Load into a local Qdrant with:

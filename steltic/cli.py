@@ -30,9 +30,9 @@ def main():
         v = sys.version.split()[0]
         print(f"[steltic] Python {v} is not supported: openseespy (the analysis engine) ships "
               "compiled binaries for Python 3.10-3.12 only, and designs would fail mid-run.")
-        print("[steltic] Fix (one time):")
-        print("[steltic]   uv tool uninstall steltic")
-        print("[steltic]   uv tool install --python 3.12 steltic")
+        print("[steltic] Fix (one time), in the repo folder: recreate the environment with Python 3.12 --")
+        print("[steltic]   Windows:      py -3.12 -m venv .venv   then  .venv\\Scripts\\Activate.ps1  and  pip install -e .")
+        print("[steltic]   macOS/Linux:  python3.12 -m venv .venv  then  source .venv/bin/activate  and  pip install -e .")
         raise SystemExit(1)
 
     ap = argparse.ArgumentParser(prog="steltic", description="Steltic -- local AISC steel-design agent")

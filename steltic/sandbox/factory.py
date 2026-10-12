@@ -21,7 +21,8 @@ def _sub(log=print):
         log("[sandbox] WARNING: engine packages broken or missing -- runs WILL fail:")
         for p in problems:
             log(f"[sandbox]   - {p}")
-        log("[sandbox] Fix: uv tool uninstall steltic && uv tool install --python 3.12 steltic")
+        log("[sandbox] Fix: in the repo folder, recreate the environment with Python 3.12 and run pip install -e . "
+            "(see Install & run in the README)")
     return SubprocessExecutor(config.STEEL_ENGINE)
 
 

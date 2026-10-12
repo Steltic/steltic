@@ -145,6 +145,42 @@ complete (see `steltic_nonlinear/docs/README_feedback.md`). Three things in this
 
 `tests/test_drift_relief.py` covers the rules (`python -m pytest tests -q`).
 
+## Build-only mode: a building the user designed
+
+For a steel building the **user** designed, HR Steel builds the analysis package for the Nonlinear module without
+designing anything (`steltic/build_only/`). Nothing is resized and nothing is invented:
+
+1. **Intake** -- the Steltic building template (`GET /api/build_only/template`, one tab per group: project and basis,
+   grid, levels, columns, beams, braces, loads, details, wind, your own results) or an ETABS `.e2k` text model becomes
+   one `building_description.json`. What the `.e2k` states is taken as data (stories, grids, frame objects per story,
+   sections, local-axis angles, releases, base restraints, diaphragms, design preferences); what has to be interpreted
+   (the dead and live load per level from area loads + slab + framing self-weight, the system per direction when the
+   design preferences name one frame type for a building that also has braces) is a *proposal* with its breakdown.
+2. **Missing items** (`missing_items.json`) -- **key** items have no default: HR stops and asks (a section that is
+   not an AISC shape is one question per section name, the AISC metric designations W360X64 / HSS254X254X9.5 resolve
+   by themselves); **default** items show the proposed value and its reason and are used only once accepted;
+   **refused** items are outside version 1 (plate shear walls, STMF, partially restrained connections, sloped or
+   plan-diagonal beams, members off the levels, several diaphragm types, per-member grades, springs) and are never
+   simplified.
+3. **Translate** -- `translate.py` writes `cfg.py` with the user's members as literal tables and a `custom_build`
+   that replays them one for one (`add_column` / `add_beam` / `Truss`, the diaphragms, `attach_diaphragm_mass`).
+   What it derives (grid lines through off-grid columns, column and beam splits where members frame in, the floor
+   plate, Table 12.12-1 drift limit, Cu, Ct/x, Kd, GCpi) is listed in `provenance.json` with its rule, beside the
+   source of every other value (file / answer / accepted default).
+4. **Build** -- the normal pipeline (`model_opensees.py`, `model_static.py`, `report.html`, `design/*`).
+   `calc_package.json` marks every member *not checked* (the engine has no coded capacities; a user design is not
+   checked by Steltic HR) and carries the user's RBS cuts, Lb and doublers for the Nonlinear module.
+
+The agent never redesigns such a job: it gets `contract.BUILD_ONLY_RULES`, its `write_file` refuses the generated
+files, and the completion gate is the build-only gate (`runner.gate`: `cfg.py` is the generated one, the model is
+built as declared, nothing is open). HTTP: `POST /api/build_only/intake | answers | build`,
+`GET /api/build_only/status/<building>`. In the hub the *User-designed building* module drives the whole flow.
+`steltic/build_only/extract.py` re-enters an HR job as a description (the acceptance test: 11 of the 18 HR test
+buildings re-enter with identical periods, base shear and seismic weight -- and identical pushover / NLRHA models
+in the Nonlinear module; the other 7 are refused for version-1 reasons: plate shear walls, STMF, R = 3 not
+specifically detailed, plan-diagonal chamfer beams, inclined transfer columns, crane brackets off the levels).
+`tests/test_build_only.py`.
+
 ## A tool call the model never finished
 
 A provider behind OpenRouter validates the whole conversation on every request. If a turn is cut off

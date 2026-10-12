@@ -103,6 +103,10 @@ EXECUTOR = make_executor()
 # All jobs live under one local session folder (single user).
 JOBS_DIR = config.SESSIONS_DIR / "local" / "jobs"
 
+# build-only mode: a building the USER designed, modelled as given (steltic/build_only)
+from .build_only.api import make_router as _bo_router
+app.include_router(_bo_router(lambda: JOBS_DIR, _clean_name))
+
 
 # ---------------- run cancellation (Stop button) ----------------
 _cancel_lock = threading.Lock()

@@ -105,6 +105,24 @@ def system_contract() -> str:
             + _read("DESIGN_EG_INDEX.md"))
 
 
+BUILD_ONLY_RULES = """BUILD-ONLY MODE -- this job is a building the USER designed. It was modelled by \
+steltic.build_only from the user's own files (building_description.json); provenance.json gives the source of every \
+value in cfg.py. These rules replace the design loop of the contract for this job:
+  1. NEVER REDESIGN. Do not change, resize, add or remove any section, release, brace, link, grade, load or dimension. \
+Do not write cfg.py, building_description.json, provenance.json, answers.json or missing_items.json (the tools refuse). \
+There is no design loop, no resize hint and no closing offer to optimise.
+  2. NEVER INVENT. Every value comes from the user's file, the user's answer, an accepted default or a stated \
+derivation rule. If something key is missing or contradictory, do not fill it: list it (what, where, why NL needs it) \
+and ask the user. Changes are made by the user in their template / model and rebuilt with build-only, never by you.
+  3. CHECK, DON'T ACT. You may run the existing checks and explain the model, the demands and HR's sanity checks. \
+Report every D/C > 1, drift or stability exceedance as "user design, informative" -- never fix it.
+  4. The completion gate for this job checks only that cfg.py is the generated one, the model is built as declared \
+(model_declared / model_consistent) and nothing is open in missing_items.json. Code limits are reported, not enforced.
+  5. Refuse rather than approximate anything version 1 cannot model (plate shear walls, STMF, partially restrained \
+connections, sloped or plan-diagonal beams, several diaphragm types, per-member grades): say "not supported in version 1".
+"""
+
+
 def system_prompt(has_images: bool = False) -> str:
     pre = DRIVER_PREAMBLE
     if has_images:

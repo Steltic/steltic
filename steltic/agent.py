@@ -443,6 +443,9 @@ def _completion_gate(ws):
         if not jd:
             return []
         jd = pathlib.Path(jd)
+        from .build_only import runner as _BO
+        if _BO.is_build_only(jd):                    # a user-designed building: the build-only gate replaces (1)-(3)
+            return _BO.gate(jd)
         cp = jd / "design" / "calc_package.json"
         if not cp.exists():
             return ["design/calc_package.json does not exist -- run pipeline.design_and_report first"]
@@ -823,6 +826,18 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
         _archive_report(ws, building)
     conv_path = ws.jobs / building / "conversation.json"
     messages = None
+    from .build_only import runner as _BO
+    if _BO.is_build_only(ws.jobs / building):        # user-designed building: never the design loop
+        if messages is None and not conv_path.exists():
+            system = contract.system_prompt(has_images=False) + "\n\n" + contract.BUILD_ONLY_RULES
+            sys_content = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cache_on else system
+            user = (f"BUILDING NAME: {building}\n\nThis is a USER-DESIGNED building built in build-only mode "
+                    f"(jobs/{building}/building_description.json, provenance.json, missing_items.json). Follow the "
+                    f"BUILD-ONLY rules. The user's request:\n{brief or '(none -- summarise the model and its checks)'}")
+            messages = [{"role": "system", "content": sys_content}, {"role": "user", "content": user}]
+            yield {"type": "status", "text": f"build-only job '{building}': answering without redesign"}
+            resume = False
+            brief = None
     if resume and conv_path.exists():
         try:
             messages = json.loads(conv_path.read_text(encoding="utf-8"))
@@ -832,7 +847,10 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     m["content"] = None if m.get("tool_calls") else "(empty turn)"
                 if m.get("role") == "assistant" and m.get("tool_calls"):
                     _heal_tool_calls(m["tool_calls"])   # a cut-off call saved by an older version would 400 forever
-            if brief:                       # a NEW instruction -> continue the SAME design interactively
+            if brief and _BO.is_build_only(ws.jobs / building):
+                messages.append({"role": "user", "content": brief + "\n\n(BUILD-ONLY job: follow the BUILD-ONLY rules -- "
+                                 "no redesign, nothing invented; report, explain or list what is missing.)"})
+            elif brief:                     # a NEW instruction -> continue the SAME design interactively
                 messages.append({"role": "user", "content":
                     brief + "\n\n(Apply this change to the existing design: edit jobs/" + building +
                     "/cfg.py, re-run pipeline.design_and_report for fresh demands, re-derive the affected "

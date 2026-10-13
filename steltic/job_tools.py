@@ -74,9 +74,16 @@ class JobWorkspace:
         self.log("new_activity_log", self.building, "started")
         return {"ok": True, "building": self.building}
 
+    _BUILD_ONLY_PROTECTED = {"cfg.py", "building_description.json", "provenance.json", "answers.json", "missing_items.json"}
+
     def write_file(self, path: str, content: str) -> dict:
         try:
             target = self._resolve_write(path)
+            if (target.parent / "provenance.json").exists() and target.name in self._BUILD_ONLY_PROTECTED \
+                    and target.parent.name == (self.building or target.parent.name):
+                return {"error": "BUILD-ONLY job: %s is generated from the user's own design and is never edited here "
+                                 "(no redesign, nothing invented). Ask the user to change their building description and "
+                                 "rebuild it with build-only." % target.name}
             if target.is_dir():
                 return {"error": "write_file needs a FILE path INSIDE the job folder (e.g. 'cfg.py' or "
                                  "'design/calc_package.json'), not the folder itself ('%s' is a directory). "

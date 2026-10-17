@@ -142,7 +142,8 @@ class Case(tuple):
     `label, fD, fL, fLr, lat, co = case` unpacking still works -- plus optional attributes:
         kind     'gravity' | 'wind' | 'seismic' | 'omega0' | 'ecl' | 'ecl_ocbf'
         applies  None (all members present) or a set of member kinds the case may govern
-        uplift   None or (dirn, sgn): add the MWFRS roof suction of ASCE 7-22 Fig. 27.3-1
+        uplift   None or (dirn, sgn[, scale]): add the MWFRS roof suction of ASCE 7-22 Fig. 27.3-1
+                 (scale 0.75 / 0.563 for the Fig. 27.3-8 Cases 2-4)
         ecl      dict for capacity-limited cases (sx, sy, variant, patterns, Om0)
     col_only=True cases are skipped by legacy consumers (report per-case tables, frame diagrams)."""
     def __new__(cls, label, fD, fL, fLr, lat, col_only=False, **attrs):
@@ -312,7 +313,7 @@ class _Rec:
         return getattr(ops, name)(*a)
 
 
-def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False):
+def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False, beam_I=None):
     """Distribute gravity over an AGENT-BUILT (custom_build) model. We RECORD every OpenSees call the
     custom_build makes, then REPLAY it with the beams sub-divided into `nseg` elements.
     Element kind and section come from the returned info['ele'] list looked up BY TAG (HR-29); an
@@ -328,10 +329,13 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
             rec[name].append(a); return real[name](*a)
         return f
     for k in rec: setattr(ops, k, mk(k))
-    try:
+    _bt = getattr(eng, "_BUILD_TRANSF", "PDelta")
+    eng._BUILD_TRANSF = "PDelta" if transf == "PDelta" else "Linear"   # the transf THIS replay needs: a modal
+    try:                                                                 # solve in between must not leave it Linear
         info = cfg["custom_build"](cfg, transf)
     finally:
         for k in rec: setattr(ops, k, real[k])
+        eng._BUILD_TRANSF = _bt
 
     R = _Rec(); warnings = []
     ops.wipe(); R("model", "basic", "-ndm", 3, "-ndf", 6)
@@ -386,6 +390,10 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
         if kind == "beam" and etype == "elasticBeamColumn" and len(a) >= 11:
             props = a[4:10]; ttag = a[10]; relz, rely = _parse_rel(a[11:])
             (x1, y1, z1) = coord[n1]; (x2, y2, z2) = coord[n2]
+            if beam_I is not None:                 # serviceability: composite lower-bound I (AISC Comm. I3.2)
+                Ieff = beam_I(sec, z1)
+                if Ieff:
+                    props = list(props); props[4] = float(Ieff)
             L = ((x2-x1)**2 + (y2-y1)**2 + (z2-z1)**2) ** 0.5
             bm = {"etag": tag, "A": n1, "B": n2, "L": L, "sec": sec, "relz": relz, "rely": rely,
                   "i": -1, "j": -1, "k": None, "dir": "X" if abs(x2-x1) >= abs(y2-y1) else "Y",
@@ -510,7 +518,7 @@ def _infer_kind(a, coord):
     return "col" if abs(z2 - z1) > max(abs(x2 - x1), abs(y2 - y1)) else "beam"
 
 
-def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False):
+def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False, beam_I=None):
     """Build the static model. Beams are sub-divided into `nseg` sub-elements with real intermediate
     nodes; columns and braces stay single elements. Returns a dict describing the model so loads can
     be applied and per-member diagrams reassembled. Every beam carries its parent grid span
@@ -518,7 +526,7 @@ def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=
     the PARENT span's indices, so subdivided beams are located on their real grid line.
     stiff / drop / fix_masters: see _staticize_custom."""
     if cfg.get("custom_build"):
-        return _staticize_custom(cfg, transf, nseg, stiff, drop, fix_masters)
+        return _staticize_custom(cfg, transf, nseg, stiff, drop, fix_masters, beam_I)
     R = _Rec(); warnings = []
     ops.wipe(); R("model", "basic", "-ndm", 3, "-ndf", 6)
     NX, NY = cfg["NX"], cfg["NY"]
@@ -891,13 +899,18 @@ def _case_pieces(cfg, model, fD, fL, fLr, uplift=None, modes=None):
     up = None
     if uplift:
         qh, h = _wind_qh(cfg)
-        dirn, sgn = uplift
+        dirn, sgn = uplift[0], uplift[1]
+        usc = float(uplift[2]) if len(uplift) > 2 else 1.0      # 0.75 / 0.563 for Fig. 27.3-8 Cases 2-4
         xs = [c[0] for t, c in model["coord"].items() if t < _SUB0]
         ys = [c[1] for t, c in model["coord"].items() if t < _SUB0]
         lo_, hi_ = (min(xs), max(xs)) if dirn == "X" else (min(ys), max(ys))
         GCpi = float((cfg.get("wind") or {}).get("GCpi", 0.18))
-        G = float((cfg.get("wind") or {}).get("G", 0.85))
-        up = (qh, h, dirn, sgn, lo_, hi_, GCpi, G)
+        # Gf of a flexible building (26.11.5), the same factor the MWFRS walls use -- resolved once per run
+        # in demand_envelope (cfg['_wind_G']) so no modal solve can rebuild the domain mid-analysis
+        G = (cfg.get("_wind_G") or {}).get(dirn)
+        if G is None:
+            G = float((cfg.get("wind") or {}).get("G", 0.85))
+        up = (qh * usc, h, dirn, sgn, lo_, hi_, GCpi, G)
     for (k, i, j), b in model["bays"].items():
         if b["roof"]:
             p = fD * dead_psf(cfg, k) + _roof_terms(fLr, cfg, k)
@@ -1235,6 +1248,81 @@ def _ss_mid_defl(plist, Lp):
     return sum((xs[q + 1] - xs[q]) * 0.5 * (M[q] * m[q] + M[q + 1] * m[q + 1]) for q in range(len(xs) - 1))
 
 
+def _span_deflections(cfg, model, modes, fD, fL, rf):
+    """{(k, dir, i, j): max |vertical displacement - chord|} for one gravity solve (see service_deflections)."""
+    _reset(); ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    g = apply_case_gravity(cfg, model, fD, fL, rf, modes=modes)
+    if _solve() != 0:
+        return None
+    pcs = g["pieces"]; out = {}
+    for par, bms in model["by_span"].items():
+        k, d, i, j = par
+        A, B, _xa, _ya, _xb, _yb, Lp = model["spans"][k][(d, i, j)]
+        zA = ops.nodeDisp(A, 3); zB = ops.nodeDisp(B, 3)
+        dmax = 0.0
+        for bm in bms:
+            n = len(bm["nodes"]) - 1
+            for q, nd in enumerate(bm["nodes"]):
+                sp = bm["sA"] + (bm["sB"] - bm["sA"]) * q / max(n, 1)
+                chord = zA + (zB - zA) * sp / Lp
+                dmax = max(dmax, abs(ops.nodeDisp(nd, 3) - chord))
+        lam = 1.0
+        sides = [(k, i, jj) for jj in (j - 1, j)] if d == "X" else [(k, ii, j) for ii in (i - 1, i)]
+        if any(modes.get(sd, ("",))[0] == "default" for sd in sides):
+            dg = _ss_mid_defl(_floor_plist(pcs, par), Lp)
+            da = _ss_mid_defl(pcs["span"].get(par, []), Lp)
+            if da > 1e-12 and dg > da:
+                lam = dg / da
+        out[par] = (Lp, dmax * lam, bms[0].get("sec"))
+    return out
+
+
+def _service_deflections_composite(cfg, comp, nseg=6):
+    """Unshored composite floors (AISC 360-22 I3.1b; Commentary I3.2 lower-bound I): the precomposite dead
+    load (wet concrete + deck, comp['precomposite_psf']) on the BARE steel beams, minus the specified camber;
+    the rest of the dead load (superimposed, cladding) and the live load on the composite beams with
+    comp['I_eff'][section] (in4). Roof beams stay bare unless comp['roof'] is True. Returns the same
+    {(k, dir, i, j): dict(L, LL, TL, sec, composite, camber, pre)} as service_deflections."""
+    NF = len(cfg["heights"])
+    Ieff = {str(k).upper(): float(v) for k, v in (comp.get("I_eff") or {}).items()}
+    camber = {str(k).upper(): float(v) for k, v in (comp.get("camber_in") or {}).items()}
+    pre = float(comp.get("precomposite_psf", 0.0) or 0.0)
+    roof_too = bool(comp.get("roof", False))
+    zl = zlevels(cfg)
+    ztop = zl[-1]
+    def beam_I(sec, z):
+        if sec is None:
+            return None
+        if (not roof_too) and abs(z - ztop) < 1.0:
+            return None
+        return Ieff.get(str(sec).upper())
+    tot = {}
+    for b in ("Lr", "S", "R"):
+        tot[b] = sum(roof_psf(cfg, k)[("Lr", "S", "R").index(b)] for k in range(1, NF + 1))
+    rb = max(tot, key=lambda b: tot[b])
+    rf = RoofFactors(**{rb: 1.0}); zero = _mk_roof(0.0, 0.0, 0.0, 0.0)
+    Dk = {k: dead_psf(cfg, k) for k in range(1, NF + 1)}
+    roofk = lambda k: (k == NF)
+    cpre = dict(cfg, D_by_level={k: (Dk[k] if (roofk(k) and not roof_too) else min(pre, Dk[k])) for k in Dk},
+                extra_mass_floors={}, clad=0.0)
+    cpost = dict(cfg, D_by_level={k: (0.0 if (roofk(k) and not roof_too) else max(Dk[k] - pre, 0.0)) for k in Dk},
+                 extra_mass_floors={})
+    bare = build_static(cfg, "Linear", nseg)
+    modes = bay_modes(cfg, bare)
+    dpre = _span_deflections(cpre, bare, modes, 1.0, 0.0, zero) or {}
+    compm = build_static(cfg, "Linear", nseg, beam_I=beam_I)
+    dpost = _span_deflections(cpost, compm, modes, 1.0, 1.0, rf) or {}
+    dll = _span_deflections(cfg, compm, modes, 0.0, 1.0, rf) or {}
+    out = {}
+    for par, (Lp, dl, sec) in dll.items():
+        k = par[0]
+        c = camber.get(str(sec).upper(), 0.0) if (not roofk(k) or roof_too) else 0.0
+        p_ = dpre.get(par, (Lp, 0.0, sec))[1]; q_ = dpost.get(par, (Lp, 0.0, sec))[1]
+        comp_on = bool(beam_I(sec, zl[k]))
+        out[par] = dict(L=Lp, LL=dl, TL=max(p_ - c, 0.0) + q_, sec=sec, composite=comp_on, camber=c, pre=p_)
+    return out
+
+
 def service_deflections(cfg, nseg=6):
     """Beam deflections for the serviceability gate from the SOLVED static model (HR-27): unfactored
     live (floor L + the governing roof branch Lr / S / R) and total (D + live) on a nominal-stiffness
@@ -1242,7 +1330,12 @@ def service_deflections(cfg, nseg=6):
     span: max |vertical displacement - chord between the span's end nodes|; where the deck span is
     undeclared the value is scaled by the simple-span deflection ratio (half-bay girder-rule load /
     analysed load) on that span (conservative for the non-girder direction; declare deck_span).
-    Returns {(k, dir, i, j): dict(L=Lp, LL=in, TL=in, sec=section)}."""
+    Returns {(k, dir, i, j): dict(L=Lp, LL=in, TL=in, sec=section)}.
+    cfg['composite_floor'] = {'I_eff': {section: in4}, 'precomposite_psf': psf, 'camber_in': {section: in},
+    'roof': bool} switches to the unshored composite basis (_service_deflections_composite)."""
+    comp = cfg.get("composite_floor")
+    if comp and comp.get("I_eff"):
+        return _service_deflections_composite(cfg, comp, nseg)
     model = build_static(cfg, "Linear", nseg)
     modes = bay_modes(cfg, model)
     NF = model["NF"]
@@ -1351,6 +1444,10 @@ def _extract(model, floors=None):
         out[frozenset((b["n1"], b["n2"]))] = dict(Nc=max(-N, 0.0), Nt=max(N, 0.0), Mz=0.0, My=0.0, V=0.0)
     for b in model["beams"]:
         Nc = Nt = Mmaj = Mmin = V = 0.0
+        Mend = 0.0                          # major-axis moment at the two member END nodes (connection demand)
+        if b["segs"]:
+            f0 = ops.basicForce(b["segs"][0]); f1 = ops.basicForce(b["segs"][-1])
+            Mend = max(abs(f0[1]), abs(f0[3]), abs(f1[2]), abs(f1[4]))
         for t in b["segs"]:
             f = ops.basicForce(t)
             Nc = max(Nc, -f[0]); Nt = max(Nt, f[0])
@@ -1364,7 +1461,7 @@ def _extract(model, floors=None):
             Mmaj = Mmaj + fl[1]; V = V + fl[2]
         elif fl:
             Mmaj = max(Mmaj, fl[0]); V = max(V, fl[1])
-        out[frozenset((b["A"], b["B"]))] = dict(Nc=Nc, Nt=Nt, Mz=Mmaj, My=Mmin, V=V)
+        out[frozenset((b["A"], b["B"]))] = dict(Nc=Nc, Nt=Nt, Mz=Mmaj, My=Mmin, V=V, Mend=Mend)
     return out
 
 
@@ -1403,6 +1500,8 @@ def _merge(env, kinds, res, label, col_only, applies=None, axial_only=False):
             if kind in ("col", "brace") and sc > e["score"]: e["score"] = sc; e["combo"] = label
             continue
         e["Mz"] = max(e["Mz"], abs(r["Mz"])); e["My"] = max(e["My"], abs(r["My"]))
+        if "Mend" in r:
+            e["Mend"] = max(e.get("Mend", 0.0), abs(r["Mend"]))
         if abs(r["V"]) > e["V"]: e["V"] = abs(r["V"]); e["Vcombo"] = label
         sc = max(r["Nc"], r["Nt"]) if kind in ("col", "brace") else abs(r["Mz"])
         if sc > e["score"]: e["score"] = sc; e["combo"] = label
@@ -1452,6 +1551,9 @@ def brace_system(cfg, br):
     """AISC 341 system of a brace element: cfg['brace_system'] (str, {label: str} or callable(label,
     n1, n2)) wins; else label prefix BRB* -> BRBF, WEB*/STRIP* -> SPSW; else the single braced system
     named in cfg['system']; None when ambiguous."""
+    _Rb = _braced_R(cfg)
+    if 0.0 < _Rb <= 3.0 and not cfg.get("aisc341"):
+        return None          # R <= 3 'not specifically detailed' (ASCE 7-22 Table 12.2-1 row H): no AISC 341 system
     o = cfg.get("brace_system")
     s = None
     if callable(o):
@@ -2104,6 +2206,190 @@ def _cache_save(cache_dir, key, env, reac, info):
         pass
 
 
+# ====================================================================================
+# live load reduction (ASCE 7-22 4.7) -- per member, by superposition of the reducible live load
+# ====================================================================================
+def llr_opts(cfg):
+    """cfg['live_load_reduction'] = True or a dict:
+        unreduced_psf  part of each level's L that is NOT reduced (e.g. the 15 psf partition allowance of
+                       4.3.2, which is not a Table 4.3-1 load) -- default 0
+        KLL_col        live load element factor for columns (Table 4.7-1: 4 interior / exterior without
+                       cantilever slabs; 3 edge or 2 corner columns with cantilever slabs) -- default 4
+        KLL_beam       for beams (2 interior and edge beams without cantilever slabs) -- default 2
+        columns, beams switch the member kinds (default both True)
+    Returns None when not requested."""
+    o = cfg.get("live_load_reduction")
+    if not o:
+        return None
+    o = dict(o) if isinstance(o, dict) else {}
+    return dict(unreduced_psf=float(o.get("unreduced_psf", o.get("partition_psf", 0.0)) or 0.0),
+                KLL_col=float(o.get("KLL_col", 4.0)), KLL_beam=float(o.get("KLL_beam", 2.0)),
+                columns=bool(o.get("columns", True)), beams=bool(o.get("beams", True)))
+
+
+def llr_factor(KLL, AT_ft2, n_floors):
+    """ASCE 7-22 Eq. 4.7-1: L/Lo = 0.25 + 15/sqrt(KLL AT) for KLL AT >= 400 ft2, not less than 0.50 for
+    members supporting one floor nor 0.40 for members supporting two or more floors (4.7.2)."""
+    KA = KLL * AT_ft2
+    if KA < 400.0:
+        return 1.0
+    return min(1.0, max(0.25 + 15.0 / math.sqrt(KA), 0.50 if n_floors <= 1 else 0.40))
+
+
+def _llr_levels(cfg, NF, opts):
+    """Reducible part of the floor live load (psf) per level. Not reduced (ASCE 7-22): roofs (4.8 governs
+    Lr), Lo > 100 psf (4.7.3), passenger-vehicle garages (4.7.4), assembly occupancies (4.7.5) -- the
+    20 % allowances of 4.7.3 / 4.7.4 for members supporting two or more floors are not taken
+    (conservative)."""
+    out = {}
+    for k in range(1, NF + 1):
+        Lo = live_psf(cfg, k)
+        if Lo <= 0.0 or live_is_full(cfg, k):
+            continue
+        red = Lo - opts["unreduced_psf"]
+        if red > 0.0:
+            out[k] = red
+    return out
+
+
+def _beam_end_shear_sum(bm):
+    """Total vertical load carried by a beam = sum of its two end shears (global Z of the first and last
+    sub-elements) after a gravity-only solve."""
+    segs = bm.get("segs") or []
+    if not segs:
+        return 0.0
+    try:
+        f0 = ops.eleResponse(segs[0], "globalForce"); f1 = ops.eleResponse(segs[-1], "globalForce")
+        return abs(f0[2]) + abs(f1[8])
+    except Exception:
+        return 0.0
+
+
+def llr_plan(cfg, model, modes, spec, info):
+    """Two first-order gravity solves on the built model: a unit (1 psf) reducible live load -> the
+    tributary area AT of every column (its axial force) and simple beam (its end-shear sum, or the
+    half-bay girder load where the deck span is undeclared); and the actual reducible live load -> the
+    member forces that the reduction removes. Returns dict(rf={fs: RF}, AT={fs: ft2}, nfl={fs: n},
+    KLL={fs: K}, L={fs: (Nsigned, Mz, V)}, reac={node: fz}, base_rf={node: RF}, f_levels={k: psf}) or None."""
+    opts = llr_opts(cfg)
+    if not opts:
+        return None
+    NF = model["NF"]
+    red = _llr_levels(cfg, NF, opts)
+    if not red:
+        info["notes"].append("live load reduction requested but no level has a reducible floor live load "
+                             "(roofs, Lo > 100 psf, garages and assembly are not reduced)")
+        return None
+    zero_roof = _mk_roof(0.0, 0.0, 0.0, 0.0)
+
+    def solve(Lmap):
+        cf = dict(cfg); cf["L_by_level"] = dict(Lmap); cf["L_floor"] = 0.0
+        _reset(); ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        g = apply_case_gravity(cf, model, 0.0, 1.0, zero_roof, modes=modes)
+        ok = _solve(); info["solves"] += 1
+        if ok != 0:
+            return None
+        res = _extract(model, _floors(cf, model, g["pieces"], spec, grav_only=True))
+        beams = {}
+        for bm in model["beams"]:
+            fs = frozenset((bm["A"], bm["B"]))
+            tot = _beam_end_shear_sum(bm)
+            if spec.get(id(bm)) == "girder":                        # analytic half-bay girder load
+                xs, M, Vl, Vr = _simple_span(_floor_plist(g["pieces"], bm["parent"]), bm["Lp"])
+                tot = max(tot, abs(Vr[0]) + abs(Vl[-1])) if xs else tot
+            beams[fs] = tot
+        return res, beams, _reactions(model)
+
+    unit = solve({k: (1.0 if k in red else 0.0) for k in range(1, NF + 1)})
+    real = solve({k: red.get(k, 0.0) for k in range(1, NF + 1)})
+    if unit is None or real is None:
+        info["warnings"].append("live load reduction: the reducible-live solve did not converge -- NOT applied")
+        return None
+    res_u, beams_u, _ru = unit
+    res_l, _bl, reac_l = real
+    zl = model["z"]
+    out = dict(rf={}, AT={}, nfl={}, KLL={}, L={}, reac={}, base_rf={}, f_levels=red, opts=opts, kind={})
+    if opts["columns"]:
+        for c in model["cols"]:
+            fs = frozenset((c["n1"], c["n2"]))
+            ru = res_u.get(fs); rl = res_l.get(fs)
+            if not ru or not rl:
+                continue
+            AT = ru["Nc"] * 1000.0                                  # kip under 1 psf -> ft2
+            ztop = max(model["coord"][c["n1"]][2], model["coord"][c["n2"]][2])
+            kt = _level_of(ztop, zl) or 0
+            nfl = sum(1 for k in red if k >= kt)
+            rf = llr_factor(opts["KLL_col"], AT, nfl)
+            out["AT"][fs] = AT; out["nfl"][fs] = nfl; out["KLL"][fs] = opts["KLL_col"]; out["kind"][fs] = "col"
+            if rf < 1.0:
+                out["rf"][fs] = rf
+                out["L"][fs] = (rl["Nt"] - rl["Nc"], rl["Mz"], rl["V"])
+        for n, r in reac_l.items():
+            out["reac"][n] = r[2]
+        for c in model["cols"]:
+            fs = frozenset((c["n1"], c["n2"]))
+            for n in (c["n1"], c["n2"]):
+                if n in model.get("base_nodes", []) and fs in out["rf"]:
+                    out["base_rf"][n] = out["rf"][fs]
+    if opts["beams"]:
+        for bm in model["beams"]:
+            fs = frozenset((bm["A"], bm["B"]))
+            if bm.get("relz") != "both" or spec.get(id(bm)) == "chevron" or len(model["by_span"].get(bm.get("parent"), [bm])) > 1:
+                continue                     # simple single-span beams only (moment-frame / chevron beams: none)
+            rl = res_l.get(fs)
+            AT = beams_u.get(fs, 0.0) * 1000.0
+            if not rl or AT <= 0.0:
+                continue
+            k = bm.get("k")
+            if k not in red:
+                continue
+            rf = llr_factor(opts["KLL_beam"], AT, 1)
+            out["AT"][fs] = AT; out["nfl"][fs] = 1; out["KLL"][fs] = opts["KLL_beam"]; out["kind"][fs] = "beam"
+            if rf < 1.0:
+                out["rf"][fs] = rf
+                out["L"][fs] = (rl["Nt"] - rl["Nc"], rl["Mz"], rl["V"])
+    rfs = sorted(out["rf"].values())
+    info["llr"] = {"applied": True, "members_reduced": len(rfs),
+                   "RF_min": round(rfs[0], 3) if rfs else None, "RF_max": round(rfs[-1], 3) if rfs else None,
+                   "reducible_psf_by_level": {k: round(v, 1) for k, v in red.items()},
+                   "unreduced_psf": opts["unreduced_psf"], "KLL_col": opts["KLL_col"], "KLL_beam": opts["KLL_beam"],
+                   "basis": ("ASCE 7-22 4.7: L = Lo(0.25 + 15/sqrt(KLL AT)) >= 0.50 Lo (one floor) / 0.40 Lo (two or "
+                             "more floors), applied per member by superposition: the factored reducible live load "
+                             "effect x (1 - RF) is removed from each combination. Columns (axial; AT = sum of the "
+                             "tributary areas supported, from a unit-load solve) and simple single-span beams "
+                             "(moment and shear). Not reduced: moment-frame and chevron beams, the "
+                             "%.0f psf unreduced allowance, roofs, Lo > 100 psf, garages, assembly." % opts["unreduced_psf"])}
+    return out
+
+
+def llr_apply(plan, res, reac, fL):
+    """Remove the reducible-live effect fL x (1 - RF) x (reducible L effect) from one case's results
+    (in place): column axial (signed) and the moment / shear of simple beams; base reactions under the
+    reduced columns. res: _extract dict; reac: _reactions dict (may be None)."""
+    if not plan or not fL:
+        return
+    f = float(fL)
+    if f <= 0.0:
+        return
+    for fs, rf in plan["rf"].items():
+        r = res.get(fs)
+        if not r:
+            continue
+        NL, ML, VL = plan["L"][fs]
+        d = f * (1.0 - rf)
+        if plan["kind"].get(fs) == "col":
+            N = r["Nt"] - r["Nc"] - d * NL                          # NL < 0 in compression
+            r["Nc"] = max(-N, 0.0); r["Nt"] = max(N, 0.0)
+        else:
+            r["Mz"] = max(r["Mz"] - d * ML, 0.0)
+            r["V"] = max(r["V"] - d * VL, 0.0)
+    if reac:
+        for n, rf in plan["base_rf"].items():
+            if n in reac and n in plan["reac"]:
+                fx, fy, fz, mx, my, mz = reac[n]
+                reac[n] = (fx, fy, fz - f * (1.0 - rf) * plan["reac"][n], mx, my, mz)
+
+
 def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
                     sec_sig="", lat_sig="", cache_dir=None, extras=None, reactions_out=None, info_out=None):
     """Per-member DEMAND envelope from the static model.
@@ -2118,6 +2404,11 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
     backward compatibility and ignored."""
     floor_system = (floor_system or cfg.get("floor_system") or "one-way")
     cfgF = dict(cfg); cfgF["floor_system"] = floor_system
+    if cfg.get("wind") and "_wind_G" not in cfgF:
+        try:                                     # MWFRS gust factor per direction (Gf when flexible)
+            cfgF["_wind_G"] = {d: float(eng.wind_detail(cfg, d)["G"]) for d in ("X", "Y")}
+        except Exception:
+            pass
     dam = _dam_opts(cfg)
     stiff = dam["stiff"] if dam else 1.0
     info = {"warnings": [], "notes": [], "not_evaluated": [], "solves": 0}
@@ -2198,6 +2489,13 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
                                "C2.3(c) tau_b = 1 with 0.001*alpha*Yi" if dam["tau_b"] == "notional" else
                                "AISC 360-22 C2.2b, C2.3(a)/(b) tau_b = 1 -- alpha*Pr/Pns checked"}
 
+    # ---- live load reduction (ASCE 7-22 4.7), per member by superposition ----
+    llr = None
+    try:
+        llr = llr_plan(cfgF, model, modes, spec, info)
+    except Exception as ex:
+        info["warnings"].append("live load reduction failed (%s) -- NOT applied" % ex)
+
     def run(case, label, notional=None):
         _reset()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
@@ -2215,9 +2513,11 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
         fl = _floors(cfgF, model, g["pieces"], spec,
                      grav_only=not case[4] and not getattr(case, "uplift", None))
         res = _extract(model, fl)
+        reac = _reactions(model)
+        llr_apply(llr, res, reac, case[2])
         _merge(env, kinds, res, label, case[5], getattr(case, "applies", None),
                axial_only=getattr(case, "kind", "") == "omega0")
-        _merge_reac(renv, _reactions(model), label)
+        _merge_reac(renv, reac, label)
 
     std = [c for c in cases if getattr(c, "kind", "gravity") not in ("ecl", "ecl_ocbf")]
     for case in std:
@@ -2273,8 +2573,10 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
                                                  "in the envelope" % case[0])
                     continue
                 res = _extract(emodel, _floors(cfgF, emodel, g["pieces"], espec, grav_only=False))
+                reac = _reactions(emodel)
+                llr_apply(llr, res, reac, case[2])
                 _merge(env, kinds, res, case[0], False, getattr(case, "applies", None))
-                _merge_reac(renv, _reactions(emodel), case[0])
+                _merge_reac(renv, reac, case[0])
             model = build_static(cfgF, "PDelta", nseg, stiff=stiff)
         elif main:
             info["notes"].append("no capacity-limited elements identified: Ecl cases not run")
@@ -2295,6 +2597,7 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
                     continue
                 info["solves"] += 1
                 res = _extract(omodel, _floors(cfgF, omodel, g["pieces"], ospec, grav_only=False))
+                llr_apply(llr, res, None, case[2])
                 vb = {frozenset((b["A"], b["B"])) for b in omodel["beams"] if ospec.get(id(b)) == "chevron"}
                 res = {fs: r for fs, r in res.items() if fs in vb}      # F1.4a: V / inverted-V beams only
                 _merge(env, okinds, res, case[0], False, {"beam"})
@@ -2341,6 +2644,11 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
             info["warnings"].append("DAM: %d member(s) with alpha*Pr/Pns > 0.5 (e.g. %s %s %.2f): tau_b < 1 "
                                     "required (C2.3(b)) or use the C2.3(c) notional add-on (cfg['dam'] tau_b "
                                     "'notional')" % (len(worst), worst[0][1], worst[0][2], worst[0][0]))
+    if llr:
+        for fs, e in env.items():
+            if fs in llr["AT"]:
+                e["llr"] = {"RF": round(llr["rf"].get(fs, 1.0), 3), "AT_ft2": round(llr["AT"][fs], 0),
+                            "KLL": llr["KLL"][fs], "floors": llr["nfl"][fs]}
     if reactions_out is not None:
         reactions_out.update(renv)
     if info_out is not None:

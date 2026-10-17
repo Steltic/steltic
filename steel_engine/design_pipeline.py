@@ -77,6 +77,28 @@ def _ecl_systems(cfg):
     return out
 
 
+def aisc341_applies(cfg, d, SF=None):
+    """True when AISC 341 governs the seismic force-resisting system in direction d: R > 3 (the Table
+    12.2-1 steel systems detailed to AISC 341) or a cantilever-column system (rows G, R <= 2.5 but
+    detailed to AISC 341). An R = 3 'steel system not specifically detailed for seismic resistance'
+    (row H) is designed to AISC 360 alone (ASCE 7-22 14.1.2.2.1; AISC 341-22 A1 User Note)."""
+    sd = (SF or {}).get(d) or E.seis_dir(cfg, d)
+    R = float(sd.get("R") or 0)
+    sysn = str(sd.get("system") or cfg.get("system") or "").lower()
+    return R > 3.0 or "cantilever" in sysn
+
+
+def omega0_column_dirs(cfg, SF=None):
+    """Directions whose SFRS columns get the Omega0 [col] axial cases (AISC 341-22 D1.4a(b)).
+    cfg['omega0_columns'] = True forces both directions, False none."""
+    ov = cfg.get("omega0_columns")
+    if ov is True:
+        return ["X", "Y"]
+    if ov is False:
+        return []
+    return [d for d in ("X", "Y") if aisc341_applies(cfg, d, SF)]
+
+
 def combos(cfg):
     """ASCE 7-22 LRFD combinations (2.3.1 / 2.3.6) as SM.Case objects (legacy 6-tuples
     (label, fD, fL, fLr, lateral, col_only) with extra attributes, see static_model.Case):
@@ -84,7 +106,8 @@ def combos(cfg):
       4a 1.2D+1.0W+L+(0.5Lr | 0.3S | 0.5R);  5a 0.9D+1.0W (+ MWFRS roof suction, Fig. 27.3-1);
       6  (1.2+0.2SDS)D + rho*E + L + 0.15S;  7 (0.9-0.2SDS)D + rho*E   -- 100/30 with BOTH orthogonal signs
          (12.5.3/12.5.4, HR-30) and +/- accidental torsion;
-      Omega0 (12.4.3) column cases for every R > 3 SFRS and every braced frame (AISC 341-22 D1.4a(b), HR-06);
+      Omega0 (12.4.3) column cases in each direction whose SFRS AISC 341 governs (AISC 341-22 D1.4a(b),
+         HR-06) -- none for an R = 3 system not specifically detailed for seismic resistance;
       capacity-limited Ecl cases (12.4.3.2; AISC 341-22 F2.3 / F3.3 / F4.3 / F5.3, HR-07) and OCBF V-beam
          cases (F1.4a(a)), analysed by static_model.demand_envelope.
     Companion live factor per level: 0.5 where Lo <= 100 psf, 1.0 where Lo > 100 psf / garage / assembly
@@ -138,12 +161,17 @@ def combos(cfg):
                                    Elat(dirn, sgn, acc, "rho", osg), False, kind="seismic"))
                     cases.append(C("(0.9-0.2SDS)D+rhoE%s" % tg, 0.9-Ev, 0.0, _rf(cfg),
                                    Elat(dirn, sgn, acc, "rho", osg), False, kind="seismic"))
-    # Omega0 (ASCE 7-22 12.4.3, 2.3.6 combos 6/7 with Emh): axial demand on the COLUMNS of every SFRS --
-    # AISC 341-22 D1.4a(b) applies to moment frames, braced frames and walls alike (HR-06); braced R <= 3
-    # frames keep them as before. No accidental torsion (Emh = Omega0 * QE).
+    # Omega0 (ASCE 7-22 12.4.3, 2.3.6 combos 6/7 with Emh): axial demand on the COLUMNS of every SFRS that
+    # AISC 341 governs -- AISC 341-22 D1.4a(b) applies to moment frames, braced frames and walls alike
+    # (HR-06). It is generated per direction, only where AISC 341 applies in that direction: an R = 3
+    # 'steel system not specifically detailed for seismic resistance' (Table 12.2-1 row H) is designed to
+    # AISC 360 alone, and ASCE 7-22 12.4.3 applies overstrength only where a provision requires it
+    # (12.3.3.4 elements supporting discontinuous frames -- cfg["omega0_columns"]; 12.10.2.1 collectors in SDC C-F -- handled separately).
+    # cfg['omega0_columns'] = True / False overrides. No accidental torsion (Emh = Omega0 * QE).
     R = max(float(SF[d]["R"] or 0) for d in ("X", "Y"))   # an R > 3 SFRS in either direction
-    if E.is_braced(cfg) or R > 3.0:
-        for dirn in ("X", "Y"):
+    om_dirs = omega0_column_dirs(cfg, SF)
+    if om_dirs:
+        for dirn in om_dirs:
             for sgn in (1, -1):
                 for osg in osgs:
                     tg = "%s%s%s" % (dirn, '+' if sgn > 0 else '-', olab(dirn, osg))
@@ -200,7 +228,60 @@ def combos(cfg):
                 upl = (dirn, sgn) if (cfg["wind"].get("roof_uplift", True) is not False) else None
                 cases.append(C("0.9D+1.0W%s%s%s" % (dirn, sg, " (roof uplift)" if upl else ""), 0.9, 0.0,
                                _rf(cfg), latW, False, kind="wind", uplift=upl))   # 5a
+        cases += wind_torsional_cases(cfg, co)
     return cases
+
+
+def wind_torsional_cases(cfg, co=None):
+    """ASCE 7-22 Fig. 27.3-8 MWFRS wind load Cases 2-4 (27.3.5) in combinations 4a and 5a:
+      Case 2: 0.75 x the Case 1 story force along each principal axis with MT = 0.75 F e, e = +/-0.15 B;
+      Case 3: 0.75 x Case 1 in X and Y simultaneously;
+      Case 4: 0.563 x Case 1 in X and Y simultaneously with MT = 0.563 (FX eX + FY eY).
+    B = the building dimension normal to the wind (wind_detail B_ft); the torsion acts about the diaphragm
+    master. cfg['wind']['load_cases'] limits the set (e.g. (1, 3) or (1,) where Appendix D permits it)."""
+    w = cfg.get("wind") or {}
+    want = tuple(int(c) for c in (w.get("load_cases") or (1, 2, 3, 4)))
+    if not any(c in want for c in (2, 3, 4)):
+        return []
+    C = SM.Case
+    co = co or _roof_branches(cfg, _COMP)
+    LL = _live_label(cfg); Lf = SM.LiveFactor(0.5, 1.0)
+    WD = {d: E.wind_detail(cfg, d) for d in ("X", "Y")}
+    FW = {d: WD[d]["F"] for d in ("X", "Y")}
+    eB = {d: 0.15 * float(WD[d].get("B_ft") or 0.0) * 12.0 for d in ("X", "Y")}       # in
+    lev = sorted(set(FW["X"]) | set(FW["Y"]))
+    upl_on = w.get("roof_uplift", True) is not False
+    sg = lambda v: "+" if v > 0 else "-"
+    pats = []                                    # (tag, lateral, uplift)
+    if 2 in want:
+        for d in ("X", "Y"):
+            for s_ in (1, -1):
+                for es in (1, -1):
+                    lat = {k: ((0.75 * s_ * FW[d].get(k, 0.0), 0.0, es * 0.75 * FW[d].get(k, 0.0) * eB[d]) if d == "X"
+                               else (0.0, 0.75 * s_ * FW[d].get(k, 0.0), es * 0.75 * FW[d].get(k, 0.0) * eB[d]))
+                           for k in lev}
+                    pats.append(("W%s%s[C2 e%s]" % (d, sg(s_), sg(es)), lat, (d, s_, 0.75)))
+    if 3 in want:
+        for sx in (1, -1):
+            for sy in (1, -1):
+                lat = {k: (0.75 * sx * FW["X"].get(k, 0.0), 0.75 * sy * FW["Y"].get(k, 0.0), 0.0) for k in lev}
+                pats.append(("W[C3 X%sY%s]" % (sg(sx), sg(sy)), lat, ("X", sx, 0.75)))
+    if 4 in want:
+        for sx in (1, -1):
+            for sy in (1, -1):
+                for es in (1, -1):
+                    lat = {k: (0.563 * sx * FW["X"].get(k, 0.0), 0.563 * sy * FW["Y"].get(k, 0.0),
+                               es * 0.563 * (FW["X"].get(k, 0.0) * eB["X"] + FW["Y"].get(k, 0.0) * eB["Y"]))
+                           for k in lev}
+                    pats.append(("W[C4 X%sY%s e%s]" % (sg(sx), sg(sy), sg(es)), lat, ("X", sx, 0.563)))
+    out = []
+    for tag, lat, upl in pats:
+        for b, f in co:                                                    # 4a
+            out.append(C("1.2D+1.0%s+%s+%.1f%s" % (tag, LL, f, b), 1.2, Lf, _rf(cfg, b, f), lat, False,
+                         kind="wind", wind_case=int(tag.split("[C")[1][0])))
+        out.append(C("0.9D+1.0%s%s" % (tag, " (roof uplift)" if upl_on else ""), 0.9, 0.0, _rf(cfg), lat, False,
+                     kind="wind", uplift=(upl if upl_on else None), wind_case=int(tag.split("[C")[1][0])))   # 5a
+    return out
 
 
 def collector_extras(cfg, cases=None):
@@ -237,6 +318,12 @@ def design(name, outdir=None):
     outdir = outdir or os.path.join(base, "buildings", name, "design")
     os.makedirs(outdir, exist_ok=True)
     cases = combos(cfg)
+    _om_dirs = omega0_column_dirs(cfg)
+    _a341 = {d: aisc341_applies(cfg, d) for d in ("X", "Y")}
+    _om0_txt = ("Omega0 [col] axial cases for the SFRS columns in %s (AISC 341-22 D1.4a(b))" % "/".join(_om_dirs)
+                if _om_dirs else
+                "no Omega0 column cases (AISC 341 does not apply: R = 3 system not specifically detailed for "
+                "seismic resistance; ASCE 7-22 12.4.3 overstrength only where a provision requires it)")
 
     info0 = E.build(cfg, "PDelta")
     reg = {t: (kind, sec, n1, n2) for (t, kind, sec, n1, n2) in info0["ele"]}
@@ -288,7 +375,8 @@ def design(name, outdir=None):
         if se:
             env[t] = dict(comp=se["comp"], tens=se["tens"], Mz=se["Mz"], My=se["My"], V=se["V"],
                           combo=se["combo"], Vcombo=se.get("Vcombo", ""), Tcombo=se.get("Tcombo", ""),
-                          collector=se.get("collector", 0.0), collector_combo=se.get("collector_combo", ""))
+                          collector=se.get("collector", 0.0), collector_combo=se.get("collector_combo", ""),
+                          llr=se.get("llr"), Mend=se.get("Mend", se["Mz"]))
         else:
             missing.append(t)
         score[t] = (max(env[t]["comp"], env[t]["tens"]) if reg[t][0] in ("col", "brace") else env[t]["Mz"])
@@ -354,7 +442,15 @@ def design(name, outdir=None):
             for kk in ("comp", "tens", "Mz", "My", "V"): gg[kk] = max(gg[kk], e[kk])
             gg["collector"] = max(gg["collector"], e.get("collector", 0.0) or 0.0)
         tg = max(tags, key=lambda t: score[t])
-        gg["combo"] = env[tg]["combo"]; gg["L"] = max(length[t] for t in tags); genv[key] = gg
+        gg["combo"] = env[tg]["combo"]; gg["L"] = max(length[t] for t in tags)
+        _ll = [env[t].get("llr") for t in tags if env[t].get("llr")]
+        if _ll:
+            gg["llr"] = {"RF_governing_member": (env[tg].get("llr") or {}).get("RF"),
+                         "RF_min": min(x["RF"] for x in _ll), "RF_max": max(x["RF"] for x in _ll),
+                         "AT_ft2_governing_member": (env[tg].get("llr") or {}).get("AT_ft2"),
+                         "KLL": _ll[0]["KLL"],
+                         "basis": "ASCE 7-22 4.7 (Eq. 4.7-1), applied per member in the demand envelope"}
+        genv[key] = gg
     with open(os.path.join(outdir, "member_demands.md"), "w") as f:
         f.write("# %s - member DEMAND envelope (ASCE 7-22 LRFD, second-order P-Delta)\n\n" % name)
         nk = {}
@@ -362,10 +458,10 @@ def design(name, outdir=None):
             nk[getattr(c, "kind", "gravity")] = nk.get(getattr(c, "kind", "gravity"), 0) + 1
         f.write("Load combinations: %d (ASCE 7-22 2.3.1 / 2.3.6: gravity with every roof branch (Lr / S / R) "
                 "and the per-level companion live factor; seismic with Ev, rho, 100/30 with both orthogonal "
-                "signs, +/-accidental torsion; Omega0 [col] for every SFRS; capacity-limited Ecl where an AISC "
+                "signs, +/-accidental torsion; %s; capacity-limited Ecl where an AISC "
                 "341 braced system is present%s) -- %s. Each is run as a factored second-order case on the "
                 "static model and enveloped per element.\n\n"
-                % (len(cases), "; wind incl. 0.5W companion and 0.9D+1.0W roof uplift" if cfg.get("wind") else "",
+                % (len(cases), _om0_txt, "; wind incl. 0.5W companion and 0.9D+1.0W roof uplift" if cfg.get("wind") else "",
                    ", ".join("%s %d" % kv for kv in sorted(nk.items()))))
         _dam = dinfo.get("dam")
         if _dam:
@@ -381,6 +477,13 @@ def design(name, outdir=None):
             f.write("**Analysis basis: nominal-stiffness P-Delta (cfg['dam'] = False)** -- NOT the Direct "
                     "Analysis Method: use the effective length method (App. 7) with K from the alignment "
                     "charts, or enable cfg['dam'].\n\n")
+        _llr = dinfo.get("llr")
+        if _llr and _llr.get("applied"):
+            f.write("**Live load reduction (ASCE 7-22 4.7)** applied to %d member(s), L/Lo = %s to %s: %s\n\n"
+                    % (_llr["members_reduced"], _llr["RF_min"], _llr["RF_max"], _llr["basis"]))
+        else:
+            f.write("**Live load reduction:** not applied (cfg['live_load_reduction'] not set) -- unreduced floor "
+                    "live load throughout (conservative).\n\n")
         for _ne in dinfo.get("not_evaluated", []):
             f.write("> **NOT EVALUATED:** %s\n\n" % _ne)
         for _nt in dinfo.get("notes", []):
@@ -419,6 +522,23 @@ def design(name, outdir=None):
         p = P(sec)
         if kind == "brace":
             inp.update(A=(E.HSS.get(sec) if hasattr(E, "HSS") else None), r=S.brace_r(sec))
+            # buckling length seed (the same rule as the expected-strength cases): half the work-point
+            # length for X-brace diagonals connected at the crossing, else the work-point length; the
+            # longest brace of the group governs
+            try:
+                _lc = []
+                for t in tags:
+                    br = next(b for b in _bco["braces"] if b["etag"] == t)
+                    Lc_, bas_, dflt_ = SM._brace_length(cfg, _bco, br)
+                    _lc.append((Lc_, dflt_, SM._brace_crosses(_bco, br)))
+                Lc_, dflt_, xb_ = max(_lc)
+                inp.update(Lc_in=round(Lc_, 1),
+                           Lc_basis=("half the work-point length -- X-brace diagonals connected at the crossing"
+                                     if xb_ and not cfg.get("brace_length") and not cfg.get("brace_length_factor") else
+                                     "declared brace length" if (cfg.get("brace_length") or cfg.get("brace_length_factor"))
+                                     else "work-point length (conservative; end-to-end length is shorter)"))
+            except Exception:
+                pass
         elif p:
             Lb_eff = min(L, 0.095*p["ry"]*29000.0/50.0) if kind == "beam" else L
             inp.update(Lb_in=round(Lb_eff, 1), A=p["A"], Ix=p["Ix"], Iy=p["Iy"], J=p["J"], Zx=p["Zx"],
@@ -431,6 +551,8 @@ def design(name, outdir=None):
                    Mz_kipin=round(g["Mz"], 1), My_kipin=round(g["My"], 1), V_kip=round(g["V"], 2),
                    governing_combo=g["combo"], V_governing_combo=g.get("Vcombo", ""),
                    P_tens_governing_combo=g.get("Tcombo", ""))
+        if g.get("llr"):
+            inp.update(live_load_reduction=g["llr"])
         if g.get("collector"):
             inp.update(collector_axial_kip=round(g["collector"], 1),
                        collector_basis="ASCE 7-22 12.10.2.1 (Omega0 / Fpx), diaphragm-delivery statics")
@@ -440,24 +562,53 @@ def design(name, outdir=None):
                                "limit_state": None, "cited": None, "capacity": {}, "DC": None})
     # ---- connections[] : one design slot per governing member type + column base (DEMANDS only;
     #      the agent designs each connection in place and fills limit_state/cited/capacity/DC) ----
+    _any341 = any(_a341.values())
+    _brel = info0.get("beam_rel") or {}
     for key, tags in sorted(by.items()):
         kind, sec, role = key; e = genv[key]
         if kind == "beam":
-            ctype = "beam-to-column (shear; + moment if MF)"
-            dem = {"V_kip": round(e["V"], 1), "M_kipft": round(e["Mz"]/12, 1)}
+            # end condition from the analysis model's releases (engine3d.add_beam): a beam whose major-axis
+            # moment is released at both ends has a SIMPLE SHEAR connection -- its connection moment is
+            # zero (the group's Mz is the span moment, not a connection demand)
+            fixed_t = [t for t in tags if _brel.get(t, ("none", "none"))[0] != "both"]
+            known = all(t in _brel for t in tags)
+            if known and not fixed_t:
+                ctype = "simple shear connection (major-axis moment released at both beam ends in the model)"
+                dem = {"V_kip": round(e["V"], 1), "M_kipft": 0.0,
+                       "end_condition": "pinned both ends -- no connection moment"}
+                basis = ("AISC 360-22 Ch. J (J3 bolts, J2 welds, J4 connecting elements, J4.3 block shear); "
+                         "simple shear connection, AISC Manual Part 10")
+            else:
+                Mc = max((env[t].get("Mend", env[t]["Mz"]) for t in (fixed_t if known else tags)), default=e["Mz"])
+                ctype = "beam-to-column moment connection (+ shear)" if known else \
+                        "beam-to-column (shear; + moment if moment-connected)"
+                dem = {"V_kip": round(e["V"], 1), "M_kipft": round(Mc/12, 1)}
+                if known and len(fixed_t) < len(tags):
+                    dem["note"] = ("%d of %d beams in this group are moment-connected; M is their envelope, the "
+                                   "others are simple shear connections" % (len(fixed_t), len(tags)))
+                basis = ("AISC 360 Ch.J (J2 welds / J3 bolts / J4 block shear); MF per AISC 358 / 341" if _any341 else
+                         "AISC 360-22 Ch. J fully restrained moment connection (J2 CJP/fillet welds, J3 bolts, J10 "
+                         "column flange/web limit states) for the analysis forces; AISC 341/358 do not apply (R = 3)")
             if max(e["comp"], e["tens"]) > 0.5:
-                dem.update(P_comp_kip=round(e["comp"], 1), P_tens_kip=round(e["tens"], 1))
-            basis = "AISC 360 Ch.J (J2 welds / J3 bolts / J4 block shear); MF per AISC 358 / 341"
+                dem.update(P_comp_kip=round(e["comp"], 1), P_tens_kip=round(e["tens"], 1),
+                           axial_note="beam axial from the analysis (strut / collector / drag force) -- the "
+                                      "connection transfers it with the shear")
+            if e.get("collector"):
+                dem.update(collector_axial_kip=round(e["collector"], 1))
         elif kind == "brace":
             ctype = "brace-to-gusset"
-            dem = {"axial_kip": round(max(e["comp"], e["tens"]), 1)}
+            dem = {"axial_kip": round(max(e["comp"], e["tens"]), 1),
+                   "P_comp_kip": round(e["comp"], 1), "P_tens_kip": round(e["tens"], 1)}
             bc = brace_cap.get(sec)
             if bc:
                 dem.update({k: v for k, v in bc.items() if k.endswith("_kip")})
                 basis = ("AISC 360 Ch.J gusset/weld; AISC 341-22 required strength from the expected / "
                          "adjusted brace strength (%s)" % bc.get("basis", ""))
-            else:
+            elif _any341:
                 basis = "AISC 360 Ch.J gusset/weld; seismic expected strength RyFyAg per AISC 341"
+            else:
+                basis = ("AISC 360-22 Ch. J (gusset, welds, bolts; J4 Whitmore / block shear / buckling) for the "
+                         "brace ANALYSIS forces -- R = 3: AISC 341 does not apply, no expected-strength design")
         else:
             ctype = "column splice"
             dem = {"P_kip": round(e["comp"], 1), "P_comp_kip": round(e["comp"], 1),
@@ -465,7 +616,9 @@ def design(name, outdir=None):
                    "M_kipft": round(e["Mz"]/12, 1), "My_kipft": round(e["My"]/12, 1),
                    "tension_combo": e.get("Tcombo", ""), "shear_combo": e.get("Vcombo", "")}
             basis = ("AISC 360 J1.4 splice; AISC 341-22 D2.5 (tension/shear incl. Omega0 / Ecl cases); "
-                     "envelope over all combinations")
+                     "envelope over all combinations" if _any341 else
+                     "AISC 360-22 J1.4 / J3 column splice for the analysis forces, envelope over all combinations "
+                     "(R = 3: AISC 341 D2.5 does not apply)")
         pkg["connections"].append({"id": "conn-%s-%s" % (role, sec), "type": ctype, "section": sec,
                                    "demand": dem, "design_basis": basis,
                                    "limit_state": None, "cited": None, "capacity": {}, "DC": None})
@@ -487,9 +640,11 @@ def design(name, outdir=None):
                        "V_kip": round(rV["V"], 1), "Vx_kip": round(max(r["Vx"] for r in rr), 1),
                        "Vy_kip": round(max(r["Vy"] for r in rr), 1), "V_combo": rV["V_combo"],
                        "M_kipft": round(rM["M"] / 12, 1), "M_combo": rM["M_combo"], "n_bases": len(nds)},
-            "design_basis": "AISC 360 J8-J9 base plate + ACI 318 Ch.17 anchorage; AISC 341-22 D2.6 "
-                            "(reactions enveloped over ALL combinations incl. 0.9D+1.0W roof uplift, Omega0 "
-                            "and capacity-limited cases)",
+            "design_basis": ("AISC 360 J8-J9 base plate + ACI 318 Ch.17 anchorage; AISC 341-22 D2.6 "
+                             "(reactions enveloped over ALL combinations incl. 0.9D+1.0W roof uplift, Omega0 "
+                             "and capacity-limited cases)" if _any341 else
+                             "AISC 360-22 J8-J9 base plate + ACI 318-19 Ch. 17 anchorage (reactions enveloped over "
+                             "ALL combinations incl. 0.9D+1.0W roof uplift; R = 3: AISC 341 D2.6 does not apply)"),
             "limit_state": None, "cited": None, "capacity": {}, "DC": None})
     # ---- SEEDED COLLECTOR SLOTS + FRAMEWORK IRREGULARITY SCREEN (hardening #3/#9) ----
     # When the footprint screen finds a re-entrant corner or setback, seed a collector design slot
@@ -519,9 +674,11 @@ def design(name, outdir=None):
         # torsional irregularity (TIR > 1.2) can trigger the 12.3.3.5 25% increase there
         sxq = E.static_lateral(cfg, SFq["X"]["F_elf"], "X"); syq = E.static_lateral(cfg, SFq["Y"]["F_elf"], "Y")
         def _kratio(s_, Fxq):
-            dr = s_[2]
+            dr = s_[2]                                  # story drift RATIOS -> drift = ratio x h_sx
             Vst = [sum(Fxq[i] for i in range(k, NFq + 1)) for k in range(1, NFq + 1)]
-            K = [abs(Vst[k - 1] / dr[k - 1]) if abs(dr[k - 1]) > 1e-12 else 1e9 for k in range(1, NFq + 1)]
+            hs = [float(h) for h in cfg["heights"]]
+            K = [abs(Vst[k - 1] / (dr[k - 1] * hs[k - 1])) if abs(dr[k - 1]) > 1e-12 else 1e9
+                 for k in range(1, NFq + 1)]           # lateral stiffness V / Delta (Table 12.3-2 Type 1)
             r1 = K[0] / K[1] if NFq >= 2 else 9.9
             r3 = K[0] / (sum(K[1:4]) / max(len(K[1:4]), 1)) if NFq >= 4 else r1
             return round(r1, 2), round(r3, 2)
@@ -622,6 +779,12 @@ def design(name, outdir=None):
         "gravity_audit_dead_kip": {"note": "per level: (static model, seismic weight W) dead load",
                                    "levels": dinfo.get("gravity_audit_dead_kip")},
         "capacity_limited": dinfo.get("ecl"), "collector_lines": dinfo.get("collector"),
+        "live_load_reduction": dinfo.get("llr") or {"applied": False,
+                                                    "basis": "unreduced floor live load (conservative)"},
+        "omega0_columns": _om0_txt, "aisc341_applies": _a341,
+        "base_reactions": {str(n): dict({k: (round(v, 1) if isinstance(v, float) else v) for k, v in r.items()},
+                                        grid=[(n % 100000) // 100, n % 100])
+                           for n, r in sorted(reac_env.items())},
         "not_evaluated": dinfo.get("not_evaluated", []), "notes": dinfo.get("notes", []),
         "warnings": dinfo.get("warnings", [])[:40], "solves": dinfo.get("solves"),
         "cases": len(cases)}
@@ -647,13 +810,24 @@ def design(name, outdir=None):
         for t in sorted(reg):
             kind, sec, n1, n2 = reg[t]; e = env[t]
             if kind == "beam":
-                w.writerow(["beam-end @ %s/%s" % (n1, n2), t, "shear (+moment if MF)",
-                            "V=%.1f kip, M=%.1f kip-ft" % (e["V"], e["Mz"]/12),
-                            "size per AISC 360 Ch.J (agent derives bolt/weld/plate from RAG); MF per A358"])
+                pinned = _brel.get(t, ("none", "none"))[0] == "both"
+                ax = max(e["comp"], e["tens"])
+                axs = (", P=+%.1f/-%.1f kip" % (e["tens"], e["comp"])) if ax > 0.5 else ""
+                if pinned:
+                    w.writerow(["beam-end @ %s/%s" % (n1, n2), t, "simple shear (moment released)",
+                                "V=%.1f kip, M=0%s" % (e["V"], axs),
+                                "single-plate / clip angle per AISC 360 Ch. J and AISC Manual Part 10 (bolt-group "
+                                "eccentricity, plate ductility)" + ("; axial = collector/strut force" if axs else "")])
+                else:
+                    w.writerow(["beam-end @ %s/%s" % (n1, n2), t, "moment connection (FR) + shear",
+                                "V=%.1f kip, M_end=%.1f kip-ft%s" % (e["V"], e.get("Mend", e["Mz"])/12, axs),
+                                "AISC 358 prequalified / AISC 341 E-chapter" if _any341 else
+                                "AISC 360-22 Ch. J FR moment connection (analysis forces; AISC 341/358 n/a)"])
             elif kind == "brace":
                 w.writerow(["brace @ %s/%s" % (n1, n2), t, "axial",
-                            "P=%.1f kip" % max(e["comp"], e["tens"]),
-                            "gusset/weld per AISC 360 Ch.J; seismic capacity-design RyFyAg per AISC 341 (agent)"])
+                            "P=+%.1f/-%.1f kip" % (e["tens"], e["comp"]),
+                            "gusset/weld per AISC 360 Ch.J; seismic capacity design per AISC 341" if _any341 else
+                            "gusset/weld per AISC 360 Ch. J for the analysis forces (R = 3: AISC 341 n/a)"])
         # base reactions: envelope over ALL combinations (gravity, wind incl. roof uplift, rho E, Omega0,
         # Ecl) from the static demand model -- not one gravity combination (HR-17)
         for n in sorted(reac_env):
@@ -662,7 +836,8 @@ def design(name, outdir=None):
                         "P=%.1f kip [%s]; uplift=%.1f kip [%s]; V=%.1f (Vx=%.1f, Vy=%.1f) kip [%s]; M=%.1f kip-ft [%s]"
                         % (r["P"], r["P_combo"], r["uplift"], r["uplift_combo"], r["V"], r["Vx"], r["Vy"],
                            r["V_combo"], r["M"] / 12, r["M_combo"]),
-                        "base plate/anchor rods per AISC 360 J8/J9 (agent); anchorage ACI 318 Ch.17; AISC 341-22 D2.6"])
+                        "base plate/anchor rods per AISC 360 J8/J9; anchorage ACI 318 Ch.17" +
+                        ("; AISC 341-22 D2.6" if _any341 else "")])
 
     # ---- optional opsvis figures ----
     figs = []

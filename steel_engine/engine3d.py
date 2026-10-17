@@ -1030,7 +1030,15 @@ def _seis_resolve(cfg, d=None):
         if rho is None: rho = ov.get("rho")
     if rho is None: rho = cfg.get("rho")
     if rho is None: rho = base.get("rho")
-    eff["rho"] = float(rho if rho is not None else 1.3)
+    if rho is None:
+        # ASCE 7-22 12.3.4.1(a): rho = 1.0 in SDC B and C; 12.3.4.2: 1.3 in SDC D-F unless a condition of
+        # 12.3.4.2 is shown (declare cfg['rho'] = 1.0 with cfg['rho_basis'])
+        try:
+            from preflight import sdc_of_cfg as _sdc
+            rho = 1.0 if _sdc(cfg) in ("A", "B", "C") else 1.3
+        except Exception:
+            rho = 1.3
+    eff["rho"] = float(rho)
     eff["system"] = sysname; eff["sfrs"] = key
     if not key:
         inf = _sfrs_from_factors(eff)
@@ -1044,7 +1052,7 @@ def seis_dir(cfg, direction=None):
     the base cfg['seis'] merged with the direction's overrides (ASCE 7-22 12.2.2: the respective R, Cd
     and Omega0 apply to each system), the defaulted factors replaced by the declared system's Table 12.2-1
     / 12.8-2 values (HR-20), and the redundancy factor rho (cfg['rho_X'|'rho_Y'] > override 'rho' >
-    cfg['rho'] > 1.3).  Fully backward compatible: with one set, X and Y are identical."""
+    cfg['rho'] > 1.0 in SDC A-C / 1.3 in SDC D-F, 12.3.4).  Fully backward compatible: with one set, X and Y are identical."""
     return _seis_resolve(cfg, direction)[0]
 
 
@@ -1432,7 +1440,7 @@ def drift_allowable(cfg, direction=None):
     that direction (seis_dir) are used (HR-02); rho defaults to cfg['rho'] (1.3), as in the combinations."""
     dl = float(cfg.get("drift_limit", 0.020) or 0.020)
     if sdc_of(cfg) in ("D", "E", "F") and _mf_only(cfg, direction):
-        rho = float(seis_dir(cfg, direction)["rho"]) if direction else float(cfg.get("rho", 1.3) or 1.3)
+        rho = float(seis_dir(cfg, direction)["rho"]) if direction else float(seis_dir(cfg, None)["rho"])
         return dl / rho, True
     return dl, False
 
@@ -1841,14 +1849,20 @@ def beam_serviceability_detail(cfg):
     except Exception as ex:
         sd={}; out["solved_model_error"]=str(ex)
     if sd:
-        out["basis"]="solved static model (static_model.service_deflections): live = L + governing roof branch, total = D + live"
+        _cf=cfg.get("composite_floor") or {}
+        out["basis"]=("solved static model, unshored composite floors: precomposite dead load (%.0f psf) on the bare "
+                      "steel less camber + superimposed dead and live load on the composite beams (lower-bound I, "
+                      "AISC 360-22 Commentary I3.2); live = L + governing roof branch" % float(_cf.get("precomposite_psf", 0) or 0)
+                      if _cf.get("I_eff") else
+                      "solved static model (static_model.service_deflections): live = L + governing roof branch, total = D + live")
         wLLr=wTLr=0.0
         for (k,dd,i,j),v in sorted(sd.items()):
             L=v["L"]
             if L<=0: continue
             rL=v["LL"]/(L/360.0); rT=v["TL"]/(L/240.0)
             out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=(k>=NF),dLL=v["LL"],dTL=v["TL"],
-                                      rLL=rL,rTL=rT,span=(k,dd,i,j)))
+                                      rLL=rL,rTL=rT,span=(k,dd,i,j),composite=v.get("composite"),
+                                      camber=v.get("camber"),pre=v.get("pre")))
             wLLr=max(wLLr,rL); wTLr=max(wTLr,rT)
         out["LL"],out["TL"]=wLLr,wTLr
         return out
@@ -2632,12 +2646,21 @@ def wind_detail(cfg, direction):
     h = float(w.get("h_ft") or max(roof_mean(s[-1][0]) for s in st.values()))
     qh = q0*kz_exposure(h, exp)
     # ---- gust-effect factor (Sec. 26.11) ----
-    least = min(Lx, Ly); n1 = w.get("n1"+direction, w.get("n1")); n1_src = "cfg['wind']['n1']"
+    least = min(Lx, Ly); n1 = w.get("n1"+direction, w.get("n1")); n1_src = "given (rational analysis)"
     if w.get("Gf") is not None:
-        G = float(w["Gf"]); rigid = False; n1_src = "cfg['wind']['Gf'] given"
+        G = float(w["Gf"]); rigid = False; n1_src = "Gf given (rational analysis, 26.11.5)"
     elif h <= 60.0 and h <= least:
         G = float(w.get("G", 0.85)); rigid = True; n1_src = "low-rise (Sec. 26.2) -> rigid permitted (26.11.2)"
     else:
+        if n1 is None and w.get("n1_from_modal", True):
+            # rational n1 (26.11.3 'shall be established using the structural properties ... in a properly
+            # substantiated analysis'): the fundamental period of THIS model in the wind direction
+            try:
+                Td = period_dir(cfg, direction)[0]
+                if Td and Td > 0:
+                    n1 = 1.0/float(Td); n1_src = "modal analysis, n1 = 1/T = 1/%.3f s" % Td
+            except Exception:
+                n1 = None
         if n1 is None:
             ft = _wind_frame_type(cfg, w)
             n1 = 22.2/h**0.8 if ft == "mrf" else 75.0/h            # Eqs. 26.11-3 / 26.11-4
@@ -2646,8 +2669,8 @@ def wind_detail(cfg, direction):
                     / max(sum(z[k] for k in range(1, NF+1)), 1e-9))   # Eq. 26.11-1
             if h > 300.0 or h >= 4.0*Leff:
                 warns.append("Sec. 26.11.2.1 limits not met (h=%.0f ft, Leff=%.0f ft): the approximate na=%.3f Hz is "
-                             "NOT permitted -- set cfg['wind']['n1'] (=1/T1 from the modal analysis) or a "
-                             "rational Gf (26.11.6)" % (h, Leff, n1))
+                             "NOT permitted -- use n1 = 1/T1 from the modal analysis or a rational Gf "
+                             "(26.11.6)" % (h, Leff, n1))
         n1 = float(n1)
         if n1 >= 1.0:
             G = float(w.get("G", 0.85)); rigid = True

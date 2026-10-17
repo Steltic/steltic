@@ -546,8 +546,8 @@ def rho_findings(cfg):
     rho = cfg.get("rho")
     if rho is None:
         if sdc in ("A", "B", "C"):
-            out.append(("WARN", "cfg['rho'] not declared: the engine uses rho=1.3, but ASCE 7-22 12.3.4.1 permits "
-                                "rho=1.0 in SDC %s -- conservative; declare cfg['rho']=1.0 (or 1.3 deliberately)" % sdc))
+            out.append(("WARN", "cfg['rho'] not declared: the engine uses rho=1.0 per ASCE 7-22 12.3.4.1 (SDC %s) "
+                                "-- declare cfg['rho'] to record it" % sdc))
         else:
             out.append(("WARN", "cfg['rho'] not declared: the engine uses rho=1.3 (SDC %s). rho=1.0 is permitted "
                                 "only where 12.3.4.2 (a) or (b) is met -- declare cfg['rho'] explicitly" % sdc))
@@ -640,7 +640,7 @@ def check(cfg):
     # the engine applies the division in its drift gates -- flag it so the reduced target is expected
     _mf_only = mf_only_system(cfg)
     if _mf_only and sdc_of_cfg(cfg) in ("D", "E", "F"):
-        _rho = float(cfg.get("rho", 1.3) or 1.3)
+        _rho = float(cfg.get("rho", 1.3 if sdc_of_cfg(cfg) in ("D", "E", "F") else 1.0) or 1.3)
         say("WARN", "moment-frame-only SFRS in SDC %s: allowable story drift is drift_limit/rho = "
                     "%.4f/%.2f = %.4f (12.12.1.1) -- the engine drift gates apply this division"
                     % (sdc_of_cfg(cfg), dl, _rho, dl / _rho))
@@ -671,6 +671,15 @@ def check(cfg):
         v = cfg.get(k)
         if isinstance(v, (int, float)) and v > 400:
             say("WARN", "%s=%g psf is unusually high -- confirm units (psf)" % (k, v))
+    # ---- 12.7.2 item 2: partition weight in W where a partition allowance (4.3.2) is carried ----
+    _llr = cfg.get("live_load_reduction")
+    _part = (isinstance(_llr, dict) and float(_llr.get("unreduced_psf", _llr.get("partition_psf", 0)) or 0) > 0) \
+        or float(cfg.get("partition_psf", 0) or 0) > 0
+    if _part and not cfg.get("seismic_mass_only") and not cfg.get("partitions_in_dead"):
+        say("WARN", "a partition live-load allowance is declared (ASCE 7-22 4.3.2) but no partition weight is in "
+                    "the seismic weight: 12.7.2 item 2 requires the actual partition weight or >= 10 psf of floor "
+                    "area in W -- set cfg['seismic_mass_only'] = {level: 10.0} (or cfg['partitions_in_dead'] = True "
+                    "where D already includes them)")
     _Lf = cfg.get("L_floor")
     if isinstance(_Lf, (int, float)) and _Lf >= 125 and not cfg.get("storage") \
             and not cfg.get("storage_levels"):

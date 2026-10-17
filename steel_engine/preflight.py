@@ -210,6 +210,8 @@ SYSTEMS = {
                  lim=dict(B=NL, C=NL, D=160.0, E=160.0, F=100.0), Ct_x=(0.02, 0.75), inc=True),
     "c-psw": dict(name="steel and concrete composite plate shear wall", R=6.5, Om0=2.5, Cd=5.5,
                   lim=dict(B=NL, C=NL, D=160.0, E=160.0, F=100.0), Ct_x=(0.02, 0.75)),
+    "cc-psw": dict(name="steel and concrete coupled composite plate shear wall", R=8.0, Om0=2.5, Cd=5.5,
+                   lim=dict(B=NL, C=NL, D=160.0, E=160.0, F=100.0), Ct_x=(0.02, 0.75), inc=True),
     "smf":  dict(name="steel special moment frame", R=8.0, Om0=3.0, Cd=5.5,
                  lim=dict(B=NL, C=NL, D=NL, E=NL, F=NL), Ct_x=(0.028, 0.8), mf=True),
     "stmf": dict(name="steel special truss moment frame", R=7.0, Om0=3.0, Cd=5.5,
@@ -229,16 +231,20 @@ SYSTEMS = {
                           lim=dict(B=NL, C=NL, D=NL, E=NL, F=NL), Ct_x=(0.03, 0.75), dual=True),
     "dual:smf+spsw": dict(name="dual: SMF + steel SPSW", R=8.0, Om0=2.5, Cd=6.5,
                           lim=dict(B=NL, C=NL, D=NL, E=NL, F=NL), Ct_x=(0.02, 0.75), dual=True),
+    "dual:smf+cc-psw": dict(name="dual: SMF + steel and concrete coupled composite plate shear walls", R=8.0,
+                            Om0=2.5, Cd=5.5, lim=dict(B=NL, C=NL, D=NL, E=NL, F=NL), Ct_x=(0.02, 0.75),
+                            dual=True),
     "dual:imf+scbf": dict(name="dual: IMF + steel SCBF", R=6.0, Om0=2.5, Cd=5.0,
                           lim=dict(B=NL, C=NL, D=35.0, E=NP, F=NP), Ct_x=(0.02, 0.75), dual=True),
 }
 _LONG = (("special truss moment", "stmf"), ("special moment", "smf"), ("intermediate moment", "imf"),
          ("ordinary moment", "omf"), ("special concentrically", "scbf"), ("ordinary concentrically", "ocbf"),
          ("eccentrically", "ebf"), ("buckling-restrained", "brbf"), ("buckling restrained", "brbf"),
-         ("special plate shear", "spsw"), ("composite plate shear", "c-psw"),
+         ("special plate shear", "spsw"), ("coupled composite plate shear", "cc-psw"),
+         ("composite plate shear", "c-psw"),
          ("not specifically detailed", "nsd"))
-_ABBR = re.compile(r"(?<![a-z])(stmf|smf|imf|omf|scbf|ocbf|ebf|brbf|spsw|c-?psw)(?![a-z])")
-_BRACED = ("ebf", "scbf", "ocbf", "brbf", "spsw", "c-psw")
+_ABBR = re.compile(r"(?<![a-z])(stmf|smf|imf|omf|scbf|ocbf|ebf|brbf|spsw|cc-?psw|c-?psw)(?![a-z])")
+_BRACED = ("ebf", "scbf", "ocbf", "brbf", "spsw", "c-psw", "cc-psw")
 H_INC_KEY = "height_increase_12_2_5_4"
 H_EXC_KEY = "height_limit_exception"
 
@@ -257,9 +263,12 @@ def parse_system(cfg_or_name):
         if pat in txt and key not in found:
             found.append(key)
     for m in _ABBR.finditer(txt):
-        key = "c-psw" if m.group(1).startswith("c") else m.group(1)
+        g_ = m.group(1)
+        key = "cc-psw" if g_.startswith("cc") else ("c-psw" if g_.startswith("c") else g_)
         if key not in found:
             found.append(key)
+    if "cc-psw" in found and "c-psw" in found:  # 'coupled composite plate shear' also reads as C-PSW
+        found.remove("c-psw")
     if any(k in txt for k in ("not detailed", "r=3", "r = 3")) and "nsd" not in found:
         found.append("nsd")
     if not found:

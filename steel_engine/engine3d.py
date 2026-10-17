@@ -891,6 +891,9 @@ SFRS_TABLE = {
     "OCBF": dict(R=3.25, Om0=2.0, Cd=3.25, Ct=0.02,  x=0.75, row="B.3 steel ordinary concentrically braced frames"),
     "BRBF": dict(R=8.0,  Om0=2.5, Cd=5.0,  Ct=0.03,  x=0.75, row="B.26 steel buckling-restrained braced frames"),
     "SPSW": dict(R=7.0,  Om0=2.0, Cd=6.0,  Ct=0.02,  x=0.75, row="B.27 steel special plate shear walls"),
+    "CPSW": dict(R=6.5,  Om0=2.5, Cd=5.5,  Ct=0.02,  x=0.75, row="B.14 steel and concrete composite plate shear walls"),
+    "CCPSW": dict(R=8.0, Om0=2.5, Cd=5.5,  Ct=0.02,  x=0.75,
+                  row="B.28 steel and concrete coupled composite plate shear walls"),
     "SMF":  dict(R=8.0,  Om0=3.0, Cd=5.5,  Ct=0.028, x=0.8,  row="C.1 steel special moment frames"),
     "STMF": dict(R=7.0,  Om0=3.0, Cd=5.5,  Ct=0.028, x=0.8,  row="C.2 steel special truss moment frames"),
     "IMF":  dict(R=4.5,  Om0=3.0, Cd=4.0,  Ct=0.028, x=0.8,  row="C.3 steel intermediate moment frames"),
@@ -899,6 +902,8 @@ SFRS_TABLE = {
     "DUAL_SMF_SCBF": dict(R=7.0, Om0=2.5, Cd=5.5, Ct=0.02, x=0.75, row="D.2 dual: SMF + steel SCBF"),
     "DUAL_SMF_BRBF": dict(R=8.0, Om0=2.5, Cd=5.0, Ct=0.03, x=0.75, row="D.13 dual: SMF + steel BRBF"),
     "DUAL_SMF_SPSW": dict(R=8.0, Om0=2.5, Cd=6.5, Ct=0.02, x=0.75, row="D.14 dual: SMF + steel SPSW"),
+    "DUAL_SMF_CCPSW": dict(R=8.0, Om0=2.5, Cd=5.5, Ct=0.02, x=0.75,
+                           row="D.15 dual: SMF + steel and concrete coupled composite plate shear walls"),
     "DUAL_IMF_SCBF": dict(R=6.0, Om0=2.5, Cd=5.0, Ct=0.02, x=0.75, row="E.1 dual: IMF + steel SCBF"),
     "NSD":  dict(R=3.0,  Om0=3.0, Cd=3.0,  Ct=None,  x=None, row="H steel systems not specifically detailed"),
 }
@@ -921,6 +926,12 @@ def sfrs_key(name):
         if any(_has_word(s, w) for w in words): found.append(key)
     add("STMF", "stmf", "truss moment")
     add("SPSW", "spsw", "plate shear wall", "plate shear walls")
+    add("CCPSW", "cc psw", "ccpsw", "coupled composite plate shear wall", "coupled composite plate shear walls")
+    add("CPSW", "c psw", "cpsw", "composite plate shear wall", "composite plate shear walls")
+    if "CCPSW" in found:                       # coupled composite walls (B.28 / D.15), not B.14 / B.27
+        found = [f for f in found if f not in ("CPSW", "SPSW")]
+    elif "CPSW" in found:
+        found = [f for f in found if f != "SPSW"]
     add("BRBF", "brbf", "buckling restrained")
     add("EBF", "ebf", "eccentrically braced", "eccentric")
     add("SCBF", "scbf", "special concentrically braced", "special concentric")
@@ -2668,7 +2679,7 @@ def wind_detail(cfg, direction):
         d_lo, d_hi = max(sr-lo_, 0.0), max(hi_-sr, 0.0)
         if min(d_lo, d_hi) <= 1e-6:
             warns.append("level %d: ridge at the plate edge (monoslope) -- the high-side wall above the eave is "
-                         "not modelled; verify by hand" % k)
+                         "not modelled; check it separately where it governs" % k)
         gable[k] = dict(ax=rax, sr=sr, lo=lo_, hi=hi_, eave=eave, ridge=ridge, d_lo=d_lo, d_hi=d_hi)
     def roof_mean(k):
         gr = gable.get(k)

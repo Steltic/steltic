@@ -2777,6 +2777,7 @@ def _irregularity_section(cfg, runs, sf=None):
         for k_ in ("12.3.3.5", "12.7.3 (3D model)"):
             trig[k_] = [x for x in trig.get(k_, []) if x != "H1"]
     # ---- H2 / H3 geometric plan screens
+    _h3_op = _h3_open = None
     try:
         pl = E.plan_irregularity_levels(cfg)
     except Exception as ex:
@@ -2813,6 +2814,7 @@ def _irregularity_section(cfg, runs, sf=None):
             op = ("open area %.0f%% of the gross enclosed area at %s (limit 25%%%s)"
                   % (100 * g["open_ratio"], _glab(g, k),
                      "" if cfg.get("diaphragm_openings") else "; framed-bay openings only &mdash; other slab openings are not modelled"))
+            _h3_op, _h3_open = op, g["open_ratio"]
             h3 = ("Type 3 DIAPHRAGM DISCONTINUITY: YES &mdash; " + op if g["open_ratio"] > 0.25 else "Openings: " + op) + \
                  ("; story-to-story change in effective diaphragm stiffness: " + NE +
                   (" (flexible diaphragm idealization)" if str(cfg.get("diaphragm", "")).lower().startswith("flex")
@@ -2877,6 +2879,20 @@ def _irregularity_section(cfg, runs, sf=None):
         v3 = "Not present (engineer's evaluation): " + _esc(_t3)
         for k_ in ("12.3.3.4", "12.3.3.5"):
             trig[k_] = [x for x in trig.get(k_, []) if x != "V3"]
+    # H3: the open-area screen is automated, the story-to-story change in effective diaphragm stiffness (> 50 %) is
+    # the engineer's evaluation -- cfg['irregularity_statements']['H3'] = text (not present) or {'present': True,
+    # 'text': ...} (present: 12.3.3.5 applies in SDC D-F).  An open area > 25 % stays YES whatever the statement.
+    _ph3, _th3 = _declared("H3")
+    if _ph3 is not None and pl is not None:
+        _opn = ("; openings: " + _h3_op) if _h3_op else ""
+        if _ph3:
+            h3 = "Type 3 DIAPHRAGM DISCONTINUITY: YES (engineer's evaluation) &mdash; " + _esc(_th3) + _opn
+            if "H3" not in trig.setdefault("12.3.3.5", []): trig["12.3.3.5"].append("H3")
+        elif _h3_open is not None and _h3_open > 0.25:
+            h3 = ("Type 3 DIAPHRAGM DISCONTINUITY: YES &mdash; " + _h3_op +
+                  "; story-to-story change in effective diaphragm stiffness (engineer's evaluation): " + _esc(_th3))
+        else:
+            h3 = "Not present (engineer's evaluation): " + _esc(_th3) + _opn
     # ---- H5 nonparallel
     npar = (_frame_inventory(cfg).get("nonparallel") or [])
     if npar or cfg.get("skew"):

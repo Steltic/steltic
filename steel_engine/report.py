@@ -3085,10 +3085,17 @@ def _gravity_loads_note(cfg=None, pkg=None):
     smo = cfg.get("seismic_mass_only")
     wtxt = (" For the seismic weight W the partition weight (&sect;12.7.2 item 2) is included as listed above."
             if isinstance(smo, dict) and _levels_txt(smo) else "")
-    if snow > 0:
+    _snow_rec = bool(re.search(r"snow drift|drift(?:ed)? snow|drift surcharge|unbalanced snow|sliding snow|p<sub>d</sub>|\bpd\s*=",
+                               json.dumps(pkg or {}), re.I))
+    if snow > 0 and _snow_rec:
         rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub> and the uniform roof snow load S; snow "
                 "drift, unbalanced or sliding snow and ponding, where they apply, are addressed in the member design "
                 "records (Chapter 6) and are not part of the analysis-model loading.")
+    elif snow > 0:
+        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub> and the uniform roof snow load S. "
+                "Snow drift, unbalanced and sliding snow are not part of the analysis-model loading; the snow basis in "
+                "the load table above states which of them apply to this roof, and ponding is addressed under the "
+                "rain basis.")
     else:
         rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>. The design criteria contain no snow "
                 "load (snow basis in the load table above), so no snow drift, unbalanced or sliding snow is carried; "

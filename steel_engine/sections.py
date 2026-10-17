@@ -91,6 +91,10 @@ def props(name, SEC=None):
     if SEC is None:
         from engine3d import SEC as _S; SEC=_S
     A,Ix,Iy,J = SEC[name]
+    if name not in _GEOM:
+        # custom / built-up section registered in the analysis model only (A, Ix, Iy, J): gross
+        # properties for the calc package; plate geometry is given with the hand design
+        return dict(A=A, Ix=Ix, Iy=Iy, J=J, rx=math.sqrt(Ix/A), ry=math.sqrt(Iy/A), custom=True)
     Zx,dd,tw,bf,tf = _GEOM[name]
     Sx = 2*Ix/dd; Sy = 2*Iy/bf
     rx = math.sqrt(Ix/A); ry = math.sqrt(Iy/A)

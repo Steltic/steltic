@@ -1206,7 +1206,14 @@ def static_lateral(cfg, Fx, direction, accidental=False, Ax=None):
         davg = 0.5*(abs(u1) + abs(u2))
         dratio[k] = (max(abs(u1), abs(u2))/davg) if davg > 1e-12 else None
     ops.reactions()
-    Rs = sum(ops.nodeReaction(ntag(i, j, 0), di+1) for (i, j) in info["present"][0])
+    # base shear from EVERY support node at the base elevation -- a custom_build may place column bases
+    # off the grid (skewed / chamfered columns) where info['present'][0] has no key
+    try:
+        _tags = ops.getNodeTags()
+        _z0 = min(ops.nodeCoord(t)[2] for t in _tags)
+        Rs = sum(ops.nodeReaction(t, di+1) for t in _tags if abs(ops.nodeCoord(t)[2] - _z0) < 1e-6)
+    except Exception:
+        Rs = sum(ops.nodeReaction(ntag(i, j, 0), di+1) for (i, j) in info["present"][0])
     # Torsional Irregularity Ratio (ASCE 7-22 Eq. 12.3-2): story drift at the building's extreme edge /
     # average of the two opposing edges, for every story; the max over stories is returned.  Stories
     # whose drift is numerically nil (e.g. a stiff podium under a tiny force) are skipped.

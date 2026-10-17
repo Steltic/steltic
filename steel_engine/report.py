@@ -823,6 +823,9 @@ def _dc_status(dc, issues=None, waived=None):
         return "&mdash;"
     if v > 1.0 + 1e-9 and waived:
         return "<b class='ng'>retrofit required</b>"
+    if waived and isinstance(waived, str) and v <= 1.0 + 1e-9:
+        w_ = waived.strip()
+        return "OK (%s%s)" % ("" if w_.lower().startswith("existing") else "existing; ", _esc(w_[:120]))
     return "<b class='ng'>NG</b>" if v > 1.0 + 1e-9 else "OK"
 
 
@@ -2566,8 +2569,10 @@ def _lfrs_table(cfg, sf=None, pkg=None):
                            if len(sf["dirs"][d]) > 1 else _height_limit(f, sdc, hn, cfg, pkg) for f in sf["dirs"][d])
         rows.append([f"{d} direction", _sys_label(sf, d), _fac(sd.get("R")), _fac(sd.get("Cd")), _fac(sd.get("Om0")),
                      _fac(sd.get("rho")), hl])
+    _hl_decl = isinstance(cfg.get("height_limit"), dict) and cfg["height_limit"].get("limit_ft") is not None
     tbl = _table(["Direction", "Seismic force-resisting system", "R", "C<sub>d</sub>", "&Omega;<sub>0</sub>",
-                  "&rho;", "Structural height limit, Table 12.2-1 (SDC %s)" % sdc], rows)
+                  "&rho;", ("Structural height limit (SDC %s)" if _hl_decl else
+                            "Structural height limit, Table 12.2-1 (SDC %s)") % sdc], rows)
     hl_txt = " / ".join(dict.fromkeys(r[-1] for r in rows))
     if "SFRS not identified" not in hl_txt and "per Table 12.2-1" not in hl_txt:
         _QA["height_limit"] = ("exceeds the limit" not in hl_txt, hl_txt)
@@ -2615,7 +2620,10 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
                  max(float(wind[0].get(k, 0) or 0), float(wind[1].get(k, 0) or 0)) > fpx[k])
     wind_gov = n_wind > 0
     _hi = [t for t in (_QA.get("horiz_irreg") or []) if t in ("2", "3", "4", "5")]
-    _rig = ("constraint (ASCE 7-22 &sect;12.3.1.2: concrete-filled metal deck, span-to-depth ratio of 3 or less, no Type 2&ndash;5 "
+    _db_decl = cfg.get("diaphragm_basis") if isinstance(cfg.get("diaphragm_basis"), str) and \
+        not str(cfg.get("diaphragm", "")).lower().startswith("flex") else None
+    _rig = ("constraint (%s)" % _n(_db_decl) if _db_decl else
+            "constraint (ASCE 7-22 &sect;12.3.1.2: concrete-filled metal deck, span-to-depth ratio of 3 or less, no Type 2&ndash;5 "
             "horizontal irregularity)" if not _hi else
             "constraint. Because the structure has horizontal irregularity Type %s (Table 12.3-1), the rigid condition of "
             "&sect;12.3.1.2 does not apply directly and &sect;12.3.1 calls for the diaphragm stiffness to be considered; "
@@ -2650,9 +2658,10 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
     else:
         just = None
     _mixed = _diaphragm_kind(cfg) == "mixed"
-    just = just or ("<p>The %s taken as <b>rigid diaphragms</b> (concrete-filled metal deck) that distribute "
-            "the story forces to the lateral frames in proportion to their stiffness, modelled with a rigid in-plane "
-            % ("floors are" if _mixed else "floor and roof are")
+    _lead = ("<p>The %s taken as <b>rigid diaphragms</b>%s that distribute the story forces to the lateral frames in "
+             "proportion to their stiffness, modelled with a rigid in-plane "
+             % ("floors are" if _mixed else "floor and roof are", "" if _db_decl else " (concrete-filled metal deck)"))
+    just = just or (_lead
             + _rig + (". The roof (bare metal deck) is idealized as a <b>flexible diaphragm</b> (&sect;12.3.1.1): the roof "
                       "force reaches the vertical elements by tributary area" if _mixed else "")
             + ". Collectors/drag struts deliver the diaphragm shear to the frames; chord "

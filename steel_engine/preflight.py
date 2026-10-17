@@ -400,6 +400,15 @@ def system_limit_findings(cfg, pkg_height_evidence=None):
     hn, nst = _hn_ft(cfg)
     if ps["kind"] == "none":
         return out
+    # a declared limit with its basis (e.g. ASCE 7-22 Table 15.4-1 for a nonbuilding structure similar to a
+    # building) replaces the Table 12.2-1 row
+    hl = cfg.get("height_limit")
+    if isinstance(hl, dict) and _num_or_none(hl.get("limit_ft")) is not None and str(hl.get("basis") or "").strip():
+        lim = float(hl["limit_ft"])
+        if hn and hn > lim + 0.05:
+            out.append(("ERROR", "h_n=%.1f ft exceeds the declared height limit of %.0f ft (%s)"
+                        % (hn, lim, str(hl["basis"])[:120])))
+        return out
     if ps["kind"] == "unknown":
         out.append(("WARN", "cfg['system']='%s' is not recognised against the steel rows of Table 12.2-1 -- "
                             "height limits and R/Cd/Om0/Ct/x are NOT checked; use the exact system name "
@@ -466,6 +475,8 @@ def factor_findings(cfg):
     s = cfg.get("seis") or {}
     if ps["kind"] not in ("single", "dual", "mixed") or not s:
         return out
+    if re.search(r"\b15\.4-[12]\b", str(cfg.get(SEIS_REASON_KEY) or "")):
+        return out                     # Chapter 15 factors (Table 15.4-1 / 15.4-2) -- not a Table 12.2-1 row
     rows = [SYSTEMS[k] for k in ps["rows"]]
     hn, _ = _hn_ft(cfg)
     flex = str(cfg.get("diaphragm", "rigid")).lower() == "flexible"

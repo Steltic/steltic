@@ -389,8 +389,9 @@ def design(name, outdir=None):
                 "identified -- declare cfg['system'] (SCBF / OCBF / BRBF / EBF / SPSW) or cfg['brace_system']")
     if _R > 3.0 and "STMF" in SM._sys_tokens(cfg):
         dinfo.setdefault("not_evaluated", []).append(
-            "STMF special-segment capacity-limited analysis (AISC 341-22 E4.3) NOT EVALUATED -- the "
-            "agent must derive the expected special-segment strengths and the resulting demands")
+            "STMF special-segment capacity-limited analysis (AISC 341-22 E4.3) is not part of the analysis "
+            "model -- the expected special-segment strengths and the resulting demands are derived with the "
+            "member design")
     if missing:
         dinfo.setdefault("warnings", []).append(
             "%d element(s) of the dynamic model have no static-model demand (end nodes not matched), e.g. %s"
@@ -544,8 +545,13 @@ def design(name, outdir=None):
                                      else "work-point length (conservative; end-to-end length is shorter)"))
             except Exception:
                 pass
+        elif p and p.get("custom"):
+            inp.update(Lb_in=round(L, 1), A=p["A"], Ix=p["Ix"], Iy=p["Iy"], J=p["J"],
+                       rx=round(p["rx"], 3), ry=round(p["ry"], 3),
+                       section_note="custom / built-up section: gross properties of the analysis model; plate "
+                                    "geometry and the remaining properties are given with the member design")
         elif p:
-            Lb_eff = min(L, 0.095*p["ry"]*29000.0/50.0) if kind == "beam" else L
+            Lb_eff = min(L, 0.086*p["ry"]*29000.0/(1.1*50.0)) if kind == "beam" else L   # 341-22 D1.2b seed
             inp.update(Lb_in=round(Lb_eff, 1), A=p["A"], Ix=p["Ix"], Iy=p["Iy"], J=p["J"], Zx=p["Zx"],
                        Zy=round(p["Zy"], 1), Sx=round(p["Sx"], 1), Sy=round(p["Sy"], 1),
                        rx=round(p["rx"], 3), ry=round(p["ry"], 3),

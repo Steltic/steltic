@@ -2680,12 +2680,14 @@ def _irregularity_section(cfg, runs, sf=None):
     # ---- V4 weak story (needs the story lateral strengths)
     ss = cfg.get("story_strength")
     if isinstance(ss, dict) and ss.get("X") and ss.get("Y"):
-        rr = []
+        rr = []; allr = []
         for d in ("X", "Y"):
             v = [float(x) for x in ss[d]]
             for s_ in range(1, min(len(v), NF)):
-                if v[s_] > 0 and v[s_ - 1] / v[s_] < 1.0:
-                    rr.append((d, s_, v[s_ - 1] / v[s_]))
+                if v[s_] > 0:
+                    allr.append((d, s_, v[s_ - 1] / v[s_]))
+                    if v[s_ - 1] / v[s_] < 0.80:          # Table 12.3-2 Type 4a: < 80 % of the story above
+                        rr.append((d, s_, v[s_ - 1] / v[s_]))
         if rr:
             dmin = min(rr, key=lambda t: t[2])
             typ = "4b EXTREME WEAK" if dmin[2] < 0.65 else "4a WEAK"
@@ -2696,6 +2698,10 @@ def _irregularity_section(cfg, runs, sf=None):
                 elif sdc == "D": trig["12.3.3.2"].append("V4b")
                 elif sdc in ("B", "C") and (NF > 2 or sum(hgt) > 360.0 + 0.5): trig["12.3.3.3"].append("V4b")
             elif sdc in ("E", "F"): trig["12.3.3.1"].append("V4a")
+        elif allr:
+            lo = min(allr, key=lambda t: t[2])
+            v4 = ("Not present: lowest story strength ratio %s story %d = %.0f%% of the story above (limit 80%%, "
+                  "declared story strengths)" % (lo[0], lo[1], 100 * lo[2]))
         else:
             v4 = "Not present: every story at least as strong as the story above (declared story strengths)"
     else:
@@ -3654,6 +3660,14 @@ def _wind_drift_section(cfg):
     except Exception as ex:
         return f"<p class='note'>[wind drift run failed: {_esc(ex)}]</p>"
     limtxt = "h<sub>sx</sub>/%d (%.2f%%)" % (int(round(1 / lim)), lim * 100)
+    ex = _drift_exempt(cfg)                 # declared drift-exempt stories (split-level steps, phantom stories)
+    _exr = lambda k: "exempt: " + _esc(str((cfg.get("drift_exempt_stories") or {}).get(k, ""))[:60])
+    def _wrow(k, a, b):
+        if k in ex:
+            return [k, "%.3f" % (a * 100), "%.3f" % (b * 100), _exr(k)]
+        return [k, "%.3f" % (a * 100), "%.3f" % (b * 100), "OK" if max(abs(a), abs(b)) <= lim else "<b class='ng'>NG</b>"]
+    def _worst(a, b):
+        return max([max(abs(a[k - 1]), abs(b[k - 1])) for k in range(1, NF + 1) if k not in ex] or [0.0])
     h = []
     if ws and ws.get("V"):
         try:
@@ -3671,9 +3685,8 @@ def _wind_drift_section(cfg):
         fig = _CC_MAP.get(mri)
         basis = str(ws.get("basis") or "")
         btxt = (" Basis: %s." % _n(basis)) if basis and "CC.2-1" not in basis else ""
-        rows = [[k, "%.3f" % (sX[k-1]*100), "%.3f" % (sY[k-1]*100), "OK" if max(abs(sX[k-1]), abs(sY[k-1])) <= lim else
-                 "<b class='ng'>NG</b>"] for k in range(1, NF+1)]
-        worst = max(max(abs(x) for x in sX), max(abs(y) for y in sY))
+        rows = [_wrow(k, sX[k-1], sY[k-1]) for k in range(1, NF+1)]
+        worst = _worst(sX, sY)
         h.append("<h3>Service wind drift, W<sub>a</sub> at V = %s mph (%d-year MRI%s), D + 0.5L + W<sub>a</sub> (Eq. CC.2-3)</h3>"
                  % (_n(Vs), mri, (", ASCE 7-22 Fig. %s" % fig) if fig else ""))
         h.append("<p>Interstory drift under the serviceability wind W<sub>a</sub> (ASCE 7-22 Appendix CC.2.2: same MWFRS "
@@ -3688,9 +3701,8 @@ def _wind_drift_section(cfg):
         h.append("<h4>Drift under the design (strength-level) wind &mdash; information only</h4>"
                  + _table(["Story", "drift X %", "drift Y %"], irows))
         return "".join(h)
-    rows = [[k, "%.3f" % (dX[k-1]*100), "%.3f" % (dY[k-1]*100), "OK" if max(abs(dX[k-1]), abs(dY[k-1])) <= lim else
-             "<b class='ng'>NG</b>"] for k in range(1, NF+1)]
-    _QA["wind_drift"] = (max(max(abs(x) for x in dX), max(abs(y) for y in dY)), lim, "design wind")
+    rows = [_wrow(k, dX[k-1], dY[k-1]) for k in range(1, NF+1)]
+    _QA["wind_drift"] = (_worst(dX, dY), lim, "design wind")
     return ("<h3>Wind drift</h3>"
             "<p>Interstory drift under the design (strength-level) MWFRS wind &mdash; conservative for a serviceability "
             "check &mdash; against the project limit %s. ASCE 7-22 sets no mandatory wind drift limit; Appendix CC "
@@ -4102,8 +4114,11 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
                          "PASS" if tw <= tmax else "FAIL"])
     wd = _QA.get("wind_drift")
     if wd:
-        rows.append(["Wind drift &le; project limit (%s)" % wd[2], "%.3f%% &le; %.2f%%" % (wd[0] * 100, wd[1] * 100),
-                     "PASS" if wd[0] <= wd[1] else "FAIL"])
+        _gw = (pkg or {}).get("gate_waivers") if isinstance(pkg, dict) else None
+        _wv = isinstance(_gw, dict) and any(k in _gw for k in ("wind_drift", "wind_drift_X", "wind_drift_Y"))
+        rows.append(["Wind drift &le; project limit (%s)" % wd[2], "%.3f%% &le; %.2f%%" % (wd[0] * 100, wd[1] * 100)
+                     + ("; addressed by engineering justification (listed below)" if (wd[0] > wd[1] and _wv) else ""),
+                     "PASS" if wd[0] <= wd[1] else ("JUSTIFIED" if _wv else "FAIL")])
     bd = _QA.get("beam_deflection")
     if bd:
         rows.append(["Beam deflection (L/360 live, L/240 total)", bd[1], "PASS" if bd[0] else "FAIL"])

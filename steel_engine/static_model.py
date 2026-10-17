@@ -373,6 +373,11 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
             continue
     sub_node = _SUB0; sub_ele = _SUB0; beams = []; cols = []; braces = []; dia_extra = {}; dropped = []
     unlisted = []
+    # nodes the custom_build put in a rigid diaphragm: a beam whose two end nodes are BOTH outside it (a
+    # slotted girder, a transfer-truss chord kept free of the slab) keeps its sub-nodes out of it too
+    dia_nodes = set()
+    for _a in rec["rigidDiaphragm"]:
+        dia_nodes |= set(_a[1:])
     for a in rec["element"]:
         a = list(a); etype = a[0]; tag = a[1]
         if tag in einfo:
@@ -406,7 +411,9 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
                 t = sgi/float(nseg); nd = sub_node; sub_node += 1
                 R("node", nd, x1+(x2-x1)*t, y1+(y2-y1)*t, z1+(z2-z1)*t)
                 coord[nd] = (x1+(x2-x1)*t, y1+(y2-y1)*t, z1+(z2-z1)*t)
-                dia_extra.setdefault(round(z1, 6), []).append(nd); chain.append(nd)
+                if n1 in dia_nodes or n2 in dia_nodes:
+                    dia_extra.setdefault(round(z1, 6), []).append(nd)
+                chain.append(nd)
             chain.append(n2); segs = []
             for sgi in range(nseg):
                 ra = []

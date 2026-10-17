@@ -2715,7 +2715,14 @@ def _irregularity_section(cfg, runs, sf=None):
                 if sdc in ("E", "F"): trig["12.3.3.1"].append("V4b")
                 elif sdc == "D": trig["12.3.3.2"].append("V4b")
                 elif sdc in ("B", "C") and (NF > 2 or sum(hgt) > 360.0 + 0.5): trig["12.3.3.3"].append("V4b")
-            elif sdc in ("E", "F"): trig["12.3.3.1"].append("V4a")
+            elif sdc in ("E", "F"):
+                if dmin[2] < 0.80:
+                    trig["12.3.3.1"].append("V4a")
+                else:                     # 12.3.3.1 Exception: Type 4a permitted where >= 80 % of the story above
+                    v4 += ("; permitted in SDC %s by the 12.3.3.1 Exception (story strength not less than 80%% "
+                           "of the story above)" % sdc)
+            else:
+                v4 += "; no consequence in SDC %s (12.3.3.1 applies in SDC E and F)" % sdc
         elif allr:
             lo = min(allr, key=lambda t: t[2])
             v4 = ("Not present: lowest story strength ratio %s story %d = %.0f%% of the story above (Type 4a: less "

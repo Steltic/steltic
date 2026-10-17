@@ -126,9 +126,380 @@ def _img(uri, caption, full=False):
     uri = _materialize(uri)
     return f"<figure class='{cls}'><img src='{uri}'/><figcaption>@@FIGNUM@@ {caption}</figcaption></figure>"
 
+# ============================================================ publication helpers (US practice, Oct 2026)
+# One number formatter (_n), one key humaniser (_human_key) and one text sanitiser (_pub) feed every table,
+# so a published report never shows a Python repr, a literal 'None', a 15-digit float, a cfg[...] key or an
+# internal path. cfg['report_mode'] = 'internal' keeps the authoring notes (figure toggles etc.).
+_EMPTY = ("", "none", "null", "nan", "n/a?")
+
+
+def _publish(cfg):
+    """Publication mode (default on): no harness / authoring text in the report body."""
+    return str((cfg or {}).get("report_mode", "publish")).strip().lower() != "internal"
+
+
+def _strip0(s):
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+def _fx(v, nd):
+    """'%.{nd}f' with round-half-up (no banker's rounding: 1214.5 -> '1215', 0.125 -> '0.13')."""
+    from decimal import Decimal, ROUND_HALF_UP
+    try:
+        q = Decimal(repr(float(v))).quantize(Decimal(1).scaleb(-nd) if nd > 0 else Decimal(1), rounding=ROUND_HALF_UP)
+        return format(q, "f")
+    except Exception:
+        return "%.*f" % (nd, v)
+
+
+def _fac(v):
+    """Code factors (R, C_d, Omega0, rho, I_e, K_d ...) with at least one decimal: 3 -> '3.0', 3.25 -> '3.25'."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return _n(v)
+    s = _strip0("%.3f" % x)
+    return s if "." in s else s + ".0"
+
+
+def _sa(v):
+    """Spectral values (g) to 2-3 decimals: 0.2 -> '0.20', 0.09 -> '0.09', 1.234 -> '1.234'."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return _n(v)
+    s = _strip0("%.3f" % x)
+    return s if len(s.split(".")[-1]) >= 2 and "." in s else "%.2f" % x
+
+
+def _n(v, dc=False, nd=None):
+    """THE number formatter. None / '' / 'None' -> an em dash; bool -> yes/no; D/C (dc=True) to 2-3
+    decimals; other floats to ~4 significant figures with trailing zeros dropped (re-derivable from what
+    is printed); dict -> 'label = value unit; ...' (empty values omitted); list -> de-duplicated
+    comma list; strings escaped (and sanitised in publication mode)."""
+    if v is None:
+        return "&mdash;"
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, int):
+        return "{:,}".format(v) if abs(v) >= 1000 else str(v)
+    if isinstance(v, float):
+        if not math.isfinite(v):
+            return "&mdash;"
+        if nd is not None:
+            return _fx(v, nd)
+        if dc:
+            s = _fx(v, 3)
+            s = s.rstrip("0")
+            if len(s.split(".")[1]) < 2:
+                s = _fx(v, 2)
+            return s
+        a = abs(v)
+        if a >= 1000:
+            return "{:,}".format(int(_fx(v, 0)))
+        if a >= 100:
+            return _strip0(_fx(v, 1))
+        if a >= 10:
+            return _strip0(_fx(v, 2))
+        if a >= 0.1:
+            return _strip0(_fx(v, 3))
+        if a == 0:
+            return "0"
+        return _strip0("%.3g" % v) if a >= 1e-4 else "%.2e" % v
+    if isinstance(v, dict):
+        return _fmt(v)
+    if isinstance(v, (list, tuple)):
+        if not v:
+            return "&mdash;"
+        if all(isinstance(x, (list, tuple)) for x in v):
+            v = [x for i, x in enumerate(v) if x not in v[:i]]          # de-duplicate repeated records
+            return "; ".join("(" + ", ".join(_n(y) for y in x) + ")" for x in v[:12]) + \
+                   (" &hellip; (%d more)" % (len(v) - 12) if len(v) > 12 else "")
+        seen, out = set(), []
+        for x in v:
+            s = _n(x)
+            if s not in seen:
+                seen.add(s); out.append(s)
+        return ", ".join(out[:24]) + (" &hellip;" if len(out) > 24 else "")
+    s = str(v)
+    if s.strip().lower() in _EMPTY:
+        return "&mdash;"
+    return _esc(_pub(s))
+
+
+def _na(v):
+    return _n(v)
+
+
+# unit suffix -> (printed unit, scale applied to the value); kip-in moments are printed in kip-ft
+_UNIT_SFX = (("_in4_per_ft", "in.<sup>4</sup>/ft", 1.0), ("_in3_per_ft", "in.<sup>3</sup>/ft", 1.0),
+             ("_kip_per_ft", "kip/ft", 1.0), ("_lb_per_ft", "plf", 1.0),
+             ("_kipft", "kip-ft", 1.0), ("_kft", "kip-ft", 1.0), ("_kipin", "kip-ft", 1.0 / 12.0),
+             ("_kin", "kip-ft", 1.0 / 12.0), ("_klf", "kip/ft", 1.0), ("_kips", "kip", 1.0), ("_kip", "kip", 1.0),
+             ("_ksi", "ksi", 1.0), ("_psf", "psf", 1.0), ("_plf", "plf", 1.0), ("_pcf", "pcf", 1.0),
+             ("_in4", "in.<sup>4</sup>", 1.0), ("_in3", "in.<sup>3</sup>", 1.0), ("_in2", "in.<sup>2</sup>", 1.0),
+             ("_ft2", "ft<sup>2</sup>", 1.0), ("_in", "in.", 1.0), ("_ft", "ft", 1.0), ("_pct", "%", 1.0),
+             ("_deg", "deg", 1.0), ("_rad", "rad", 1.0), ("_hz", "Hz", 1.0), ("_sec", "s", 1.0), ("_s", "s", 1.0),
+             ("_k", "kip", 1.0), ("_g", "g", 1.0))
+_SYM = {"p": "P", "pu": "P<sub>u</sub>", "pr": "P<sub>r</sub>", "pcomp": "P (compression)",
+        "ptens": "P (tension)", "pucomp": "P<sub>u</sub> (compression)", "putens": "P<sub>u</sub> (tension)",
+        "tu": "T<sub>u</sub>", "t": "T", "v": "V", "vu": "V<sub>u</sub>", "vr": "V<sub>r</sub>", "vx": "V<sub>x</sub>",
+        "vy": "V<sub>y</sub>", "m": "M", "mu": "M<sub>u</sub>", "mr": "M<sub>r</sub>", "mz": "M<sub>x</sub>",
+        "mx": "M<sub>x</sub>", "my": "M<sub>y</sub>", "mux": "M<sub>ux</sub>", "muy": "M<sub>uy</sub>",
+        "mend": "M<sub>end</sub>", "au": "A<sub>u</sub> (axial)", "axial": "axial force P", "ru": "R<sub>u</sub>",
+        "phipn": "&phi;P<sub>n</sub>", "phipc": "&phi;P<sub>n</sub>", "phitn": "&phi;T<sub>n</sub>",
+        "phimn": "&phi;M<sub>n</sub>", "phimnx": "&phi;M<sub>nx</sub>", "phimny": "&phi;M<sub>ny</sub>",
+        "phivn": "&phi;V<sub>n</sub>", "phirn": "&phi;R<sub>n</sub>", "uplift": "net uplift",
+        "collectoraxial": "collector (drag) axial force", "nbases": "number of bases", "dc": "D/C",
+        "lcin": "L<sub>c</sub>", "lbin": "L<sub>b</sub>", "lengthin": "L", "endcondition": "end condition",
+        "pcombo": "compression combination", "upliftcombo": "uplift combination", "vcombo": "shear combination",
+        "mcombo": "moment combination", "tensioncombo": "tension combination", "shearcombo": "shear combination",
+        "governingcombo": "governing combination", "combo": "combination", "axialnote": "axial force",
+        "basis": "basis", "note": "note"}
+_DROP_KEYS = ("cfg", "cfg_key", "cfg_keys", "agent", "tool", "rag", "rag_query", "rag_hits", "activity",
+              "pipeline_seed", "seeded", "_auto")
+
+
+def _human_key(k):
+    """(label, unit, scale) for a calc-package key: 'Mz_kipin' -> ('M<sub>x</sub>', 'kip-ft', 1/12),
+    'phiMn_kipft' -> ('&phi;M<sub>n</sub>', 'kip-ft', 1), 'end_condition' -> ('end condition', '', 1)."""
+    s = str(k)
+    low = s.lower()
+    unit, scale, base = "", 1.0, s
+    for sfx, u, sc in _UNIT_SFX:
+        if low.endswith(sfx) and len(low) > len(sfx):
+            unit, scale, base = u, sc, s[:-len(sfx)]
+            break
+    nk = re.sub(r"[^a-z0-9]", "", base.lower().replace("φ", "phi"))
+    if nk in _SYM:
+        lab = _SYM[nk]
+    else:
+        lab = re.sub(r"(?<=\d)_(?=\d)", ".", base)
+        lab = (lab.replace("_plus_", " + ").replace("_minus_", " - ").replace("_over_", "/")
+               .replace("_per_", " per ").replace("_", " ").strip())
+        lab = re.sub(r"\b(?:engine|framework)\b", "analysis", lab, flags=re.I)
+        lab = _esc(lab)
+        lab = re.sub(r"^phi\s*", "&phi;", lab)
+        lab = re.sub(r"^lambda\s*", "&lambda;", lab)
+        lab = re.sub(r"\b(?:Omega0|Om0|omega0)\b", "&Omega;<sub>0</sub>", lab)
+    return lab, unit, scale
+
+
+_CL_SUBS = ((re.compile("\u03a9\u2080\\*?"), "&Omega;<sub>0</sub>"),
+            (re.compile(r"\(1\.2\+0\.2SDS\)D"), "(1.2+0.2S<sub>DS</sub>)D"),
+            (re.compile(r"\(0\.9-0\.2SDS\)D"), "(0.9&minus;0.2S<sub>DS</sub>)D"),
+            (re.compile(r"0\.2SDS"), "0.2S<sub>DS</sub>"),
+            (re.compile(r"Om0\*E([XY])"), r"&Omega;<sub>0</sub>E<sub>\1</sub>"),
+            (re.compile(r"rhoE([XY])"), r"&rho;E<sub>\1</sub>"),
+            (re.compile(r"(?<![A-Za-z])E([XY])(?=[+\-/ \]]|$)"), r"E<sub>\1</sub>"),
+            (re.compile(r"Ecl\["), "E<sub>cl</sub>["),
+            (re.compile(r"Lr(?![A-Za-z])"), "L<sub>r</sub>"),
+            (re.compile(r"(?<![A-Za-z])W([XY])(?![A-Za-z])"), r"W<sub>\1</sub>"),
+            (re.compile(r"\+Ni(?![A-Za-z])"), "+N<sub>i</sub>"))
+
+
+def _combo_label(label):
+    """Load-combination label as printed: the engine's ASCII identity ("(1.2+0.2SDS)D+rhoEX+t+/0.3Y-+0.5L")
+    typeset with the notation of Chapter 4 ("(1.2+0.2S_DS)D+rho E_X+t+/0.3Y-+0.5L"). The same transform is
+    used wherever a combination is named, so labels match between chapters."""
+    if label in (None, "", "None"):
+        return "&mdash;"
+    s = _esc(_pub(str(label)))
+    for rx, rep in _CL_SUBS:
+        s = rx.sub(rep, s)
+    return s
+
+
 def _fmt(d):
-    if not isinstance(d, dict): return str(d)
-    return "; ".join(f"{k}={v}" for k, v in d.items())
+    """A demand / record dict as 'label = value unit; ...' -- empty values and harness keys omitted, kip-in
+    moments printed in kip-ft, nested dicts flattened as 'name: (label = value; ...)'. Non-dicts go to _n."""
+    if not isinstance(d, dict):
+        return _n(d)
+    parts = []
+    for k, v in d.items():
+        if v is None or (isinstance(v, str) and v.strip().lower() in _EMPTY) or v in ([], {}):
+            continue
+        if str(k).lower() in _DROP_KEYS or str(k).startswith("_") or str(k).lower().startswith("cfg_"):
+            continue
+        lab, unit, sc = _human_key(k)
+        if isinstance(v, dict):
+            parts.append("%s: (%s)" % (lab, _fmt(v)))
+        elif isinstance(v, bool):
+            parts.append("%s: %s" % (lab, _n(v)))
+        elif isinstance(v, (int, float)):
+            parts.append("%s = %s%s" % (lab, _n(float(v) * sc if sc != 1.0 else v), (" " + unit) if unit else ""))
+        elif isinstance(v, (list, tuple)):
+            parts.append("%s: %s" % (lab, _n(v)))
+        else:
+            parts.append("%s: %s" % (lab, _n(v)) if lab not in ("basis", "note") else "(%s)" % _n(v))
+    return "; ".join(parts) if parts else "&mdash;"
+
+
+_CFG_RX = re.compile(r"cfg\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\](?:\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\])?")
+_PATH_RX = re.compile(r"(?:\.\./)+[\w./-]+|/(?:home|tmp|mnt|root|Users)/[\w./-]+|design/calc_package\.json|"
+                      r"calc_package\.json|activity_log\.jsonl|design_report\.md|member_demands\.md|"
+                      r"pipeline_results\.json|connection_demands\.csv")
+
+
+_AGENT_NOTE_RX = re.compile(r"from memory|declared fallback|not verified against the (?:corpus|reference library)|"
+                            r"NOT in the (?:reference library|RAG|corpus)|\bcorpus\b|\bRAG\b", re.I)
+
+
+def _drop_agent_notes(s):
+    """Remove the design agent's working notes about its own sources ("method applied from memory",
+    "not verified against the corpus") from published text; they stay in the QA annex. Parentheses left
+    open by a dropped sentence are closed."""
+    if not _AGENT_NOTE_RX.search(s):
+        return s
+    s = re.sub(r"\s*\([^()]*\)", lambda m: "" if _AGENT_NOTE_RX.search(m.group(0)) else m.group(0), s)
+    if not _AGENT_NOTE_RX.search(s):
+        return s
+    parts = re.split(r"(?<=[.;])\s+", s)
+    keep = []; close = 0
+    for part in parts:
+        if _AGENT_NOTE_RX.search(part):
+            bal = part.count("(") - part.count(")")
+            if bal < 0:
+                close += -bal
+            continue
+        keep.append(part)
+    out = " ".join(keep).rstrip()
+    if close:
+        out = out.rstrip(".") + ")" * close + "."
+    return out
+
+
+def _pub(s):
+    """Sanitise free text for publication: cfg['a']['b'] -> 'the declared a / b input', internal file paths
+    and pipeline module names removed. Engineering content is left untouched."""
+    if not isinstance(s, str) or not s:
+        return s
+    def _c(m):
+        a = m.group(1).replace("_", " ")
+        b = m.group(2).replace("_", " ") if m.group(2) else ""
+        return "the declared %s input" % ((a + " / " + b) if b else a)
+    s = _CFG_RX.sub(_c, s)
+    s = _PATH_RX.sub("the design record", s)
+    s = re.sub(r"\b(?:engine3d|static_model|design_pipeline|design_post|preflight)\.[A-Za-z_]+(?:\(\))?",
+               "the analysis model", s)
+    s = re.sub(r"\bdesign_report(?:\.md)?\b\s*/\s*pipeline_results\b|\bpipeline_results\b|\bdesign_report(?:\.md)?\b",
+               "the analysis summary", s)
+    s = re.sub(r"\s*'mdx/mdy'", "", s)
+    s = re.sub(r"\brun_one\b", "the analysis run", s)
+    s = re.sub(r"\bpipeline (envelope|demands?)\b", r"analysis \1", s)
+    s = re.sub(r"\b(?:the )?demand pipeline\b", "the analysis", s)
+    s = re.sub(r"\bThe engine\b", "The analysis", s)
+    s = re.sub(r"\bthe engine\b", "the analysis", s)
+    s = re.sub(r"\bframework (demand|one-way|envelope|screen|gate|irregularity screen|computes|provides)\b",
+               r"analysis \1", s)
+    s = re.sub(r"\bthe framework\b", "the analysis", s)
+    s = re.sub(r"\(framework\)", "(analysis)", s)
+    s = re.sub(r"\bFramework\b", "Analysis", s)
+    s = re.sub(r"\bframework\b", "analysis", s)
+    s = re.sub(r"\b(?:Omega0|Om0)\b", "\u03a9\u2080", s)
+    s = re.sub(r"\badd_(beam|brace|column)\b", r"\1", s)
+    s = re.sub(r"\s*\(\s*'[^'()]*'\s*(?:,\s*'[^'()]*'\s*)+\)", "", s)
+    s = re.sub(r"\bphi_s\s*\*\s*lambda_u\b", "\u03c6s\u03bbu", s)
+    s = re.sub(r"\bphi_s\b", "\u03c6s", s)
+    s = re.sub(r"\blambda_u\b", "\u03bbu", s)
+    s = re.sub(r"\bddm_analysis\b", "DDM system check", s)
+    s = re.sub(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?=\s*=)", lambda m: m.group(1).replace("_", " "), s)
+    s = re.sub(r"(?<![-\w.])([a-z]{3,}(?:_[a-z]{2,})+)(?![-\w]|\.\w)", lambda m: m.group(1).replace("_", " "), s)
+    s = re.sub(r"\b(beam deflection|drift|deflection|consistency|completion|analysis) gate\b", r"\1 check", s)
+    s = re.sub(r"\s*\(SEEDED[^)]*\)", "", s)
+    s = re.sub(r"\bSEEDED\b", "provisional", s)
+    s = re.sub(r"\b(?:the )?RAG corpus\b|\b(?:the )?RAG\b", "the reference library", s)
+    s = re.sub(r"calc_package\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\]", lambda m: "the calc-package record '%s'" % m.group(1), s)
+    s = re.sub(r"\s*\(see '[^']*'\)", "", s)
+    s = re.sub(r"\(steel[_ ]design[_ ]examples\)", "(AISC Design Examples)", s)
+    s = re.sub(r"\bsteel[_ ]design[_ ]examples\b", "the AISC Design Examples", s)
+    s = re.sub(r"\bcfg\s+([a-z][a-z0-9_]*)", lambda m: "the declared %s input" % m.group(1).replace("_", " "), s)
+    s = re.sub(r"\(brief\)", "(project criteria)", s)
+    s = re.sub(r"\b(?:per )?the brief\b", "the project criteria", s)
+    s = re.sub(r"([;,(]\s*)brief\b", r"\1project criteria", s)
+    s = _drop_agent_notes(s)
+    s = s.replace("<=", "\u2264").replace(">=", "\u2265").replace("&lt;=", "&le;").replace("&gt;=", "&ge;")
+    s = re.sub(r"\bsqrt\(", "\u221a(", s)
+    return s
+
+
+def _pub_issue(s):
+    """A consistency finding for the published Chapter 13: sanitised, without Python literals of the fix
+    instructions (the full text stays in the QA annex)."""
+    s = re.sub(r"\s*\((?:[a-z_]+\.)+[a-z_]+\)", "", str(s))
+    s = _pub(s)
+    for _ in range(3):
+        s = re.sub(r"\s*=\s*\{[^{}]*\}", "", s)
+        s = re.sub(r"\{[^{}]*\}", "", s)
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+_COMBO_LIKE = re.compile(r"SDS\)D|\b\d\.\d+D\+|Om0\*|rhoE[XY]|\bW[XY][+-]|Ecl\[|\[col\]")
+
+
+def _pub_issue_html(s):
+    """_pub_issue as HTML: quoted load-combination labels typeset as in Chapter 4, everything else escaped."""
+    s = re.sub(r"\s*\((?:[a-z_]+\.)+[a-z_]+\)", "", str(s))
+    for _ in range(3):
+        s = re.sub(r"\s*=\s*\{[^{}]*\}", "", s)
+        s = re.sub(r"\{[^{}]*\}", "", s)
+    out = []
+    for part in re.split(r"('[^']*')", s):
+        if len(part) > 2 and part[0] == part[-1] == "'" and _COMBO_LIKE.search(part):
+            out.append("&lsquo;%s&rsquo;" % _combo_label(part[1:-1]))
+            continue
+        for k, seg in enumerate(re.split(r"(\((?:1\.2\+0\.2SDS|0\.9-0\.2SDS)\)D[^\s:;,']*)", part)):
+            out.append(_combo_label(seg) if k % 2 else _esc(_pub(seg)))
+    return re.sub(r"\s{2,}", " ", "".join(out)).strip()
+
+
+def _verdict_item(f):
+    """'label: phi_s*lambda_u = 0.948 FAIL' -> typeset combination label + the check."""
+    lab, sep, rest = str(f).partition(": ")
+    if sep and _COMBO_LIKE.search(lab + "+"):
+        return "%s: %s" % (_combo_label(lab), _esc(_pub(rest)))
+    return _esc(_pub(str(f)))
+
+
+def _ft(x_in, nd=2):
+    """Inches -> decimal feet without the round-half-even trap: _ft(150) == '12.5', _ft(270) == '22.5'."""
+    try:
+        return _strip0("%.*f" % (nd, float(x_in) / 12.0))
+    except Exception:
+        return "&mdash;"
+
+
+def _ftin(x_in):
+    """Inches -> US feet-inch dimension to the nearest 1/8 in.: 180 -> 15'-0\", 150 -> 12'-6\", 162.25 -> 13'-6 1/4\"."""
+    try:
+        x = float(x_in)
+    except Exception:
+        return "&mdash;"
+    neg = x < 0; x = abs(x)
+    e = int(round(x * 8.0))                  # eighths of an inch
+    ft, rem = divmod(e, 96)
+    inch, eighth = divmod(rem, 8)
+    frac = ""
+    if eighth:
+        num, den = eighth, 8
+        while num % 2 == 0:
+            num //= 2; den //= 2
+        frac = " %d/%d" % (num, den)
+    return ("-" if neg else "") + "%d'-%d%s\"" % (ft, inch, frac)
+
+
+def _heights_txt(H):
+    """Story heights in feet-inches with repeats grouped: [180, 156 x 7] -> 15'-0\", 7 @ 13'-0\"."""
+    out, i = [], 0
+    H = [float(h) for h in H]
+    while i < len(H):
+        j = i
+        while j + 1 < len(H) and abs(H[j + 1] - H[i]) < 1e-6:
+            j += 1
+        n = j - i + 1
+        out.append(("%d @ %s" % (n, _ftin(H[i]))) if n > 1 else _ftin(H[i]))
+        i = j + 1
+    return ", ".join(out)
 
 # ============================================================ analysis helpers
 def _seismic(cfg):
@@ -342,9 +713,19 @@ def per_case_max_table(info):
         rows.append([kind, sec, f"{N:.1f}", f"{Mz/12:.1f}", f"{My/12:.1f}", f"{V:.1f}", _loc(n1, n2)])
     return rows
 
-def _case_desc(label, col_only):
-    """Plain-English description of an ASCE 7-22 combination label."""
+def _case_desc(label, col_only, a341=True):
+    """Plain-English description of an ASCE 7-22 combination label (AISC 341 cited only where it applies)."""
     L = label
+    if ("[C2" in L or "[C3" in L or "[C4" in L):
+        upl = " with 0.9D (uplift / overturning)" if L.startswith("0.9") else " combined with gravity"
+        if "[C2" in L:
+            return ("ASCE 7-22 Fig. 27.3-8 wind Case 2: 75%% of the design wind pressure along one principal axis "
+                    "with a torsional moment from the eccentricity e = &plusmn;0.15B%s." % upl)
+        if "[C3" in L:
+            return ("ASCE 7-22 Fig. 27.3-8 wind Case 3: 75%% of the design wind pressure acting simultaneously along "
+                    "both principal axes%s." % upl)
+        return ("ASCE 7-22 Fig. 27.3-8 wind Case 4: 56.3%% of the design wind pressure along both principal axes "
+                "with the Case 2 torsional moments%s." % upl)
     if ("WX" in L or "WY" in L) and "E" not in L.replace("Lr", "").replace("Le", ""):
         d = "X (E–W)" if "WX" in L else "Y (N–S)"
         upl = " (uplift / overturning case, 0.9D)" if L.startswith("0.9") else ""
@@ -361,20 +742,25 @@ def _case_desc(label, col_only):
     if "Om0" in L:
         d = "X (E–W)" if "EX" in L else "Y (N–S)"
         upl = " on the 0.9D (uplift) gravity case" if L.startswith("(0.9") else ""
-        return (f"Overstrength (\\(\\Omega_0\\)) seismic in the {d} direction{upl} — column axial only "
-                "(ASCE 7-22 §12.4.3; AISC 341-22 D1.4a(b)).")
+        return (f"Overstrength (&Omega;<sub>0</sub>) seismic in the {d} direction{upl} — column axial only "
+                "(ASCE 7-22 &sect;12.4.3" + ("; AISC 341-22 D1.4a(b)" if a341 else "; &sect;12.3.3.4") + ").")
     if "rhoE" in L:
         d = "X (E–W)" if "EX" in L else "Y (N–S)"
         sense = "positive" if ("EX+" in L or "EY+" in L) else "negative"
         tor = ("with +5% accidental torsion" if "t+" in L else
                ("with −5% accidental torsion" if "t-" in L else "no accidental torsion"))
         grav = ("the reduced 0.9D (uplift) gravity case" if L.startswith("(0.9")
-                else "the (1.2+0.2·S_DS)D + companion-L gravity case (L factor per §2.3.6 Exc.1, as labelled)")
+                else "the (1.2+0.2S<sub>DS</sub>)D + companion-L gravity case (L factor per &sect;2.3.6 Exc. 1, as labelled)")
         return f"Code-level seismic in the {d} direction ({sense} sense, {tor}), combined with {grav}."
     if L.strip() == "1.4D":
         return "Dead load only — the basic gravity check."
+    if re.search(r"1\.6L[re]", L):
+        return "Gravity only: dead load plus the full roof live load, with the companion floor live load."
+    if re.search(r"1\.[06]S", L):
+        return "Gravity only: dead load plus the full snow load, with the companion floor live load."
     if "1.6L" in L:
-        return "Gravity only: dead load plus full floor live load and roof live load."
+        return ("Gravity only: dead load plus the full floor live load, with the companion roof live or snow load"
+                + (" (notional loads N<sub>i</sub> added)" if "+Ni" in L else "") + ".")
     return "Load combination."
 
 def _lat_dir(lat):
@@ -389,74 +775,256 @@ def _safe_props(section):
         try: return S.props(section)
         except Exception: return None
 
-def _member_calc_block(m):
-    # Render one calc_package member: section inputs + demand envelope + the agent's RAG-derived
-    # capacity / limit state / D-C. Framework codes NO capacity; if unfilled, show a 'derive from RAG' note.
+_KIND_LABEL = {"beam": "beam", "col": "column", "brace": "brace"}
+
+
+def _consistency_mod():
+    try:
+        import consistency as _C
+        return _C
+    except Exception:
+        return None
+
+
+def _q_label(q):
+    return {"P": "P (compression)", "T": "P (tension)", "Mx": "M<sub>x</sub>", "My": "M<sub>y</sub>",
+            "V": "V", "H1": "H1-1 interaction"}.get(q, q)
+
+
+def _q_unit(q):
+    return {"P": "kip", "T": "kip", "Mx": "kip-ft", "My": "kip-ft", "V": "kip"}.get(q, "")
+
+
+def _dc_status(dc, issues=None):
+    """OK / NG / NG -- reconcile for a D/C value and its consistency findings."""
+    try:
+        v = float(dc)
+    except (TypeError, ValueError):
+        v = None
+    if issues:
+        return "<b class='ng'>NG / reconcile</b>"
+    if v is None:
+        return "&mdash;"
+    return "<b class='ng'>NG</b>" if v > 1.0 + 1e-9 else "OK"
+
+
+def _term_txt(terms, which):
+    out = []
+    for t in terms:
+        k = t["dem_key"] if which == "dem" else t["cap_key"]
+        lab, _u, _sc = _human_key(k)
+        if lab in ("demand", "capacity", "required", "available"):
+            lab = ""
+        val = _n(t[which])
+        unit = t.get("unit") or ""
+        if unit in ("-", ""):
+            unit = ""
+        out.append(("%s = %s" % (lab, val) if lab else val) + ((" " + unit) if unit else ""))
+    return "; ".join(out) if out else "&mdash;"
+
+
+def _checks_table(chks, C=None, member=True):
+    """The entry's own limit-state checks: limit state | reference | demand | capacity | D/C | printed
+    demand / printed capacity | status. The recomputed ratio is shown wherever the check prints its demand
+    and capacity (H1-1 recomputed from its terms where the check cites H1-1)."""
+    rows = []
+    for k in chks or []:
+        if not isinstance(k, dict):
+            continue
+        terms = C.check_terms(k) if C else []
+        dc = C._dc_num(k.get("DC")) if C else (k.get("DC") if isinstance(k.get("DC"), (int, float)) else None)
+        rec = None
+        txt = str(k.get("limit_state", "")) + " " + str(k.get("cited", ""))
+        inter = C is not None and bool(C._INTERACTION.search(str(k.get("limit_state", ""))))
+        named = C is not None and bool(re.search(r"h1-1|h1\.[12]", txt, re.I))
+        if C is not None and inter and named:
+            rec = C.h1_recompute(terms, txt)
+        if rec is None and len(terms) == 1 and terms[0]["cap"] and (not inter or terms[0]["qty"] in ("*", "ratio")):
+            rec = terms[0]["dem"] / terms[0]["cap"]
+        bad = False
+        if rec is not None and dc is not None and C is not None:
+            bad = not C._close(rec, dc)
+        st = ("<b class='ng'>NG / reconcile</b>" if bad else _dc_status(dc))
+        rows.append([_n(k.get("limit_state", k.get("name", ""))), _n(k.get("cited", "")),
+                     _term_txt(terms, "dem"), _term_txt(terms, "cap"),
+                     (_n(dc, dc=True) if dc is not None else _n(k.get("DC"))),
+                     (_n(rec, dc=True) if rec is not None else "&mdash;"), st])
+    if not rows:
+        return ""
+    return _table(["Limit state", "Reference", "Demand", "Available strength", "D/C (recorded)",
+                   "Demand &divide; strength", "Status"], rows, cls="chk-t")
+
+
+def _member_calc_block(m, a341=None):
+    """One calc-package member: section properties and geometry (incl. L, L<sub>c</sub> and L<sub>c</sub>/r for
+    braces), the analysis demand envelope (kip, kip-ft; M<sub>x</sub> major / M<sub>y</sub> minor axis), the available
+    strengths, the printed demand / printed strength ratios, every limit-state check with its recomputed ratio,
+    and the governing D/C with a status that turns to 'NG / reconcile' when the printed numbers disagree."""
+    C = _consistency_mod()
     mid = m.get("id", ""); inp = m.get("inputs", {}) or {}
     sec = inp.get("section", ""); kind = inp.get("kind", "")
-    h = ["<h4>%s &mdash; %s (%s)</h4>" % (_esc(mid), _esc(sec), _esc(kind))]
-    pk = [("A","A (in2)"),("Zx","Zx (in3)"),("Sx","Sx (in3)"),("Zy","Zy (in3)"),("Sy","Sy (in3)"),
-          ("rx","rx (in)"),("ry","ry (in)"),("r","r (in)"),("Aw","Aw (in2)"),("J","J (in4)"),
-          ("length_in","L (in)"),("Lb_in","Lb (in)")]
-    pr = [(lbl, inp[k]) for k, lbl in pk if inp.get(k) is not None]
+    h = ["<h4 id='m-%s'>%s &mdash; %s (%s)</h4>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", str(mid))), _esc(mid),
+                                                  _esc(sec), _esc(_KIND_LABEL.get(kind, kind)))]
+    pk = [("A", "A (in.<sup>2</sup>)"), ("Zx", "Z<sub>x</sub> (in.<sup>3</sup>)"), ("Sx", "S<sub>x</sub> (in.<sup>3</sup>)"),
+          ("Zy", "Z<sub>y</sub> (in.<sup>3</sup>)"), ("Sy", "S<sub>y</sub> (in.<sup>3</sup>)"), ("rx", "r<sub>x</sub> (in.)"),
+          ("ry", "r<sub>y</sub> (in.)"), ("r", "r (in.)"), ("Aw", "A<sub>w</sub> (in.<sup>2</sup>)"),
+          ("J", "J (in.<sup>4</sup>)"),
+          ("length_in", "work-point length L (in.)" if kind == "brace" else "L (in.)"), ("Lb_in", "L<sub>b</sub> (in.)"),
+          ("Lc_in", "L<sub>c</sub> (in.)"), ("K", "K"), ("Cb", "C<sub>b</sub>")]
+    pr = [(lbl, inp[k]) for k, lbl in pk if inp.get(k) not in (None, "")]
+    r_gov = None
+    if kind == "brace" and sec:
+        try:
+            r_gov = S.brace_r(sec)
+        except Exception:
+            r_gov = None
+        rr = inp.get("r")
+        lc = inp.get("Lc_in") or inp.get("length_in")
+        try:
+            r_use = float(rr) if rr not in (None, "") else r_gov
+            if r_use and lc:
+                pr.append(("L<sub>c</sub>/r" if inp.get("Lc_in") else "L/r", _fx(float(lc) / float(r_use), 1)))
+        except (TypeError, ValueError):
+            pass
+        if r_gov is None:
+            pr.append(("governing r", "not found in the AISC Shapes Database"))
     if pr:
-        h.append("<p class='cnote'>Section properties / geometry (AISC Shapes Database v16):</p>")
-        h.append(_table([l for l, _ in pr], [[_esc("%s" % v) for _, v in pr]]))
-    dem = [("P_comp (kip)", inp.get("P_comp_kip")), ("P_tens (kip)", inp.get("P_tens_kip")),
-           ("Mz (kip-in)", inp.get("Mz_kipin")), ("My (kip-in)", inp.get("My_kipin")),
-           ("V (kip)", inp.get("V_kip"))]
-    h.append("<p class='cnote'>Demand envelope (analysis):</p>")
-    h.append(_table([l for l, _ in dem] + ["governing combo"],
-                    [[_esc("%s" % v) for _, v in dem] + [_esc(str(inp.get("governing_combo", "")))]]))
+        h.append("<p class='cnote'>Section properties (AISC Shapes Database v16.0) and geometry:</p>")
+        h.append(_table([l for l, _ in pr], [[v if isinstance(v, str) and v.startswith(("not found",)) else
+                                               (_n(v) if not isinstance(v, str) else _esc(v)) for _, v in pr]]))
+    if kind == "brace":
+        notes = []
+        if inp.get("Lc_basis"):
+            notes.append("L<sub>c</sub>: " + _n(inp.get("Lc_basis")))
+        try:
+            if r_gov is not None and inp.get("r") not in (None, "") and float(inp["r"]) > 1.02 * r_gov:
+                notes.append("<b>the printed r (%s in.) exceeds the governing minor-axis r = %s in. of %s</b>"
+                             % (_n(float(inp["r"])), _n(r_gov), _esc(sec)))
+        except (TypeError, ValueError):
+            pass
+        if notes:
+            h.append("<p class='cnote'>%s.</p>" % "; ".join(notes))
+    env = [("P (compression)", inp.get("P_comp_kip"), 1.0), ("P (tension)", inp.get("P_tens_kip"), 1.0),
+           ("M<sub>x</sub> (kip-ft)", inp.get("Mz_kipin"), 1.0 / 12.0), ("M<sub>y</sub> (kip-ft)", inp.get("My_kipin"), 1.0 / 12.0),
+           ("V (kip)", inp.get("V_kip"), 1.0)]
+    if inp.get("collector_axial_kip") not in (None, 0, 0.0):
+        env.append(("collector axial (kip)", inp.get("collector_axial_kip"), 1.0))
+    def _v(x, sc):
+        try:
+            return _n(float(x) * sc)
+        except (TypeError, ValueError):
+            return _n(x)
+    hd = [l if "(" in l and "kip" in l else l + " (kip)" for l, _, _ in env]
+    h.append("<p class='cnote'>Analysis demand envelope (all LRFD combinations, second-order):</p>")
+    h.append(_table(hd + ["governing combination"],
+                    [[_v(x, sc) for _, x, sc in env] + [_combo_label(inp.get("governing_combo"))]]))
+    llr = inp.get("live_load_reduction")
+    if isinstance(llr, dict) and llr:
+        h.append("<p class='cnote'>Floor live load reduced per ASCE 7-22 &sect;4.7 (Eq. 4.7-1): L/L<sub>o</sub> = %s for "
+                 "the governing member (A<sub>T</sub> = %s ft<sup>2</sup>, K<sub>LL</sub> = %s); range in this group %s&ndash;%s.</p>"
+                 % (_n(llr.get("RF_governing_member")), _n(llr.get("AT_ft2_governing_member")), _n(llr.get("KLL")),
+                    _n(llr.get("RF_min")), _n(llr.get("RF_max"))))
     cap = m.get("capacity"); dc = m.get("DC"); ls = m.get("limit_state"); cited = m.get("cited")
-    if (isinstance(cap, dict) and cap) or dc is not None or ls or cited:
-        rows = []
-        if ls: rows.append(("Governing limit state", "selected from AISC 360", _esc(ls), _esc(cited or "")))
-        if isinstance(cap, dict):
-            for k, v in cap.items(): rows.append((_esc(k), "", _esc(v), ""))
-        if dc is not None:
-            ok = "ok" if (isinstance(dc,(int,float)) and dc <= 1.0) else ("NG" if isinstance(dc,(int,float)) else "")
-            rows.append(("D/C", "demand / capacity", "%s %s" % (_esc(dc), ok), _esc(cited or "")))
-        h.append(_calc("AISC 360 capacity &amp; D/C - derived by the agent from the RAG", rows))
-    else:
-        h.append("<p class='note'>Capacity &amp; D/C: <b>to be derived by the agent from the AISC 360 / 341 "
-                 "RAG</b> - the framework computes demands only (no coded capacity). Expected calc_package "
-                 "fields: <code>limit_state</code>, <code>cited</code>, <code>capacity</code>, <code>DC</code>.</p>")
+    chks = m.get("checks") if isinstance(m.get("checks"), list) else []
+    if not ((isinstance(cap, dict) and cap) or dc is not None or ls or cited or chks):
+        h.append("<p class='note'>Available strength and D/C: not recorded in the calc package for this member.</p>")
+        return "".join(h)
+    rows = []
+    if isinstance(cap, dict):
+        for k, v in cap.items():
+            if isinstance(v, (dict, list)) or v in (None, ""):
+                continue
+            lab, unit, sc = _human_key(k)
+            val = _n(float(v) * sc) if isinstance(v, (int, float)) and not isinstance(v, bool) else _n(v)
+            rows.append((lab, "available strength", val + ((" " + unit) if unit else ""), ""))
+    elif cap not in (None, "", {}) and not chks:     # with checks, the governing strength is in the checks table
+        rows.append(("available strength of the governing limit state", "", _n(cap), ""))
+    if rows:
+        h.append(_calc("Available strength (AISC 360-22, as recorded)", rows))
+    ratios = C.envelope_ratios(m) if C else []
+    if ratios:
+        rr = []
+        for q, d_, c_, r in ratios:
+            if q == "H1":
+                rr.append((_q_label(q), "H1-1a/b from the printed P, M<sub>x</sub>, M<sub>y</sub> and strengths",
+                           _n(r, dc=True), "AISC 360-22 H1.1"))
+            else:
+                rr.append((_q_label(q), "%s / %s %s" % (_n(d_), _n(c_), _q_unit(q)), _n(r, dc=True), ""))
+        h.append(_calc("Printed demand &divide; printed available strength", rr))
+    if chks:
+        h.append("<p class='cnote'>Limit-state checks:</p>")
+        h.append(_checks_table(chks, C))
+    issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
+    dcv = C._dc_num(dc) if C else (dc if isinstance(dc, (int, float)) else None)
+    if dcv is not None or dc is not None or ls:
+        h.append("<p><b>Governing D/C = %s &mdash; %s</b>%s%s</p>"
+                 % ((_n(dcv, dc=True) if dcv is not None else _n(dc)), _dc_status(dcv, issues),
+                    (" &nbsp;(%s)" % _n(ls)) if ls else "", ("<br><span class='cnote'>%s</span>" % _n(cited)) if cited else ""))
+    if issues:
+        h.append("<p class='note'>Reconcile before issue: %s</p>"
+                 % "; ".join(_pub_issue_html(re.sub(r"^\[member [^\]]*\]\s*", "", i)) for i in issues))
     return "".join(h)
 
-def appendix(cfg, name, pkg):
-    # Appendix A: per governing member, section inputs + demand envelope + the agent's RAG-derived
-    # AISC 360 capacity/limit-state/D-C. The framework codes NO capacity equations.
+
+def _connection_block(c, cid=None):
+    """One designed connection: demand, components, basis and every limit-state check (Appendix A)."""
+    C = _consistency_mod()
+    cid = cid if cid is not None else c.get("id", "")
+    dem = c.get("demand", c.get("demands", {}))
+    cdf = " (capacity design)" if c.get("capacity_design") else ""
+    rows = [("Demand", "", _fmt(dem) if isinstance(dem, dict) else _n(dem), "")]
+    if c.get("components") or c.get("notes"):
+        rows.append(("Components", "", _n(c.get("components", c.get("notes", ""))), ""))
+    if c.get("design_basis"):
+        rows.append(("Design basis", "", _n(c.get("design_basis")), ""))
+    if c.get("cited"):
+        rows.append(("Reference", "", _n(c.get("cited")), ""))
+    h = ["<h4 id='c-%s'>%s &mdash; %s%s</h4>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", str(cid))), _esc(cid),
+                                                _n(c.get("type", "")), cdf),
+         "<table class='calc kv'>" + "".join("<tr><td>%s</td><td>%s</td></tr>" % (a, v) for a, _b, v, _r in rows)
+         + "</table>"]
+    chks = c.get("checks")
+    if isinstance(chks, list) and chks:
+        h.append(_checks_table(chks, C, member=False))
+    issues = C._entry_issues("connection", c) if C else []
+    top = C._dc_num(c.get("DC")) if C else None
+    dcs = [x for x in ([top] + [C._dc_num(k.get("DC")) for k in (chks or []) if isinstance(k, dict)]
+                       if C else []) if x is not None]
+    if dcs:
+        h.append("<p><b>Governing D/C = %s &mdash; %s</b></p>" % (_n(max(dcs), dc=True), _dc_status(max(dcs), issues)))
+    elif not chks:
+        h.append("<p class='note'>Limit-state checks and D/C: not recorded in the calc package for this connection.</p>")
+    if issues:
+        h.append("<p class='note'>Reconcile before issue: %s</p>"
+                 % "; ".join(_pub_issue_html(re.sub(r"^\[connection [^\]]*\]\s*", "", i)) for i in issues))
+    return "".join(h)
+
+
+def appendix(cfg, name, pkg, a341=None):
+    """Appendix A: the AISC 360-22 member and connection calculations of record (calc package)."""
     h = ["<h3>Member calculations</h3>",
-         "<p>For every governing member the framework lists the section properties and the enveloped "
-         "demand from the analysis combinations. The AISC 360-22 capacity, governing limit state, cited "
-         "clause, and D/C are <b>derived by the agent from the RAG</b> and shown where recorded in "
-         "calc_package.json - the framework computes no capacity.</p>"]
+         "<p>For each member group: section properties, the analysis demand envelope over all LRFD combinations "
+         "(second-order), the available strengths, each limit-state check with its reference, and the governing "
+         "D/C. Every ratio is recomputed from the printed demand and available strength; a status of "
+         "<b>NG / reconcile</b> marks printed numbers that do not agree.</p>"]
     members = pkg.get("members") if isinstance(pkg, dict) else None
     if isinstance(members, list):
         for m in members:
-            if not (m.get("inputs", {}) or {}).get("section"): continue
-            try: h.append(_member_calc_block(m))
-            except Exception as ex: h.append("<p class='note'>[render failed: %s]</p>" % ex)
+            if not isinstance(m, dict) or not (m.get("inputs", {}) or {}).get("section"):
+                continue
+            try: h.append(_member_calc_block(m, a341))
+            except Exception as ex: h.append("<p class='note'>[member block could not be rendered: %s]</p>" % _esc(ex))
     else:
-        h.append("<p class='note'>[no members in calc_package.json]</p>")
+        h.append("<p class='note'>No member records in the calc package.</p>")
     cd = pkg.get("connections") or pkg.get("connection_demands")
     if cd:
-        h.append("<h3>Connections (AISC 360-22 Ch. J / Ch. K; AISC 341-22 capacity design)</h3>")
-        items = cd.items() if isinstance(cd, dict) else [(c.get("id", ""), c) for c in cd]
+        any341 = a341 if a341 is not None else bool((cfg.get("seis") or {}).get("R", 0) and float((cfg.get("seis") or {}).get("R", 0)) > 3)
+        h.append("<h3>Connection calculations (AISC 360-22 Ch. J / Ch. K%s)</h3>"
+                 % ("; AISC 341-22 where required" if any341 else ""))
+        items = cd.items() if isinstance(cd, dict) else [(c.get("id", ""), c) for c in cd if isinstance(c, dict)]
         for cid, c in items:
-            dem = _esc(_fmt(c.get("demand", c.get("demands", {}))))
-            comp = _esc(c.get("components", c.get("notes", "")))
-            cited = _esc(c.get("cited", ""))
-            cdf = " (capacity-design)" if c.get("capacity_design") else ""
-            h.append("<h4>%s &mdash; %s%s</h4><p><b>Demand:</b> %s</p><p><b>Components:</b> %s</p><p><b>Cited:</b> %s</p>"
-                     % (_esc(cid), _esc(c.get("type", "")), cdf, dem, comp, cited))
-            chks = c.get("checks")
-            if isinstance(chks, list) and chks:
-                rows = [[_esc(k.get("limit_state", "")),
-                         ("%.2f" % k["DC"] if isinstance(k.get("DC"), (int, float)) else str(k.get("DC", ""))),
-                         "OK" if (isinstance(k.get("DC"), (int, float)) and k["DC"] <= 1.0) else ""] for k in chks]
-                h.append(_table(["Limit state", "D/C", "&le;1.0"], rows))
+            try: h.append(_connection_block(c, cid))
+            except Exception as ex: h.append("<p class='note'>[connection block could not be rendered: %s]</p>" % _esc(ex))
     return "".join(h)
 
 def _num(x):
@@ -485,70 +1053,206 @@ table.calc{width:100%;font-size:13px;margin:2px 0 14px}
 table.calc td,table.calc th{text-align:left;padding:3px 9px;vertical-align:top}
 table.calc td.v{text-align:right;white-space:nowrap;font-weight:600}
 table.calc td.r{text-align:right;color:#888;white-space:nowrap;font-size:12px}
-table.calc tr.hd th{background:#eef3fb}"""
+table.calc tr.hd th{background:#eef3fb}
+table.calc.kv td:first-child{width:16%;font-weight:600;white-space:nowrap}
+table.chk-t{font-size:13px;width:100%}table.chk-t td{vertical-align:top}
+.ng{color:#b00020}.credit{font-size:13px;color:#444;margin:2px 0 10px}
+p.lead{font-size:14px}"""
 
 MATHJAX = ("<script>window.MathJax={tex:{inlineMath:[['\\\\(','\\\\)']],displayMath:[['\\\\[','\\\\]']]}};</script>"
            "<script async src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script>")
 
-def _gravity_loads_table(cfg):
-    rows = [["Floor dead, D", f"{cfg.get('D_floor','?')} psf"],
-            ["Roof dead, D", f"{cfg.get('D_roof','?')} psf"],
-            ["Cladding", f"{cfg.get('clad','?')} psf of wall"],
-            ["Floor live, L", f"{cfg.get('L_floor','?')} psf"]]
-    if cfg.get("Lr"):   rows.append(["Roof live, Lr", f"{cfg['Lr']} psf"])
-    if cfg.get("snow"): rows.append(["Snow, S", f"{cfg['snow']} psf"])
+def _psf(v):
+    try:
+        return "%s psf" % _n(float(v))
+    except (TypeError, ValueError):
+        return "&mdash;"
+
+
+def _partition_psf(cfg, pkg=None):
+    """The partition allowance carried in the floor live load (ASCE 7-22 4.3.2), when it is known: an explicit
+    cfg['partition_psf'], else the unreduced part declared for the 4.7 live load reduction."""
+    for v in (cfg.get("partition_psf"), (cfg.get("live_load_reduction") or {}).get("unreduced_psf")
+              if isinstance(cfg.get("live_load_reduction"), dict) else None,
+              (((pkg or {}).get("demand_analysis") or {}).get("live_load_reduction") or {}).get("unreduced_psf")
+              if isinstance(pkg, dict) else None):
+        try:
+            if v is not None and float(v) > 0:
+                return float(v)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _levels_txt(d):
+    """{1: 10, 2: 10, ...} -> '10 psf on levels 1-7' (grouped by value)."""
+    try:
+        items = sorted((int(k), float(v)) for k, v in d.items() if float(v or 0) > 0)
+    except Exception:
+        return ""
+    if not items:
+        return ""
+    by = {}
+    for k, v in items:
+        by.setdefault(v, []).append(k)
+    parts = []
+    for v, ks in by.items():
+        runs, s = [], ks[0]
+        for a, b in zip(ks, ks[1:] + [None]):
+            if b is None or b != a + 1:
+                runs.append(str(s) if s == a else "%d&ndash;%d" % (s, a)); s = b
+        parts.append("%s psf on level%s %s" % (_n(v), "s" if len(ks) > 1 else "", ", ".join(runs)))
+    return "; ".join(parts)
+
+
+def _gravity_loads_table(cfg, pkg=None):
+    """Chapter 3 gravity loads (US practice): dead, cladding, live (with the partition allowance as LIVE load per
+    ASCE 7-22 4.3.2 when declared), roof live, snow and rain -- values as declared, never invented."""
+    part = _partition_psf(cfg, pkg)
+    L = cfg.get("L_floor")
+    lrow = _psf(L) if L is not None else "&mdash;"
+    if part:
+        lrow += " (incl. %s psf partition allowance, ASCE 7-22 &sect;4.3.2, treated as live load)" % _n(part)
+    rows = [["Floor dead load, D (self-weight + superimposed dead)", _psf(cfg.get("D_floor"))],
+            ["Roof dead load, D", _psf(cfg.get("D_roof"))],
+            ["Cladding (per unit wall area)", _psf(cfg.get("clad"))],
+            ["Floor live load, L<sub>o</sub>", lrow]]
+    if cfg.get("L_by_level"):
+        rows.append(["Floor live load by level", _n(cfg.get("L_by_level"))])
+    rows.append(["Roof live load, L<sub>r</sub>", _psf(cfg.get("Lr", 20.0))])
+    snow = float(cfg.get("snow", 0) or 0)
+    rain = cfg.get("rain")
+    if snow > 0:
+        sd = cfg.get("snow_params") if isinstance(cfg.get("snow_params"), dict) else {}
+        extra = []
+        for k, lab in (("pg", "p<sub>g</sub>"), ("Ce", "C<sub>e</sub>"), ("Ct", "C<sub>t</sub>"), ("Is", "I<sub>s</sub>"),
+                       ("pf", "p<sub>f</sub>")):
+            v = sd.get(k, cfg.get(k) if k in ("pg",) else None)
+            if v is not None:
+                extra.append("%s = %s" % (lab, _n(v)))
+        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _psf(snow) + ((" (" + ", ".join(extra) + ")") if extra else "")])
+    else:
+        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", "not applicable at site (no snow load)"])
+    if rain not in (None, "", 0, {}):
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _psf(rain) if isinstance(rain, (int, float)) else _n(rain)])
+    elif snow <= 0:
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", "not applicable at site (no rain load)"])
+    else:
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", "not evaluated in this package (roof drainage design by others)"])
+    smo = cfg.get("seismic_mass_only")
+    if isinstance(smo, dict) and _levels_txt(smo):
+        rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])
     return _table(["Gravity load", "Value"], rows)
 
+
 def _lateral_inputs_table(cfg):
-    s = cfg["seis"]; w = cfg.get("wind", {})
-    rows = [["Seismic SDS / SD1", f"{s['SDS']} / {s['SD1']} g"],
-            ["R / Cd / Ω0 / Ie", f"{s['R']} / {s.get('Cd')} / {s.get('Om0')} / {s['Ie']}"],
-            ["Period coeff Ct / x / Cu", f"{s['Ct']} / {s['x']} / {s['Cu']}"]]
-    if w: rows.append(["Wind V / Exposure", f"{w.get('V','?')} mph / {w.get('exposure','C')}"])
+    s = cfg.get("seis") or {}; w = cfg.get("wind", {}) or {}
+    rows = [["Seismic S<sub>DS</sub> / S<sub>D1</sub>", "%s / %s g" % (_sa(s.get("SDS")), _sa(s.get("SD1")))],
+            ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", _rcdo_txt(cfg, s)],
+            ["Importance factor I<sub>e</sub>", _fac(s.get("Ie", 1.0))],
+            ["Period coefficients C<sub>t</sub> / x / C<sub>u</sub>", "%s / %s / %s" % (_n(s.get("Ct")), _n(s.get("x")), _n(s.get("Cu")))]]
+    if w:
+        rows.append(["Basic wind speed V / Exposure", "%s mph / %s" % (_n(w.get("V")), _esc(w.get("exposure", "C")))])
     return _table(["Lateral-load input", "Value"], rows)
 
-def _wind_section(cfg):
+
+def _wind_cases_present(cases):
+    """Which ASCE 7-22 Fig. 27.3-8 MWFRS load cases the combination set contains ({1, 2, 3, 4} subset)."""
+    out = set()
+    for c in cases or []:
+        lab = str(c[0]) if isinstance(c, (tuple, list)) else str(c)
+        wc = getattr(c, "wind_case", None)
+        if wc in (2, 3, 4):
+            out.add(int(wc))
+        for k in (2, 3, 4):
+            if "[C%d" % k in lab:
+                out.add(k)
+        if ("WX" in lab or "WY" in lab) and not any("[C%d" % k in lab for k in (2, 3, 4)):
+            out.add(1)
+    return out
+
+
+def _wind_cases_txt(cases):
+    wc = _wind_cases_present(cases)
+    if not wc:
+        return ""
+    if {2, 3, 4} <= wc:
+        return ("The MWFRS load cases of ASCE 7-22 Fig. 27.3-8 are analysed: Case 1 (full design wind pressure along "
+                "each principal axis), Case 2 (75% of Case 1 with a torsional moment from the eccentricity "
+                "e = &plusmn;0.15B), Case 3 (75% along both axes simultaneously) and Case 4 (56.3% along both axes with "
+                "the eccentricity); each enters the strength combinations of Chapter 4.")
+    if wc & {2, 3, 4}:
+        return ("ASCE 7-22 Fig. 27.3-8 load cases analysed: Case %s (see Chapter 4); the remaining cases were limited "
+                "where ASCE 7-22 Appendix D permits." % ", ".join(str(k) for k in sorted(wc)))
+    return ("Only Case 1 of ASCE 7-22 Fig. 27.3-8 (full design wind pressure along each principal axis) is applied; "
+            "the torsional and combined Cases 2&ndash;4 are not included in this analysis.")
+
+
+def _wind_section(cfg, cases=None):
     """Returns (html, VwX, VwY). VwX/VwY are base shears (None if no wind defined)."""
     if not cfg.get("wind"):
-        return "<p class='note'>No wind parameters defined for this building.</p>", None, None
+        return "<p class='cnote'>No wind load is defined for this building.</p>", None, None
     try:
         w = cfg["wind"]; DX = E.wind_detail(cfg, "X"); DY = E.wind_detail(cfg, "Y")
         FX = E.wind_forces(cfg, "X"); FY = E.wind_forces(cfg, "Y")      # honours any cfg-level patch
         VwX = sum(FX.values()); VwY = sum(FY.values()); NF = len(cfg["heights"])
-        rows = [[k, f"{FX.get(k, 0.0):.1f}", f"{FY.get(k, 0.0):.1f}"] for k in range(1, NF+1)]
+        rows = [[k, _n(FX.get(k, 0.0)), _n(FY.get(k, 0.0))] for k in range(1, NF+1)]
         patched = any(abs(FX.get(k, 0.0)-DX["F"].get(k, 0.0)) > 1e-6 or abs(FY.get(k, 0.0)-DY["F"].get(k, 0.0)) > 1e-6
                       for k in range(1, NF+1))
+        ctxt = _wind_cases_txt(cases)
         if DX["method"] == "override" or DY["method"] == "override" or patched:
-            src = DX.get("source") or DY.get("source") or "a patched engine3d.wind_forces"
-            h = ["<p>ASCE 7-22 §27 MWFRS story forces supplied by the designer's hand calculation "
-                 f"({_esc(src)}); the engine's directional-procedure forces are not used.</p>",
+            src = DX.get("source") or DY.get("source") or ""
+            h = ["<p>ASCE 7-22 Ch. 27 MWFRS story forces from the design wind calculation%s.</p>"
+                 % ((" (" + _n(src) + ")") if src else ""),
                  "<p><b>Story wind forces (kip):</b></p>",
                  _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
-                 f"<p><b>Wind base shear:</b> X = {VwX:.0f} kip, Y = {VwY:.0f} kip.</p>"]
+                 f"<p><b>Wind base shear:</b> X = {_n(VwX)} kip, Y = {_n(VwY)} kip. {ctxt}</p>"]
             return "".join(h), VwX, VwY
-        def g(D): return f"{D['G']:.3f} ({'rigid' if D['rigid'] else 'flexible, Gf Eq. 26.11-10'})"
-        h = ["<p>ASCE 7-22 Ch. 27 directional procedure (MWFRS). qz = 0.00256·Kz·Kzt·Ke·V² (Eq. 26.10-1); "
-             "p = q·Kd·G·Cp (Eq. 27.3-1): windward walls Cp = +0.8 with qz at each height, leeward walls "
-             "Cp(L/B) per Fig. 27.3-1 with qh at the mean roof height h; internal pressure cancels in the net "
-             "story shear. Wall loads are shared between the two diaphragms each wall spans (mid-height "
-             "bands of the actual building volume); the bottom half of the lowest storey goes straight to "
-             "the foundation. Each level is not less than the §27.1.5 minimum (16 psf walls, 8 psf roof). "
-             "Fig. 27.3-8 Cases 2–4 (eccentric/torsional) are not included here; the MWFRS roof suction "
-             "(Fig. 27.3-1 roof C<sub>p</sub>) is applied in the demand combination 0.9D+1.0W.</p>",
-             _table(["Parameter", "Value"], [["Basic wind speed V", f"{w.get('V')} mph"],
-                    ["Exposure / Kd / Kzt / Ke", f"{DX['exposure']} / {w.get('Kd',0.85)} / {w.get('Kzt',1.0)} / {w.get('Ke',1.0)}"],
-                    ["Mean roof height h", f"{DX['h_ft']:.1f} ft"],
-                    ["G (X / Y)", f"{g(DX)} / {g(DY)}"],
-                    ["L/B, leeward Cp (X / Y)", f"{DX['L_over_B']:.2f}, {DX['Cp_leeward']:.2f} / {DY['L_over_B']:.2f}, {DY['Cp_leeward']:.2f}"]]),
-             "<p><b>Story wind forces (kip):</b></p>",
+        def g(D):
+            if D["rigid"]:
+                return "%s (rigid, &sect;26.11.4)" % _n(D["G"], nd=3)
+            src = _pub(str(D.get("n1_source") or ""))
+            m_ = re.search(r"1/T\s*=\s*1/([0-9.]+)\s*s", src)
+            if src.lower().startswith("modal"):
+                stxt = ("from the modal analysis of this model" + (" (n<sub>1</sub> = 1/T, T = %s s)" % m_.group(1) if m_ else "")
+                        + ", &sect;26.11.2")
+            elif "given" in src.lower() or "declared" in src.lower() or "rational" in src.lower():
+                stxt = "from a substantiated structural analysis (&sect;26.11.2)"
+            elif "approximate" in src.lower():
+                stxt = "approximate n<sub>a</sub> (&sect;26.11.3)"
+            else:
+                stxt = _esc(src)
+            return ("%s (flexible building, &sect;26.11.5: n<sub>1</sub> = %s Hz &lt; 1 Hz, %s; G<sub>f</sub> by "
+                    "Eq. 26.11-10)" % (_n(D["G"], nd=3), _n(D.get("n1"), nd=3), stxt))
+        h = ["<p>ASCE 7-22 Ch. 27 directional procedure (MWFRS). q<sub>z</sub> = 0.00256&middot;K<sub>z</sub>K<sub>zt</sub>"
+             "K<sub>e</sub>V<sup>2</sup> (Eq. 26.10-1); p = q&middot;K<sub>d</sub>&middot;G&middot;C<sub>p</sub> (Eq. 27.3-1): "
+             "windward walls C<sub>p</sub> = +0.8 with q<sub>z</sub> at each height, leeward walls C<sub>p</sub>(L/B) per "
+             "Fig. 27.3-1 with q<sub>h</sub> at the mean roof height h; internal pressure cancels in the net story shear. "
+             "Wall loads are shared between the two diaphragms each wall spans (mid-height bands of the building volume); "
+             "the bottom half of the lowest story goes directly to the foundation. Each level is not less than the "
+             "&sect;27.1.5 minimum (16 psf walls, 8 psf roof). The MWFRS roof suction (Fig. 27.3-1 roof C<sub>p</sub>) is "
+             "applied in the 0.9D + 1.0W combinations. " + ctxt + "</p>",
+             _table(["Parameter", "Value"], [["Basic wind speed V", "%s mph" % _n(w.get("V"))],
+                    ["Exposure / K<sub>d</sub> / K<sub>zt</sub> / K<sub>e</sub>", "%s / %s / %s / %s" % (
+                        _esc(DX['exposure']), _fac(w.get('Kd', 0.85)), _fac(w.get('Kzt', 1.0)), _fac(w.get('Ke', 1.0)))],
+                    ["Mean roof height h", "%s ft" % _n(DX['h_ft'])],
+                    ["Gust-effect factor, wind along X", g(DX)],
+                    ["Gust-effect factor, wind along Y", g(DY)],
+                    ["L/B and leeward C<sub>p</sub> (X / Y)", "%s, %s / %s, %s" % (
+                        _n(DX['L_over_B'], nd=2), _n(DX['Cp_leeward'], nd=2), _n(DY['L_over_B'], nd=2),
+                        _n(DY['Cp_leeward'], nd=2))]]),
+             "<p><b>Story wind forces, Case 1 (kip):</b></p>",
              _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
-             f"<p><b>Wind base shear (frame):</b> X = {VwX:.0f} kip, Y = {VwY:.0f} kip "
-             f"(plus {DX['F_base_direct']:.0f} / {DY['F_base_direct']:.0f} kip delivered directly to the foundation).</p>"]
+             f"<p><b>Wind base shear (frames):</b> X = {_n(VwX)} kip, Y = {_n(VwY)} kip "
+             f"(plus {_n(DX['F_base_direct'])} / {_n(DY['F_base_direct'])} kip delivered directly to the foundation).</p>"]
         for m in sorted(set(DX["warnings"]) | set(DY["warnings"])):
-            h.append(f"<p class='note'>Wind note: {_esc(m)}</p>")
+            if str(m).startswith("FLEXIBLE building"):
+                continue                                   # shown in the gust-effect rows above
+            h.append(f"<p class='note'>Wind note: {_n(m)}</p>")
         return "".join(h), VwX, VwY
     except Exception as ex:
-        return f"<p class='note'>[wind determination failed: {ex}]</p>", None, None
+        return f"<p class='note'>[wind determination failed: {_esc(ex)}]</p>", None, None
+
 
 def _horizontal_distribution(cfg, Fx, VwX, VwY, sf=None, runs=None):
     """Per direction: the declared SFRS, its lateral planes in the model, wind vs seismic base shear,
@@ -573,16 +1277,20 @@ def _horizontal_distribution(cfg, Fx, VwX, VwY, sf=None, runs=None):
             parts = ["%s = %.0f ft: %.0f%%" % (ax, p / 12.0, 100 * v) for p, v in sorted(
                 ((p, v) for p, v in shares.items() if p is not None), key=lambda t: t[0])]
             if shares.get(None) and abs(shares[None]) > 0.005:
-                parts.append("other columns: %.0f%%" % (100 * shares[None]))
+                parts.append("other columns<sup>a</sup>: %.0f%%" % (100 * shares[None]))
             sh = "; ".join(parts)
         else:
-            sh = "not computed (see the analysis model)"
+            sh = "not computed"
         rows.append([f"{d} ({'E-W' if d == 'X' else 'N-S'})", _sys_label(sf, d), _line_desc(sf, d),
-                     (f"{Vw:.0f}" if Vw is not None else "&mdash;"), f"{Vs:.0f}", gov, sh])
+                     (_n(Vw) if Vw is not None else "&mdash;"), _n(Vs), gov, sh])
     h.append(_table(["Direction", "System", "Lateral planes (model)", "Wind base (kip)", "Seismic base (kip)",
                      "Governs", "Base-shear share by plane (solved model)"], rows))
+    if any("other columns<sup>a</sup>" in r[-1] for r in rows):
+        h.append("<p class='cnote'><sup>a</sup> Shear in the columns outside the lateral planes: the second-order "
+                 "(P-&Delta;) shear of the gravity columns, which lean on the lateral system; a negative share means the "
+                 "planes carry slightly more than the applied story force.</p>")
     for w in sf.get("warnings", []):
-        h.append("<p class='note'>%s</p>" % _esc(w))
+        h.append("<p class='note'>%s</p>" % _n(w))
     return "".join(h)
 
 def _role_of(mid, inp):
@@ -601,23 +1309,66 @@ def _role_of(mid, inp):
     if "floor" in s or "beam" in s or inp.get("kind") == "beam": return "floor"
     return "other"
 
+def _envelope_txt(inp):
+    """Compact printed envelope: 'P = 1,094 kip; T = 555 kip; M<sub>x</sub> = 9 kip-ft; V = 0.6 kip' (non-zero only)."""
+    out = []
+    for lab, k, sc, u in (("P", "P_comp_kip", 1.0, "kip"), ("T", "P_tens_kip", 1.0, "kip"),
+                          ("M<sub>x</sub>", "Mz_kipin", 1.0 / 12.0, "kip-ft"), ("M<sub>y</sub>", "My_kipin", 1.0 / 12.0, "kip-ft"),
+                          ("V", "V_kip", 1.0, "kip")):
+        try:
+            v = float(inp.get(k))
+        except (TypeError, ValueError):
+            continue
+        if abs(v) > 1e-9:
+            out.append("%s = %s %s" % (lab, _n(v * sc), u))
+    return "; ".join(out) if out else "&mdash;"
+
+
+_COMBO_LABELS = [None]     # current combination labels (set by build_report) for the stale-demand check
+
+
+def _member_rows(members):
+    C = _consistency_mod()
+    rows = []
+    for m in members:
+        inp = m.get("inputs", {}) or {}
+        dcv = C._dc_num(m.get("DC")) if C else (m.get("DC") if isinstance(m.get("DC"), (int, float)) else None)
+        if dcv is None and C and isinstance(m.get("checks"), list):
+            dd = [C._dc_num(k.get("DC")) for k in m["checks"] if isinstance(k, dict)]
+            dd = [x for x in dd if x is not None]
+            dcv = max(dd) if dd else None
+        issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
+        mid = str(m.get("id", ""))
+        rows.append(["<a href='#m-%s'>%s</a>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", mid)), _esc(mid)),
+                     _esc(inp.get("section", "")), _envelope_txt(inp), _combo_label(inp.get("governing_combo")),
+                     _n(m.get("limit_state")) if m.get("limit_state") else "&mdash;",
+                     _n(dcv, dc=True) if dcv is not None else "&mdash;",
+                     _dc_status(dcv, issues) if (dcv is not None or issues) else "not recorded"])
+    return rows
+
+
 def _member_section(cfg, name, pkg, want_roles, title, intro):
-    h = [f"<h2>{title}</h2>", f"<p>{intro}</p>"]
+    """Chapter 6 section for one member role: a summary table (envelope, governing combination, limit state,
+    D/C, status) linked to the full calculation in Appendix A."""
+    h = [f"<h3>{title}</h3>", f"<p>{intro}</p>"]
     members = pkg.get("members") if isinstance(pkg, dict) else None
-    Lcol = max(cfg["heights"]); Lbeam = max(cfg["SX"], cfg["SY"])
-    Lbrace = math.sqrt(min(cfg["SX"], cfg["SY"])**2 + Lcol**2)
-    found = False
+    sel = []
     if isinstance(members, list):
         for m in members:
-            inp = m.get("inputs", {})
-            if _role_of(m.get("id", ""), inp) not in want_roles: continue
-            if not inp.get("section"): continue
-            try: h.append(_member_calc_block(m)); found = True
-            except Exception as ex: h.append(f"<p class='note'>[render failed: {ex}]</p>")
-    if not found:
-        h.append("<p class='note'>No member with this role is present in calc_package.json — tag each "
-                 "member's <code>role</code> (roof / floor / gravity_col / lateral_col / brace); Chapter 6 has a "
-                 "section per role.</p>")
+            if not isinstance(m, dict):
+                continue
+            inp = m.get("inputs", {}) or {}
+            if _role_of(m.get("id", ""), inp) not in want_roles or not inp.get("section"):
+                continue
+            sel.append(m)
+    if not sel:
+        h.append("<p class='note'>No member of this type is recorded in the calc package.</p>")
+        return "".join(h)
+    try:
+        h.append(_table(["Member", "Section", "Demand envelope", "Governing combination", "Governing limit state",
+                         "D/C", "Status"], _member_rows(sel)))
+    except Exception as ex:
+        h.append(f"<p class='note'>[member summary could not be rendered: {_esc(ex)}]</p>")
     return "".join(h)
 
 def _case_extremes(out, info):
@@ -645,24 +1396,28 @@ def _stability_section(cfg, runs):
          "&theta;<sub>max</sub> = 0.5/(&beta;C<sub>d</sub>) &le; 0.25 and need not be taken less than 0.10; "
          "&beta; = %s.</p>"
          % (" including the AISC 358-22 &sect;5.7 RBS drift factor" if any(runs[d]["rbs"][0] > 1.0 for d in ("X", "Y")) else "",
-            "cfg['theta_beta']" if cfg.get("theta_beta") else "1.0 (conservative; not less than 1.25/&Omega;<sub>0</sub>)")]
+            ("%s (declared; not less than 1.25/&Omega;<sub>0</sub>)" % _n(cfg.get("theta_beta"))) if cfg.get("theta_beta")
+            else "1.0 (conservative; not less than 1.25/&Omega;<sub>0</sub>)")]
     worst = {}
     for d in ("X", "Y"):
         rows, tmax, beta = _theta_rows(cfg, runs, d)
         trs = []; wv = 0.0
         for r in rows:
-            st = ("exempt" if r["exempt"] else
-                  "NG &mdash; redesign" if r["theta"] > tmax else
-                  ("OK (&gt; 0.10: P-&Delta; required, included)" if r["theta"] > 0.10 else "OK (&le; 0.10)"))
+            if r["exempt"]:
+                st, pd = "exempt (declared offset)", "&mdash;"
+            else:
+                st = "<b class='ng'>NG &mdash; redesign</b>" if r["theta"] > tmax else "OK"
+                pd = ("included (&theta; &gt; 0.10)" if r["theta"] > 0.10 else
+                      "need not be considered (&theta; &le; 0.10); included")
             if not r["exempt"]: wv = max(wv, r["theta"])
-            trs.append([r["s"], "%.0f" % r["Px"], "%.0f" % r["Vx"], "%.0f" % r["h"], "%.3f" % r["dxe"],
-                        "%.3f" % r["Delta"], "%.3f" % r["raw"], "%.3f" % r["theta"], st])
+            trs.append([r["s"], _n(float(r["Px"])), _n(float(r["Vx"])), _n(float(r["h"])), "%.3f" % r["dxe"],
+                        "%.3f" % r["Delta"], "%.3f" % r["raw"], "%.3f" % r["theta"], st, pd])
         worst[d] = (wv, tmax)
         h.append("<h4>%s direction (C<sub>d</sub> = %s, &beta; = %.2f, &theta;<sub>max</sub> = %.3f)</h4>"
-                 % (d, ("%g" % runs[d]["Cd"]), beta, tmax))
-        h.append(_table(["Story", "P<sub>x</sub> (kip)", "V<sub>x</sub> (kip)", "h<sub>sx</sub> (in)",
-                         "&Delta;<sub>xe</sub> (in)", "&Delta; (in)", "&theta; Eq.12.8-18", "&theta;/(1+&theta;)",
-                         "&le; &theta;<sub>max</sub>"], trs))
+                 % (d, _n(float(runs[d]["Cd"])), beta, tmax))
+        h.append(_table(["Story", "P<sub>x</sub> (kip)", "V<sub>x</sub> (kip)", "h<sub>sx</sub> (in.)",
+                         "&Delta;<sub>xe</sub> (in.)", "&Delta; (in.)", "&theta; (Eq. 12.8-18)", "&theta;/(1+&theta;)",
+                         "&theta; &le; &theta;<sub>max</sub> (Eq. 12.8-19)", "P-&Delta; (&sect;12.8.7)"], trs))
     h.append("<p>Worst-story &theta;: X = %.3f (limit %.3f), Y = %.3f (limit %.3f) &mdash; %s.</p>"
              % (worst["X"][0], worst["X"][1], worst["Y"][0], worst["Y"][1],
                 "both within &theta;<sub>max</sub>" if all(worst[d][0] <= worst[d][1] for d in worst)
@@ -716,22 +1471,24 @@ def _load_activity(name):
     return merged, src
 
 def _activity_section(name):
+    """QA-annex record of the tool calls that produced the design (never part of the published report body)."""
     recs, src = _load_activity(name)
-    h = ["<h2>Appendix C — Activity log</h2>",
-         "<p>Every tool call made during the design, recorded by the MCP server, summarised below.</p>"]
+    h = ["<h2>Activity log</h2>",
+         "<p>Tool calls made during the design, as recorded by the design harness.</p>"]
     if not recs:
-        h.append("<p class='note'>[no activity_log.jsonl found — call new_activity_log() at the start of "
-                 "the design so the server records the tool calls]</p>")
+        h.append("<p class='cnote'>No activity log was recorded for this job.</p>")
         return "".join(h)
     counts = {}
-    for r in recs: counts[r.get("tool", "?")] = counts.get(r.get("tool", "?"), 0) + 1
-    _sd = os.path.relpath(src, HERE) if src else "scratch log"
-    h.append(f"<p>Source: <code>{_sd}</code> — {len(recs)} tool calls.</p>")
+    for r in recs: counts[r.get("tool", "other")] = counts.get(r.get("tool", "other"), 0) + 1
+    _sd = os.path.basename(src) if src else "session log"
+    h.append(f"<p>Source: {_esc(_sd)} &mdash; {len(recs)} tool calls.</p>")
     h.append(_table(["Tool", "Calls"], [[_esc(k), counts[k]] for k in sorted(counts)]))
     rows = [[i + 1, _esc(r.get("ts", "").split("T")[-1]), _esc(r.get("tool", "")),
-             _esc(r.get("detail", "")), _esc(r.get("result", ""))] for i, r in enumerate(recs)]
+             _esc(_PATH_RX.sub(lambda mm: os.path.basename(mm.group(0)), str(r.get("detail", ""))))[:600],
+             _esc(str(r.get("result", "")))[:300]] for i, r in enumerate(recs)]
     h.append("<h3>Chronological tool calls</h3>" + _table(["#", "time", "tool", "detail", "result"], rows))
     return "".join(h)
+
 
 def _load_pkg(name, root=None):
     cands = []
@@ -754,95 +1511,129 @@ CHK_CSS = ("ol.toc{font-size:14px}ol.toc li{margin:2px 0}"
            ".chk ul{margin:4px 0 2px 0;padding-left:20px}.chk li{font-size:13px;color:#333;margin:2px 0}"
            ".chk-status{font-weight:400;font-style:italic;color:#a06000;font-size:12px}")
 
-CHAPTERS = {
- 1: ("Design basis & codes", [
-   "Governing codes and editions stated (IBC, ASCE 7-22, AISC 360-22, AISC 341-22 + 358 if seismic, AWS D1.1); Risk Category and Importance Factors.",
-   "Project criteria match the architectural/owner brief and the geotechnical report (site class, bearing, lateral soil, frost).",
-   "Units, sign conventions and material specs stated and consistent throughout.",
-   "Scope and design-responsibility boundaries defined (connections DESIGNED in this package; delegated/deferred items: joists, stairs, cladding, embeds)."]),
- 2: ("Structural system & load path", [
-   "Gravity and lateral load paths complete and continuous to the foundation in both orthogonal directions.",
-   "Lateral system per direction identified with the correct R, &Omega;<sub>0</sub>, C<sub>d</sub>, &rho; and any height/redundancy/system limits.",
-   "Diaphragm type (rigid/semi-rigid/flexible) justified; collectors/drag struts and chord forces addressed.",
-   "Irregularities (plan &amp; vertical) and expansion/seismic joints identified; triggered provisions applied."]),
- 3: ("Loads", [
-   "Dead loads: realistic self-weight, superimposed (MEP, ceilings, finishes, partitions), cladding/fa&ccedil;ade.",
-   "Live loads per occupancy with correct reductions (and not where prohibited).",
-   "Roof live/snow: flat-roof, drift, unbalanced, rain-on-snow, ponding, minimums.",
-   "Wind (Ch. 26-31): MWFRS and C&amp;C; windward/leeward; torsional cases.",
-   "Seismic (Ch. 11-12): S<sub>DS</sub>/S<sub>D1</sub>, SDC, period, C<sub>s</sub>, V, vertical distribution, E<sub>v</sub>, accidental+amplified torsion, 100/30, &rho;.",
-   "Governing case (wind vs seismic) identified per direction."]),
- 4: ("Load combinations", [
-   "Full ASCE 7-22 &sect;2.3 LRFD set (gravity, wind &plusmn;, seismic &plusmn; with E<sub>v</sub> &amp; &rho;, &Omega;<sub>0</sub> where required), 100/30, &plusmn; accidental torsion.",
-   "Combinations applied to the right members (&Omega;<sub>0</sub> to capacity-protected only); uplift/net-tension (0.9D) checked.",
-   "Second-order effects handled per-combination (no superposition of factored second-order results)."]),
- 5: ("Analysis model fidelity", [
-   "Geometry, member sizes and orientations match the drawings (strong/weak axis correct).",
-   "Boundary conditions: column base fixity matches the baseplate/anchorage detail and the foundation's capacity.",
-   "Connection idealization (rigid / pinned / PR releases) matches the detailed connections.",
-   "Diaphragm constraint, rigid offsets/panel zones, and leaning columns with their P-&Delta; represented.",
-   "Modal results sane: &ge;90% participating mass, reasonable periods, expected mode shapes.",
-   "Equilibrium verified: &Sigma;R = applied base shear (each direction) and total factored gravity.",
-   "Stiffness reductions / notional loads / effective-length basis consistent with the analysis method."]),
- 6: ("Member strength design (AISC 360)", [
-   "Every member type checked for the governing combo: tension (D2/D3), compression (E3/E4/E7), flexure (F2-F8 correct limit state), shear (G2), interaction (H1).",
-   "Correct limit state, &phi;, L<sub>b</sub>, C<sub>b</sub>, K, slenderness and section properties.",
-   "Composite members (Ch. I) designed properly if used (PNA, &phi;M<sub>n</sub>, studs, shoring, construction-stage deflection).",
-   "Concentrated-load limit states (J10) and stiffeners where required.",
-   "Governing D/C &le; 1.0 with sensible margins; sections reasonably economical.",
-   "Calcs cited to specific AISC clauses and independently re-derivable; 2-3 governing members spot-checked."]),
- 7: ("Stability & second-order", [
-   "Stability method (Direct Analysis Method preferred) applied correctly end-to-end.",
-   "B<sub>2</sub> / &theta; per story within limits; P-&Delta; included in member demands."]),
- 8: ("Serviceability", [
-   "Seismic design drift &delta;=C<sub>d</sub>&delta;<sub>xe</sub>/I<sub>e</sub> &le; allowable; wind drift &le; project limit; inter-story compatible with cladding/partitions.",
-   "Deflections: floor LL &le; L/360, TL &le; L/240; camber; roof ponding; long-span/cantilever limits.",
-   "Floor vibration (AISC DG11) for the occupancy where applicable.",
-   "Building separation / pounding; differential movement at joints."]),
- 9: ("Seismic / wind detailing (AISC 341)", [
-   "System detailing matches the R used (width-thickness, brace slenderness, protected zones).",
-   "Capacity design: SCWB (E3.4a), columns/collectors for &Omega;<sub>0</sub> or expected strength (R<sub>y</sub>F<sub>y</sub>).",
-   "Demand-critical welds, prequalified connections (AISC 358), continuity/doubler plates, panel-zone shear.",
-   "Wind: C&amp;C on cladding/fasteners, net uplift load path and hold-downs."]),
- 10: ("Connections", [
-   "Connection demands (V, N, M, incl. capacity-design/overstrength where required) on the drawings.",
-   "Connections designed in this package (sized components; every limit-state D/C \u2264 1.0); only shop-level detailing on the fabricator submittal.",
-   "Critical connections checked/constrained: bolts (J3), welds (J2), block shear (J4), HSS (Ch. K), base plates/anchors (J8/J9 + ACI 318 Ch. 17).",
-   "Constructability: erection stability, access, OSHA min 4 anchor rods."]),
- 11: ("Foundations interface", [
-   "Column base reactions (P/V/M, uplift, overturning) provided to foundation design; consistent with assumed base fixity.",
-   "Overall overturning/sliding stability; net uplift anchorage; load cases to geotech consistent with bearing/lateral capacity."]),
- 12: ("Drawings, specifications & documentation", [
-   "Drawings internally consistent and consistent with the calculations.",
-   "General notes, material specs, welding/bolting, special-inspection schedule and design loads shown.",
-   "Member schedules, framing plans, brace/MF elevations and connection details complete and coordinated.",
-   "Deferred-submittal items listed; assumptions and limitations documented."]),
- 13: ("QA / professional acceptance", [
-   "Independent check performed (different engineer or method); discrepancies resolved.",
-   "Software validated/appropriate; analysis assumptions vs detailing reconciled.",
-   "Special inspection &amp; testing program (IBC Ch. 17) defined.",
-   "Calc package complete, traceable (input &rarr; demand &rarr; capacity &rarr; D/C &rarr; cited clause), archived.",
-   "All open items / RFIs closed; assumptions confirmed.",
-   "EOR satisfied the design meets the governing codes and the standard of care &mdash; apply seal/signature."]),
-}
+def _chapters(ctx=None):
+    """EOR acceptance checklist per chapter, worded for THIS building: AISC 341 / 358 items only where AISC 341
+    applies (R > 3 or a declared AISC 341 system) and AISC 358 only for SMF / IMF; wind items where wind is
+    defined. ctx keys: a341 (bool, any direction), mf358 (SMF/IMF present), wind (bool)."""
+    ctx = ctx or {}
+    a341 = bool(ctx.get("a341", True)); mf358 = bool(ctx.get("mf358", a341)); wind = ctx.get("wind", True)
+    codes = "IBC, ASCE 7-22, AISC 360-22" + (", AISC 341-22" if a341 else "") + (", AISC 358-22" if mf358 else "") \
+        + ", AWS D1.1" + ("" if a341 else " &mdash; AISC 341 does not apply: R = 3 system not specifically detailed for seismic resistance")
+    ch9 = (("Seismic / wind detailing (AISC 341)", [
+               "System detailing matches the R used (width-thickness, brace slenderness, protected zones).",
+               "Capacity design: " + ("SCWB (E3.4a), " if ctx.get("smf") else "") +
+               "columns/collectors for &Omega;<sub>0</sub> or expected strength (R<sub>y</sub>F<sub>y</sub>), as the system requires.",
+               "Demand-critical welds" + (", prequalified moment connections (AISC 358)" if mf358 else "") +
+               ", continuity/doubler plates and panel-zone shear where moment frames are present.",
+               "Wind: C&amp;C on cladding/fasteners, net uplift load path and hold-downs."])
+           if a341 else
+           ("Seismic / wind detailing", [
+               "System detailing consistent with the R used: R = 3 system not specifically detailed for seismic "
+               "resistance (ASCE 7-22 Table 12.2-1, row H) &mdash; AISC 341 does not apply; members and connections "
+               "designed to AISC 360-22 for the analysis forces.",
+               "Overstrength (&Omega;<sub>0</sub>) applied only where ASCE 7-22 &sect;12.4.3 requires it (&sect;12.3.3.4 "
+               "discontinuities, &sect;12.10.2.1 collectors in SDC C&ndash;F).",
+               "Wind: net uplift load path to the foundation (column bases and anchorage) and C&amp;C of the cladding."]))
+    return {
+     1: ("Design basis & codes", [
+       "Governing codes and editions stated (%s); Risk Category and Importance Factors." % codes,
+       "Project criteria match the architectural/owner brief and the geotechnical report (site class, bearing, lateral soil, frost).",
+       "Units, sign conventions and material specifications stated and consistent throughout.",
+       "Scope and design-responsibility boundaries defined (connections designed in this package; delegated/deferred items listed)."]),
+     2: ("Structural system & load path", [
+       "Gravity and lateral load paths complete and continuous to the foundation in both orthogonal directions.",
+       "Lateral system per direction identified with the correct R, &Omega;<sub>0</sub>, C<sub>d</sub>, &rho; and any height/redundancy/system limits.",
+       "Diaphragm type (rigid/semi-rigid/flexible) justified; collectors/drag struts and chord forces addressed.",
+       "Irregularities (plan &amp; vertical) and expansion/seismic joints identified; triggered provisions applied."]),
+     3: ("Loads", [
+       "Dead loads: realistic self-weight, superimposed (MEP, ceilings, finishes), cladding/fa&ccedil;ade; partitions as live load (&sect;4.3.2).",
+       "Live loads per occupancy with correct reductions (&sect;4.7) and not where prohibited.",
+       "Roof live/snow/rain: flat-roof snow, drift, unbalanced, rain-on-snow, ponding, minimums &mdash; as applicable at the site.",
+       ("Wind (Ch. 26-31): MWFRS incl. the Fig. 27.3-8 load cases; C&amp;C." if wind else "Wind: not applicable / not defined."),
+       "Seismic (Ch. 11-12): S<sub>DS</sub>/S<sub>D1</sub>, SDC, period, C<sub>s</sub>, V, vertical distribution, E<sub>v</sub>, accidental+amplified torsion, 100/30, &rho; &mdash; per direction.",
+       "Governing case (wind vs seismic) identified per direction."]),
+     4: ("Load combinations", [
+       "Full ASCE 7-22 &sect;2.3 LRFD set (gravity, wind &plusmn;, seismic &plusmn; with E<sub>v</sub> &amp; &rho;, &Omega;<sub>0</sub> where required), 100/30, &plusmn; accidental torsion.",
+       "Combinations applied to the right members (&Omega;<sub>0</sub> to capacity-protected elements only, where required); uplift/net tension (0.9D) checked.",
+       "Second-order effects handled per combination (no superposition of factored second-order results)."]),
+     5: ("Analysis model fidelity", [
+       "Geometry, member sizes and orientations match the drawings (strong/weak axis correct).",
+       "Boundary conditions: column base fixity matches the base plate/anchorage detail and the foundation's capacity.",
+       "Connection idealization (rigid / pinned / PR releases) matches the detailed connections.",
+       "Diaphragm constraint, rigid offsets/panel zones, and leaning columns with their P-&Delta; represented.",
+       "Modal results sane: &ge; 90% participating mass, reasonable periods, expected mode shapes.",
+       "Equilibrium verified: &Sigma;R = applied base shear (each direction) and total factored gravity.",
+       "Stiffness reductions / notional loads / effective-length basis consistent with the analysis method."]),
+     6: ("Member strength design (AISC 360)", [
+       "Every member type checked for the governing combination: tension (D2/D3), compression (E3/E4/E7), flexure (F2-F8 correct limit state), shear (G2), interaction (H1).",
+       "Correct limit state, &phi;, L<sub>b</sub>, C<sub>b</sub>, K, slenderness and section properties.",
+       "Composite members (Ch. I) designed properly if used (PNA, &phi;M<sub>n</sub>, studs, shoring, construction-stage deflection).",
+       "Concentrated-load limit states (J10) and stiffeners where required.",
+       "Governing D/C &le; 1.0 with sensible margins; sections reasonably economical.",
+       "Calculations cited to specific AISC clauses and independently re-derivable; 2-3 governing members spot-checked."]),
+     7: ("Stability & second-order", [
+       "Stability method (Direct Analysis Method preferred) applied correctly end-to-end.",
+       "B<sub>2</sub> / &theta; per story within limits; P-&Delta; included in member demands."]),
+     8: ("Serviceability", [
+       "Seismic design drift &delta; = C<sub>d</sub>&delta;<sub>xe</sub>/I<sub>e</sub> &le; allowable; wind drift &le; project limit under service wind; interstory drift compatible with cladding/partitions.",
+       "Deflections: floor LL &le; L/360, TL &le; L/240; camber; roof ponding; long-span/cantilever limits.",
+       "Floor vibration (AISC Design Guide 11) for the occupancy where applicable.",
+       "Building separation / pounding; differential movement at joints."]),
+     9: ch9,
+     10: ("Connections", [
+       "Connection demands (V, N, M" + (", incl. capacity-design/overstrength where required" if a341 else ", from the analysis") + ") on the drawings.",
+       "Connections designed in this package (sized components; every limit-state D/C &le; 1.0); only shop-level detailing on the fabricator submittal.",
+       "Critical connections checked: bolts (J3), welds (J2), block shear (J4), HSS (Ch. K), base plates/anchors (J8/J9 + ACI 318 Ch. 17); single-plate shear connections per AISC Manual Part 10 (bolt-group eccentricity, plate ductility).",
+       "Constructability: erection stability, access, OSHA minimum 4 anchor rods."]),
+     11: ("Foundations interface", [
+       "Column base reactions (P/V/M, uplift, overturning) provided to foundation design; consistent with assumed base fixity.",
+       "Overall overturning/sliding stability; net uplift anchorage; load cases to geotech consistent with bearing/lateral capacity."]),
+     12: ("Drawings, specifications & documentation", [
+       "Drawings internally consistent and consistent with the calculations.",
+       "General notes, material specs, welding/bolting, special-inspection schedule and design loads shown.",
+       "Member schedules, framing plans, brace/MF elevations and connection details complete and coordinated.",
+       "Deferred-submittal items listed; assumptions and limitations documented."]),
+     13: ("QA / professional acceptance", [
+       "Independent check performed (different engineer or method); discrepancies resolved.",
+       "Software validated/appropriate; analysis assumptions vs detailing reconciled.",
+       "Special inspection &amp; testing program (IBC Ch. 17) defined.",
+       "Calc package complete, traceable (input &rarr; demand &rarr; capacity &rarr; D/C &rarr; cited clause), archived.",
+       "All open items / RFIs closed; assumptions confirmed.",
+       "EOR satisfied the design meets the governing codes and the standard of care &mdash; apply seal/signature."]),
+    }
 
-def _toc():
-    rows = "".join(f"<li><b>Chapter {n}</b> &mdash; {CHAPTERS[n][0]}</li>" for n in range(1, 14))
+
+CHAPTERS = _chapters()
+_CH_CTX = [None]          # the current report's checklist context (set by build_report)
+
+
+def _toc(ctx=None, appendix_b=False):
+    ch = _chapters(ctx if ctx is not None else _CH_CTX[0])
+    rows = "".join(f"<li><b>Chapter {n}</b> &mdash; {ch[n][0]}</li>" for n in range(1, 14))
     return ("<h2>Report structure &mdash; EOR review checklist</h2>"
-            "<p>This report is organised as the senior-engineer (EOR) acceptance checklist: one chapter per "
-            "checklist section. Each chapter opens with the items a reviewer must accept, followed by the "
-            "supporting analysis and design evidence. Appendix A is the fully-referenced AISC 360/341 member "
-            "calc, Appendix B the member forces for every load case, Appendix C the activity log of the tool "
-            "calls that produced the design.</p><ol class='toc'>" + rows + "</ol>")
+            "<p>This report is organised as the engineer-of-record acceptance checklist: one chapter per checklist "
+            "section. Each chapter opens with the items a reviewer must accept, followed by the supporting analysis "
+            "and design evidence. Appendix A contains the AISC 360-22 member and connection calculations"
+            + ("; Appendix B the member forces for each load combination" if appendix_b else "") + ".</p>"
+            "<ol class='toc'>" + rows + "</ol>")
 
-def _chapter(n, status=None):
-    title, items = CHAPTERS[n]
+
+def _chapter(n, status=None, ctx=None):
+    title, items = _chapters(ctx if ctx is not None else _CH_CTX[0])[n]
     li = "".join(f"<li>{t}</li>" for t in items)
     extra = f" &mdash; <span class='chk-status'>{status}</span>" if status else ""
     return (f"<h2>Chapter {n} &mdash; {title}</h2>"
             f"<div class='chk'><div class='chk-h'>Reviewer acceptance items{extra}</div><ul>{li}</ul></div>")
 
-def _risk_category(Ie):
+
+def _risk_category(Ie, cfg=None):
+    """Risk Category: cfg['risk_category'] when declared (preflight.risk_cat_of_cfg), else from I_e."""
+    if isinstance(cfg, dict):
+        try:
+            from preflight import risk_cat_of_cfg
+            return risk_cat_of_cfg(cfg)
+        except Exception:
+            pass
     return {1.0: "II", 1.25: "III", 1.5: "IV"}.get(round(float(Ie), 2), "II")
 
 
@@ -852,6 +1643,7 @@ def _risk_category(Ie):
 # inventory of the BUILT model (brace planes and fixed-ended beam lines per direction). Nothing
 # defaults to "moment frame" or "two frames".
 _FAM_RX = [
+    ("NSD",  r"not\s+specifically\s+detailed|\bNSD\b"),
     ("STMF", r"\bSTMF\b|truss[ -]+moment"),
     ("SMF",  r"\bSMF\b|special\s+moment"),
     ("IMF",  r"\bIMF\b|intermediate\s+moment"),
@@ -860,28 +1652,33 @@ _FAM_RX = [
     ("OCBF", r"\b(?:MT-)?OCBF\b|ordinary\s+concentric"),
     ("BRBF", r"\bBRBF\b|buckling[- ]+restrained"),
     ("EBF",  r"\bEBF\b|eccentric(?:ally)?\s+braced"),
-    ("SPSW", r"\bSPSW\b|plate\s+shear\s+wall"),
+    ("C-PSW", r"\bC-?PSW\b|composite\s+plate\s+shear"),
+    ("SPSW", r"\bSPSW\b|(?<!composite )plate\s+shear\s+wall"),
 ]
 MF_FAMS = ("SMF", "IMF", "OMF", "STMF")
-BR_FAMS = ("SCBF", "OCBF", "BRBF", "EBF", "SPSW")   # SPSW strips are modelled as brace elements
+BR_FAMS = ("SCBF", "OCBF", "BRBF", "EBF", "SPSW", "C-PSW")   # plate-shear-wall strips are modelled as brace elements
 FAM_NAME = {"SMF": "special moment frame (SMF)", "IMF": "intermediate moment frame (IMF)",
             "OMF": "ordinary moment frame (OMF)", "STMF": "special truss moment frame (STMF)",
             "SCBF": "special concentrically braced frame (SCBF)",
             "OCBF": "ordinary concentrically braced frame (OCBF)",
             "BRBF": "buckling-restrained braced frame (BRBF)",
             "EBF": "eccentrically braced frame (EBF)", "SPSW": "special plate shear wall (SPSW)",
-            "MF?": "steel moment frame (type not declared)", "BF?": "steel braced frame (type not declared)"}
+            "C-PSW": "steel and concrete composite plate shear wall (C-PSW)",
+            "NSD": "steel system not specifically detailed for seismic resistance (AISC 360)",
+            "MF?": "steel moment frame (SFRS not declared)", "BF?": "steel braced frame (SFRS not declared)"}
 FAM_341 = {"SMF": "E3", "IMF": "E2", "OMF": "E1", "STMF": "E4", "SCBF": "F2", "OCBF": "F1",
-           "BRBF": "F4", "EBF": "F3", "SPSW": "F5"}
+           "BRBF": "F4", "EBF": "F3", "SPSW": "F5", "C-PSW": "H7"}
 
 
 def _families(text):
-    """Ordered list of AISC 341 system families named in a free-text system declaration."""
+    """Ordered list of the Table 12.2-1 steel system families named in a free-text system declaration. An
+    explicit 'not specifically detailed' (NSD, row H) declaration governs: 'OMF-type' etc. is then description."""
     t = str(text or ""); hits = []
     for fam, rx in _FAM_RX:
         m = re.search(rx, t, flags=re.I)
         if m: hits.append((m.start(), fam))
-    return [f for _, f in sorted(hits)]
+    fams = [f for _, f in sorted(hits)]
+    return ["NSD"] if "NSD" in fams else fams
 
 
 def _families_by_dir(text):
@@ -980,54 +1777,77 @@ def _frame_inventory(cfg):
 
 
 def _sfrs(cfg, inv=None):
-    """System description per direction. Returns dict(declared, text, dirs={'X': [fam..], 'Y': [..]},
-    dual, mixed, families, has_mf, has_br, warnings, lines={'X': {...}, 'Y': {...}})."""
+    """System description per direction. Returns dict(declared, recognised, text, dirs={'X': [fam..], 'Y': [..]},
+    dual, mixed, families, has_mf, has_br, warnings, lines={'X': {...}, 'Y': {...}}, kinds={'X': {'mf','br'}}).
+    The engine's own resolution (engine3d.sfrs_key of engine3d.system_dir per direction) is used first, so the
+    report, the seismic factors and preflight agree; the free-text parser is the fallback. 'declared' means a
+    system string exists (cfg system / system_X / system_Y / seis system); 'recognised' that it maps to a
+    Table 12.2-1 steel row."""
     inv = inv if inv is not None else _frame_inventory(cfg)
     s = cfg.get("seis") or {}
-    text = str(cfg.get("system") or "")
+    text = str(cfg.get("system") or s.get("system") or "")
     per = _families_by_dir(text)
     for d in ("X", "Y"):
-        for src in (cfg.get("system_" + d), (cfg.get("seis_" + d) or {}).get("system")
-                    if isinstance(cfg.get("seis_" + d), dict) else None):
-            if src:
-                per[d] = _families(src) or per[d]
+        for src_ in (cfg.get("system_" + d), (cfg.get("seis_" + d) or {}).get("system")
+                     if isinstance(cfg.get("seis_" + d), dict) else None):
+            if src_:
+                per[d] = _families(src_) or per[d]
+        try:                                                   # the engine's resolution first (one parser)
+            k = E.sfrs_key(E.system_dir(cfg, d))
+            if k and k in FAM_NAME:
+                per[d] = [k]
+        except Exception:
+            pass
     glob = _families(text)
-    declared = bool(glob or per["X"] or per["Y"])
+    declared = bool(text.strip() or cfg.get("system_X") or cfg.get("system_Y") or
+                    any(isinstance(cfg.get("seis_" + d), dict) and cfg["seis_" + d].get("system") for d in ("X", "Y")))
+    recognised = bool(glob or per["X"] or per["Y"])
     warnings = []
     have = {d: {"mf": bool(inv[d]["mf"]) if inv.get("ok") else None,
                 "br": bool(inv[d]["brace"]) if inv.get("ok") else None} for d in ("X", "Y")}
-    dirs = {}
+    dirs = {}; kinds = {}
     for d in ("X", "Y"):
         cand = per[d] if per[d] else glob
         if cand:
             if inv.get("ok"):
-                got = [f for f in cand if (f in MF_FAMS and have[d]["mf"]) or (f in BR_FAMS and have[d]["br"])]
+                got = [f for f in cand if (f in MF_FAMS and have[d]["mf"]) or (f in BR_FAMS and have[d]["br"])
+                       or (f == "NSD" and (have[d]["mf"] or have[d]["br"]))]
                 if not got:
                     warnings.append("%s direction: the declared %s has no matching lateral elements in the built "
                                     "model (no %s found in %s-direction planes)"
-                                    % (d, "/".join(cand), "braces" if all(f in BR_FAMS for f in cand) else
-                                       "fixed-ended beams" if all(f in MF_FAMS for f in cand) else "braces or fixed-ended beams", d))
+                                    % (d, "/".join(FAM_NAME.get(f, f) for f in cand),
+                                       "braces" if all(f in BR_FAMS for f in cand) else
+                                       "fixed-ended beams" if all(f in MF_FAMS for f in cand) else
+                                       "braces or fixed-ended beams", d))
                     got = list(cand)
             else:
                 got = list(cand)
         else:
-            # undeclared: infer from the model (braces win; fixed-ended beams alone = moment frame)
+            # undeclared / unrecognised: infer the frame type from the model (braces win; fixed-ended beams alone = MF)
             if inv.get("ok") and have[d]["br"]: got = ["BF?"]
             elif inv.get("ok") and have[d]["mf"]: got = ["MF?"]
             else: got = ["BF?"] if E.is_braced(cfg) else ["MF?"]
         dirs[d] = got
+        kd = set()
+        for f in got:
+            if f in MF_FAMS or f == "MF?": kd.add("mf")
+            if f in BR_FAMS or f == "BF?": kd.add("br")
+            if f == "NSD":
+                if have[d]["br"] or (have[d]["br"] is None and E.is_braced(cfg)): kd.add("br")
+                if have[d]["mf"]: kd.add("mf")
+        kinds[d] = kd
     fams = []
     for d in ("X", "Y"):
         for f in dirs[d]:
             if f not in fams: fams.append(f)
-    has_mf = any(f in MF_FAMS or f == "MF?" for f in fams)
-    has_br = any(f in BR_FAMS or f == "BF?" for f in fams)
+    has_mf = any("mf" in kinds[d] for d in ("X", "Y"))
+    has_br = any("br" in kinds[d] for d in ("X", "Y"))
     dual = "dual" in text.lower() or bool(cfg.get("dual_check"))
     mixed = ("mixed" in text.lower()) or (set(dirs["X"]) != set(dirs["Y"]))
     lines = {}
     for d in ("X", "Y"):
-        use_mf = any(f in MF_FAMS or f == "MF?" for f in dirs[d])
-        use_br = any(f in BR_FAMS or f == "BF?" for f in dirs[d])
+        use_mf = "mf" in kinds[d]
+        use_br = "br" in kinds[d]
         planes = {}
         if inv.get("ok"):
             if use_br:
@@ -1039,13 +1859,23 @@ def _sfrs(cfg, inv=None):
                     cur = planes.setdefault(p, {})
                     for st, iv in v.items(): cur[st] = cur.get(st, []) + iv
         lines[d] = planes
-    return dict(declared=declared, text=text, dirs=dirs, dual=dual, mixed=mixed, families=fams,
-                has_mf=has_mf, has_br=has_br, warnings=warnings, lines=lines, inv_ok=bool(inv.get("ok")))
+    return dict(declared=declared, recognised=recognised, text=text, dirs=dirs, dual=dual, mixed=mixed,
+                families=fams, has_mf=has_mf, has_br=has_br, warnings=warnings, lines=lines, kinds=kinds,
+                inv_ok=bool(inv.get("ok")))
 
 
 def _sys_label(sf, d):
     fams = sf["dirs"][d]
-    names = " + ".join(FAM_NAME.get(f, f) for f in fams)
+    names = []
+    for f in fams:
+        nm = FAM_NAME.get(f, f)
+        if f == "NSD":
+            kd = (sf.get("kinds") or {}).get(d) or set()
+            frm = ("braced and moment frames" if kd >= {"br", "mf"} else "braced frames" if "br" in kd else
+                   "moment frames" if "mf" in kd else "")
+            nm = "steel system not specifically detailed for seismic resistance%s" % ((" &mdash; " + frm) if frm else "")
+        names.append(nm)
+    names = " + ".join(names)
     if sf["dual"] and any(f in MF_FAMS for f in fams) and any(f in BR_FAMS for f in fams):
         names = "dual system: " + names
     return names
@@ -1304,7 +2134,7 @@ def _drift_relief_note(cfg):
         return ""
     Ie = float((cfg.get("seis") or {}).get("Ie", 1.0) or 1.0)
     if not relief_active(cfg):
-        return ("<p class='note'><b>cfg['drift_relief_16_1_2'] is present but NOT in force</b> "
+        return ("<p class='note'><b>An ASCE 7-22 &sect;16.1.2 drift-relief declaration is present but NOT in force</b> "
                 + ("(Risk Category IV, I<sub>e</sub> = %.2f: ASCE 7-22 &sect;16.1.2 keeps the Table 12.12-1 limits)" % Ie
                    if Ie >= 1.5 else "(block incomplete -- see the preflight findings)")
                 + " &mdash; the Table 12.12-1 limit above governs.</p>")
@@ -1313,14 +2143,14 @@ def _drift_relief_note(cfg):
         return (fmt % (float(v) * scale)) if isinstance(v, (int, float)) else "&mdash;"
     table_val = r.get("table_12_12_1") if isinstance(r.get("table_12_12_1"), (int, float)) else (0.015 if Ie >= 1.25 else 0.020)
     return ("<p class='cnote'><b>ASCE 7-22 &sect;16.1.2 drift relief in force.</b> A Chapter 16 nonlinear response "
-            "history analysis of this building (Nonlinear module job <code>%s</code>%s) gave a suite-mean MCE<sub>R</sub> "
+            "history analysis of this building (nonlinear analysis record %s%s) gave a suite-mean MCE<sub>R</sub> "
             "story drift of %s against the &sect;16.4.1.2 limit of %s (verdict: %s). For Risk Category I&ndash;III the "
             "&sect;12.12.1 limits therefore need not apply; the linear design target was reset to %s of story height "
             "(the Table 12.12-1 value would be %s). <b>This design is provisional until the Chapter 16 analysis is "
             "re-run on it and passes &sect;16.4.</b>%s</p>"
-            % (_esc(str(r.get("nlrha_job", "?"))),
+            % (_esc(str(r.get("nlrha_job") or "not recorded")),
                (" run " + _esc(str(r.get("nlrha_run")))) if r.get("nlrha_run") else "",
-               _f("nlrha_mean_drift"), _f("nlrha_limit"), _esc(str(r.get("nlrha_verdict", "n/a"))),
+               _f("nlrha_mean_drift"), _f("nlrha_limit"), _esc(str(r.get("nlrha_verdict") or "not recorded")),
                _f("linear_target"), "%.2f%%" % (100.0 * float(table_val)),
                (" " + _esc(str(r.get("note")))) if r.get("note") else ""))
 
@@ -1335,8 +2165,8 @@ def _design_of_record_rows(root):
         d = json.load(open(p, encoding="utf-8"))
     except Exception:
         return []
-    what = "promoted from feedback loop <code>%s</code> (%s) on %s" % (
-        _esc(str(d.get("loop", "?"))), _esc(str(d.get("loop_title", ""))), _esc(str(d.get("promoted_at", ""))))
+    what = "verified re-design %s%s, adopted %s" % (
+        _n(d.get("loop")), (" (%s)" % _n(d.get("loop_title"))) if d.get("loop_title") else "", _n(d.get("promoted_at")))
     ver = d.get("verification") or {}
     vs = "; ".join("%s: %s" % (_esc(str(k)), _esc(str(v))) for k, v in ver.items() if not isinstance(v, (dict, list)))
     rows = [["Design of record", what + ((" &mdash; " + vs) if vs else "")]]
@@ -1359,126 +2189,301 @@ def _rcdo_txt(cfg, s):
     """R / Cd / Omega0 -- per direction when the two directions differ (ASCE 7-22 12.2.2, engine3d.seis_dir)."""
     try:
         d = {k: E.seis_dir(cfg, k) for k in ("X", "Y")}
-        t = {k: "%s / %s / %s" % (d[k].get("R"), d[k].get("Cd"), d[k].get("Om0")) for k in d}
+        t = {k: "%s / %s / %s" % (_fac(d[k].get("R")), _fac(d[k].get("Cd")), _fac(d[k].get("Om0"))) for k in d}
         return t["X"] if t["X"] == t["Y"] else "X: %s; Y: %s" % (t["X"], t["Y"])
     except Exception:
-        return "%s / %s / %s" % (s.get("R"), s.get("Cd"), s.get("Om0"))
+        return "%s / %s / %s" % (_fac(s.get("R")), _fac(s.get("Cd")), _fac(s.get("Om0")))
 
-def _design_basis_codes(cfg, s, root=None):
+def _sdc_tables(SDS, SD1, S1=0.0, rc="II"):
+    """(SDC by Table 11.6-1, SDC by Table 11.6-2, S1 override or None) -- ASCE 7-22 11.6."""
+    rc4 = str(rc).upper() in ("IV", "4")
+    def tab(x, rows):
+        for thr, a, b in rows:
+            if float(x) < thr:
+                return b if rc4 else a
+        return "D"
+    t1 = tab(SDS, [(0.167, "A", "A"), (0.33, "B", "C"), (0.50, "C", "D")])
+    t2 = tab(SD1, [(0.067, "A", "A"), (0.133, "B", "C"), (0.20, "C", "D")])
+    ov = ("F" if rc4 else "E") if float(S1 or 0) >= 0.75 else None
+    return t1, t2, ov
+
+
+def _rho_txt(cfg, sdc):
+    try:
+        r = {d: E.seis_dir(cfg, d).get("rho") for d in ("X", "Y")}
+    except Exception:
+        r = {d: cfg.get("rho") for d in ("X", "Y")}
+    txt = _fac(r["X"]) if r["X"] == r["Y"] else "X: %s; Y: %s" % (_fac(r["X"]), _fac(r["Y"]))
+    declared = any(cfg.get(k) is not None for k in ("rho", "rho_X", "rho_Y")) or (cfg.get("seis") or {}).get("rho") is not None
+    basis = ("&sect;12.3.4.1, SDC %s" % sdc) if sdc in ("A", "B", "C") and all(float(v or 0) == 1.0 for v in r.values()) else \
+            ("&sect;12.3.4.2" if sdc in ("D", "E", "F") else "&sect;12.3.4")
+    return "%s (%s%s)" % (txt, basis, "" if declared else "; default for the SDC")
+
+
+def _design_basis_codes(cfg, s, root=None, pkg=None, ctx=None):
+    """Chapter 1: governing standards (AISC 341 / 358 only where they apply), risk and hazard classification
+    (Risk Category from cfg, Site Class, SDC with the governing table values, rho, wind, snow, rain, tornado for
+    RC III/IV) and the scope of this package driven by what the calc package actually contains."""
+    ctx = ctx or {}
     seismic = bool(s.get("R"))
-    rows = [["International Building Code (IBC)", "adopting code &mdash; confirm locally adopted edition &amp; amendments"],
-            ["ASCE/SEI 7-22", "loads &amp; load combinations (gravity, wind Ch.26-31, seismic Ch.11-12, &sect;2.3 LRFD)"],
-            ["AISC 360-22", "steel member &amp; connection design (LRFD)"]]
-    if seismic:
-        rows += [["AISC 341-22", "seismic provisions / ductile detailing &amp; capacity design"],
-                 ["AISC 358-22", "prequalified moment connections (SMF/IMF, incl. the moment frames of a dual system)"]]
-    rows += [["AWS D1.1", "structural welding"], ["ACI 318 (Ch. 17)", "cast-in anchorage at column bases"]]
-    out = ["<h3>Governing standards</h3>",
-           _table(["Reference", "Used for"], rows)]
-    Ie = s.get("Ie", 1.0); RC = _risk_category(Ie)
-    crows = [["Risk Category", RC], ["Importance factor I<sub>e</sub>", f"{Ie}"]]
+    a341 = bool(ctx.get("a341", seismic and float(s.get("R") or 0) > 3))
+    rows = [["International Building Code (IBC)", "adopting building code &mdash; confirm the locally adopted edition and amendments"],
+            ["ASCE/SEI 7-22", "minimum design loads and load combinations (&sect;2.3 LRFD; gravity, wind Ch. 26&ndash;31, "
+             "seismic Ch. 11&ndash;12)"],
+            ["AISC 360-22", "steel member and connection design (LRFD)"]]
+    if a341:
+        rows.append(["AISC 341-22", "seismic provisions: ductile detailing and capacity design of the SFRS%s"
+                     % ((" (%s direction)" % "/".join(d for d in ("X", "Y") if (ctx.get("a341_dirs") or {}).get(d)))
+                        if ctx.get("a341_dirs") and not all((ctx.get("a341_dirs") or {}).values()) else "")])
+    if ctx.get("mf358"):
+        rows.append(["AISC 358-22", "prequalified moment connections (SMF / IMF)"])
+    rows.append(["AISC Steel Construction Manual, 16th Ed.", "design aids, incl. Part 10 simple shear connections"])
+    if ctx.get("dg11"):
+        rows.append(["AISC Design Guide 11 (2nd Ed.)", "floor vibration due to human activity"])
+    rows += [["AWS D1.1" + ("/D1.1M and AWS D1.8" if a341 else "/D1.1M"), "structural welding" +
+              (" (D1.8: seismic supplement)" if a341 else "")],
+             ["ACI 318-19 Ch. 17", "anchoring to concrete at the column bases"]]
+    out = ["<h3>Governing standards</h3>", _table(["Reference", "Used for"], rows)]
+    if seismic and not a341:
+        out.append("<p class='cnote'>AISC 341-22 does not apply: the seismic force-resisting system is a steel system "
+                   "not specifically detailed for seismic resistance (R = %s, ASCE 7-22 Table 12.2-1 row H). Members and "
+                   "connections are designed to AISC 360-22 for the forces from the analysis.</p>" % _n(s.get("R")))
+    Ie = s.get("Ie", 1.0); RC = _risk_category(Ie, cfg)
+    crows = [["Risk Category (ASCE 7-22 Table 1.5-1)", _esc(RC)],
+             ["Seismic importance factor I<sub>e</sub>", _fac(Ie)],
+             ["Site Class (ASCE 7-22 Ch. 20)", _esc(cfg.get("site_class")) if cfg.get("site_class") else
+              "<b>not stated</b> &mdash; confirm with the geotechnical report"]]
     if seismic:
         try: sdc = E.sdc_of(cfg)        # the SDC every gate uses (a declared lower SDC is overridden, HR-15)
         except Exception: sdc = _sdc(s["SDS"], s["SD1"], s.get("S1", 0.0), Ie)
-        crows += [["S<sub>DS</sub> / S<sub>D1</sub>", f"{s['SDS']} / {s['SD1']} g"],
-                  ["Seismic Design Category", f"{sdc} <span class='cnote'>(Tables 11.6-1/2 incl. RC IV column; "
-                   "S<sub>1</sub>&ge;0.75 &rarr; E/F applied; confirm mapped S<sub>1</sub>)</span>"],
-                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", _rcdo_txt(cfg, s)],
-                  ["Redundancy &rho;", f"{cfg.get('rho', 1.3)}"]]
+        t1, t2, ov = _sdc_tables(s.get("SDS", 0), s.get("SD1", 0), s.get("S1", 0), RC)
+        sdct = ("%s (Table 11.6-1: S<sub>DS</sub> = %s g &rarr; %s; Table 11.6-2: S<sub>D1</sub> = %s g &rarr; %s%s)"
+                % (sdc, _sa(s.get("SDS")), t1, _sa(s.get("SD1")), t2,
+                   ("; S<sub>1</sub> = %s g &ge; 0.75 g &rarr; %s" % (_sa(s.get("S1")), ov)) if ov else ""))
+        crows += [["S<sub>S</sub> / S<sub>1</sub>" if s.get("SS") else "S<sub>1</sub>",
+                   ("%s / %s g" % (_sa(s.get("SS")), _sa(s.get("S1")))) if s.get("SS") else "%s g" % _sa(s.get("S1", 0))],
+                  ["S<sub>DS</sub> / S<sub>D1</sub>", "%s / %s g" % (_sa(s.get("SDS")), _sa(s.get("SD1")))],
+                  ["Seismic Design Category (&sect;11.6)", sdct],
+                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub> (Table 12.2-1)", _rcdo_txt(cfg, s)],
+                  ["Redundancy factor &rho;", _rho_txt(cfg, sdc)]]
         try:
             from preflight import drift_relief, relief_active
             _r = drift_relief(cfg)
             if _r is not None:
                 crows.append(["Story drift limit basis",
                               ("ASCE 7-22 &sect;16.1.2 relief in force &mdash; linear target %.2f%% from the Chapter 16 result "
-                               "(Nonlinear module job <code>%s</code>)" % (100.0 * float(_r.get("linear_target", 0) or 0), _esc(str(_r.get("nlrha_job", "?")))))
+                               "(nonlinear analysis record %s)" % (100.0 * float(_r.get("linear_target", 0) or 0), _n(_r.get("nlrha_job"))))
                               if relief_active(cfg) else
-                              "Table 12.12-1 (a cfg['drift_relief_16_1_2'] block is present but NOT in force &mdash; see Chapter 8)"])
+                              "Table 12.12-1 (a &sect;16.1.2 relief declaration is present but not in force &mdash; see Chapter 8)"])
         except Exception:
             pass
     crows += _design_of_record_rows(root)
     w = cfg.get("wind", {})
     if w:
-        crows.append(["Basic wind speed V", f"{w.get('V','?')} mph, Exposure {w.get('exposure','?')}"])
+        crows.append(["Basic wind speed V (Risk Category %s)" % _esc(RC), "%s mph, Exposure %s"
+                      % (_n(w.get("V")), _esc(w.get("exposure") or "not stated"))])
+    snow = float(cfg.get("snow", 0) or 0)
+    crows.append(["Snow load (ASCE 7-22 Ch. 7)", ("design roof snow load S = %s psf%s" % (
+        _n(snow), (", ground snow p<sub>g</sub> = %s psf" % _n(cfg.get("pg"))) if cfg.get("pg") else ""))
+        if snow > 0 else "not applicable at site"])
+    rain = cfg.get("rain")
+    crows.append(["Rain load (ASCE 7-22 Ch. 8)", (_n(rain) if not isinstance(rain, (int, float)) else _psf(rain))
+                  if rain not in (None, "", 0, {}) else ("not applicable at site" if snow <= 0 else
+                                                          "not evaluated in this package (roof drainage design by others)")])
+    if str(RC).upper() in ("III", "IV"):
+        crows.append(["Tornado loads (ASCE 7-22 Ch. 32)", _n(cfg.get("tornado")) if cfg.get("tornado") else
+                      "<b>required for Risk Category %s &mdash; not evaluated in this package</b>" % _esc(RC)])
     out += ["<h3>Risk &amp; hazard classification</h3>", _table(["Parameter", "Value"], crows)]
+    conns = [c for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)] if isinstance(pkg, dict) else []
+    designed = [c for c in conns if c.get("checks") or c.get("DC") is not None]
+    dlg = (pkg or {}).get("delegated_design") if isinstance(pkg, dict) else None
+    dli = ([_human_key(k)[0] for k in dlg.keys()] if isinstance(dlg, dict) and dlg else
+           ["cold-formed / joist framing", "stairs", "cladding and its attachments", "embeds"])
+    dl = ", ".join(x for i, x in enumerate(["foundations"] + dli)
+                   if x and x.lower() not in [y.lower() for y in (["foundations"] + dli)[:i]])
     out += ["<h3>Scope &amp; design responsibility</h3>",
-            "<p class='cnote'>This package covers the primary steel gravity and lateral framing, its members, "
-            "and the analysis behind them. Connection design, foundations, cold-formed/joist framing, stairs, "
-            "cladding attachment and embeds are delegated/deferred unless explicitly included; their demands are "
-            "transmitted in Chapters 10-11. The reviewer should confirm the geotechnical and architectural "
-            "criteria match this basis.</p>"]
+            "<p class='cnote'>This package covers the analysis of the primary steel gravity and lateral framing, the "
+            "design of its members%s, and the column-base reactions for the foundation design (Chapter 11).%s "
+            "Delegated or deferred (not designed here): %s. The reviewer should confirm that the "
+            "geotechnical and architectural criteria match this basis.</p>"
+            % (" and connections (%d connection types with limit-state checks, Chapter 10 and Appendix A)" % len(designed)
+               if designed else "", "" if designed else
+               " Connection demands are listed in Chapter 10; the connection design is by others.", dl)]
     return "".join(out)
 
-def _system_loadpath(cfg, sf=None):
+
+def _floor_mode_txt(cfg, pkg=None):
+    """How floor gravity reaches the framing, from the demand record (floor_load_modes) or cfg['floor_system']."""
+    modes = (((pkg or {}).get("demand_analysis") or {}).get("floor_load_modes") or {}) if isinstance(pkg, dict) else {}
+    fs = str(cfg.get("floor_system", "")).lower()
+    keys = " ".join(str(k).lower() for k in modes) if isinstance(modes, dict) else ""
+    if "one-way" in keys or ("one-way" in fs and "two-way" not in keys):
+        return "one-way deck spanning to the beams (tributary width per beam)"
+    if "two-way" in keys or "two-way" in fs:
+        return "two-way tributary distribution (45&deg; yield lines) to the supporting beams"
+    return "tributary distribution to the supporting beams"
+
+
+def _system_loadpath(cfg, sf=None, pkg=None):
     sf = sf or _sfrs(cfg)
-    one_way = "one-way" in str(cfg.get("floor_system", "")).lower()
-    trib = "one-way deck spanning to the infill beams" if one_way else "tributary"
     sysd = "; ".join(f"<b>{d}</b>: {_sys_label(sf, d)} ({_line_desc(sf, d)})" for d in ("X", "Y"))
-    decl = "" if sf["declared"] else (" <span class='note'>(no cfg['system'] declared &mdash; the type is "
-                                       "inferred from the model and must be declared)</span>")
+    if not sf.get("declared"):
+        decl = (" <span class='note'>(no seismic force-resisting system is declared; the frame type shown is taken "
+                "from the analysis model)</span>")
+    elif not sf.get("recognised", True):
+        decl = (" <span class='note'>(declared as &ldquo;%s&rdquo;, which does not name a Table 12.2-1 steel "
+                "system)</span>" % _esc(sf.get("text", "")))
+    else:
+        decl = ""
     return ("<h3>Lateral system &amp; load path</h3>"
             f"<p>Seismic force-resisting system per principal direction: {sysd}.{decl} "
-            f"<b>Gravity</b> path: floor/roof pressure &rarr; {trib} &rarr; beams/girders &rarr; "
+            f"<b>Gravity</b> path: floor/roof load &rarr; {_floor_mode_txt(cfg, pkg)} &rarr; beams/girders &rarr; "
             "columns &rarr; column bases &rarr; foundation. <b>Lateral</b> path: story inertial/wind force &rarr; "
             "floor diaphragm &rarr; the vertical lateral planes listed above &rarr; column bases &rarr; foundation, in "
             "both orthogonal directions. The horizontal distribution to the planes and the irregularity screen "
             "(discontinuous or offset planes) are in this chapter.</p>")
 
 
-def _lfrs_table(cfg, sf=None):
+_PF_KEY = {"SMF": "smf", "IMF": "imf", "OMF": "omf", "STMF": "stmf", "SCBF": "scbf", "OCBF": "ocbf",
+           "BRBF": "brbf", "EBF": "ebf", "SPSW": "spsw", "C-PSW": "c-psw", "NSD": "nsd"}
+
+
+def _sdc_safe(cfg):
+    try:
+        return E.sdc_of(cfg)
+    except Exception:
+        s = cfg.get("seis") or {}
+        try: return _sdc(s.get("SDS", 0), s.get("SD1", 0), s.get("S1", 0.0), s.get("Ie", 1.0))
+        except Exception: return "D"
+
+
+def _height_limit(fam, sdc=None, hn_ft=None, cfg=None, pkg=None):
+    """ASCE 7-22 Table 12.2-1 structural height limit for system family `fam` in the building's SDC, evaluated
+    against h_n (with the 12.2.5.4 increase / single-story exceptions as preflight evaluates them)."""
+    try:
+        import preflight as PF
+    except Exception:
+        PF = None
+    key = _PF_KEY.get(fam)
+    if PF is None or key is None or key not in PF.SYSTEMS:
+        return "SFRS not identified &mdash; limit not evaluated" if fam in ("MF?", "BF?") else "per Table 12.2-1"
+    sdc = sdc or "D"
+    col = "B" if sdc in ("A", "B") else sdc
+    lim = PF.SYSTEMS[key]["lim"].get(col)
+    if lim is None:
+        txt = "not limited (SDC %s)" % sdc
+        return txt + ("; h<sub>n</sub> = %s ft &mdash; OK" % _n(hn_ft) if hn_ft else "")
+    if lim == PF.NP:
+        base = "not permitted in SDC %s" % sdc
+    else:
+        base = "%s ft (SDC %s)" % (_n(lim), sdc)
+    if hn_ft is None:
+        return base
+    if lim != PF.NP and hn_ft <= lim + 0.05:
+        return base + "; h<sub>n</sub> = %s ft &mdash; OK" % _n(hn_ft)
+    # exceeded / NP: report the evaluated finding (12.2.5.4 increase or a single-story exception)
+    msg = ""
+    if isinstance(cfg, dict):
+        try:
+            import consistency as _C
+            ev = _C._height_limit_evidence(pkg) if isinstance(pkg, dict) else None
+            fnd = [m for sev, m in PF.system_limit_findings(cfg, ev) if PF.SYSTEMS[key]["name"] in m]
+            if fnd:
+                msg = fnd[0]
+        except Exception:
+            msg = ""
+    if msg and ("permitted up to" in msg or "permitted to" in msg):
+        return base + "; h<sub>n</sub> = %s ft &mdash; %s" % (_n(hn_ft), _esc(re.sub(r"\s*Keep the .*$", "", msg)))
+    return base + "; h<sub>n</sub> = %s ft &mdash; <b class='ng'>exceeds the limit</b>%s" % (
+        _n(hn_ft), (" (" + _esc(msg) + ")") if msg else "")
+
+
+def _lfrs_table(cfg, sf=None, pkg=None):
     sf = sf or _sfrs(cfg)
+    sdc = _sdc_safe(cfg)
+    try:
+        hn = E.zlevels(cfg)[-1] / 12.0
+    except Exception:
+        hn = sum(float(h) for h in cfg.get("heights") or []) / 12.0
     rows = []
     for d in ("X", "Y"):
-        sd = _seis_d(cfg, d)
-        hl = "; ".join("%s: %s" % (f, _height_limit(f)) for f in sf["dirs"][d])
-        rows.append([f"{d} direction", _sys_label(sf, d), f"{sd.get('R')}", f"{sd.get('Cd')}", f"{sd.get('Om0')}",
-                     f"{sd.get('rho', cfg.get('rho', 1.3))}", hl])
+        try:
+            sd = E.seis_dir(cfg, d)
+        except Exception:
+            sd = _seis_d(cfg, d)
+        hl = "; ".join(("%s: %s" % (f if f not in ("MF?", "BF?") else "SFRS", _height_limit(f, sdc, hn, cfg, pkg)))
+                       if len(sf["dirs"][d]) > 1 else _height_limit(f, sdc, hn, cfg, pkg) for f in sf["dirs"][d])
+        rows.append([f"{d} direction", _sys_label(sf, d), _fac(sd.get("R")), _fac(sd.get("Cd")), _fac(sd.get("Om0")),
+                     _fac(sd.get("rho")), hl])
     tbl = _table(["Direction", "Seismic force-resisting system", "R", "C<sub>d</sub>", "&Omega;<sub>0</sub>",
-                  "&rho;", "h<sub>n</sub> limit (Table 12.2-1, SDC D/E/F)"], rows)
-    if sf["declared"]:
-        note = ("<p class='cnote'>System from cfg['system'] (\"%s\")%s; apply each system's AISC 341 provisions in "
-                "Chapter 9 and confirm the Table 12.2-1 height limit for the SDC. Where the systems differ by direction, "
-                "each direction's R, C<sub>d</sub> and &Omega;<sub>0</sub> apply to it (ASCE 7-22 &sect;12.2.2)%s.</p>"
-                % (_esc(sf["text"]), ", checked against the lateral elements of the built model" if sf["inv_ok"] else "",
+                  "&rho;", "Structural height limit, Table 12.2-1 (SDC %s)" % sdc], rows)
+    hl_txt = " / ".join(dict.fromkeys(r[-1] for r in rows))
+    if "SFRS not identified" not in hl_txt and "per Table 12.2-1" not in hl_txt:
+        _QA["height_limit"] = ("exceeds the limit" not in hl_txt, hl_txt)
+    if sf.get("declared") and sf.get("recognised", True):
+        a341 = any(f in FAM_341 for f in sf.get("families", []))
+        note = ("<p class='cnote'>System as declared (&ldquo;%s&rdquo;)%s.%s Where the systems differ by direction, each "
+                "direction's R, C<sub>d</sub> and &Omega;<sub>0</sub> apply to it (ASCE 7-22 &sect;12.2.2)%s.</p>"
+                % (_esc(sf["text"]) if sf.get("text") else "per direction",
+                   ", checked against the lateral elements of the analysis model" if sf["inv_ok"] else "",
+                   " The AISC 341 detailing of each system is in Chapter 9." if a341 else "",
                    "" if (cfg.get("seis_X") or cfg.get("seis_Y")) or not sf["mixed"] else
-                   " &mdash; <b>cfg['seis'] carries one factor set; declare cfg['seis_X']/cfg['seis_Y']</b>"))
+                   " &mdash; <b>one seismic factor set is declared for both directions: confirm it applies to each system</b>"))
+    elif sf.get("declared"):
+        note = ("<p class='note'>The declared system (&ldquo;%s&rdquo;) does not name a Table 12.2-1 steel system; the "
+                "frame type above is taken from the analysis model and the height limit is not evaluated.</p>"
+                % _esc(sf.get("text", "")))
     else:
-        note = ("<p class='note'>No cfg['system'] declared &mdash; the type above is INFERRED from the model "
-                "(braces / fixed-ended beams) and does not identify the AISC 341 system (R=8 is SMF, EBF, BRBF or a "
-                "dual). DECLARE cfg['system'] so the system, its detailing (Ch. 9) and height limit are locked.</p>")
+        R = float((cfg.get("seis") or {}).get("R") or 0)
+        note = ("<p class='note'>No seismic force-resisting system is declared; the frame type above is taken from the "
+                "analysis model (braces / fixed-ended beams) and does not identify the Table 12.2-1 system%s.</p>"
+                % (" (R = 8 corresponds to an SMF, EBF, BRBF or a dual system)" if abs(R - 8.0) < 1e-9 else ""))
     for w in sf.get("warnings", []):
-        note += "<p class='note'>%s</p>" % _esc(w)
+        note += "<p class='note'>%s</p>" % _n(w)
     return tbl + note
 
 
-def _height_limit(fam):
-    """ASCE 7-22 Table 12.2-1 structural height limits (ft) for SDC D / E / F (NL = not limited,
-    NP = not permitted); summary values -- confirm the footnotes (12.2.5.4 increases etc.)."""
-    return {"SMF": "NL / NL / NL", "IMF": "35 / NP / NP (12.2.5.7 exceptions)", "OMF": "NP / NP / NP (12.2.5.6 exceptions)",
-            "STMF": "160 / 100 / NP", "SCBF": "160 / 160 / 100", "OCBF": "35 / 35 / NP",
-            "BRBF": "160 / 160 / 100", "EBF": "160 / 160 / 100", "SPSW": "160 / 160 / 100",
-            "MF?": "declare the system", "BF?": "declare the system"}.get(fam, "per Table 12.2-1")
-
-def _diaphragm_section(cfg, Fx):
+def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
+    """ASCE 7-22 12.10.1.1 F_px per level; where the MWFRS wind story forces exceed the seismic F_px the
+    diaphragm, collectors and chords are designed for the wind as well (19j). wind = (FwX, FwY) story forces."""
     NF = len(cfg["heights"]); s = cfg["seis"]; SDS = s["SDS"]; Ie = s["Ie"]
     w = [E.floor_w(cfg, k) for k in range(1, NF+1)]
-    rows = []
+    rows = []; fpx = {}
     for x in range(1, NF+1):
         sumF = sum(Fx[i] for i in range(x, NF+1)); sumw = sum(w[i-1] for i in range(x, NF+1))
         wpx = w[x-1]; Fpx = (sumF/sumw)*wpx if sumw else 0.0
         lo = 0.2*SDS*Ie*wpx; hi = 0.4*SDS*Ie*wpx; gov = min(max(Fpx, lo), hi)
-        tag = "min" if gov == lo else ("max" if gov == hi else "Eq.12.10-1")
-        rows.append([x, f"{wpx:.0f}", f"{Fpx:.0f}", f"{lo:.0f}", f"{hi:.0f}", f"{gov:.0f} ({tag})"])
-    just = ("<p>The floor/roof is taken as a <b>rigid diaphragm</b> (concrete-filled metal deck), distributing "
-            "story forces to the lateral frames in proportion to their stiffness and modelled with a rigid "
-            "in-plane constraint per ASCE 7-22 &sect;12.3.1.2. Collectors/drag struts carry the diaphragm shear "
-            "into the frames; chord forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. The "
-            "diaphragm, its collectors and chords are designed for the force F<sub>px</sub> below (&sect;12.10.1.1).</p>")
-    tbl = _table(["Level x", "w<sub>px</sub> (kip)", "F<sub>px</sub> Eq.12.10-1 (kip)",
-                  "min 0.2S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>", "max 0.4S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>",
-                  "F<sub>px</sub> design (kip)"], rows)
-    return just + tbl + ("<p class='cnote'>F<sub>px</sub> is the diaphragm/collector design force; the detailed "
-                         "diaphragm, collector and chord design is delegated and confirmed on the drawings.</p>")
+        tag = "minimum" if gov == lo else ("maximum" if gov == hi else "Eq. 12.10-1")
+        fpx[x] = gov
+        row = [x, _n(wpx), _n(Fpx), _n(lo), _n(hi), "%s (%s)" % (_n(gov), tag)]
+        if wind:
+            fw = max(float(wind[0].get(x, 0.0) or 0.0), float(wind[1].get(x, 0.0) or 0.0))
+            row.append(_n(fw))
+        rows.append(row)
+    n_wind = sum(1 for k in range(1, NF + 1) if wind and
+                 max(float(wind[0].get(k, 0) or 0), float(wind[1].get(k, 0) or 0)) > fpx[k])
+    wind_gov = n_wind > 0
+    just = ("<p>The floor and roof are taken as <b>rigid diaphragms</b> (concrete-filled metal deck) that distribute "
+            "the story forces to the lateral frames in proportion to their stiffness, modelled with a rigid in-plane "
+            "constraint (ASCE 7-22 &sect;12.3.1.2). Collectors/drag struts deliver the diaphragm shear to the frames; chord "
+            "forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. The diaphragm, its collectors and chords "
+            "are designed for the seismic force F<sub>px</sub> below (&sect;12.10.1.1)"
+            + (" and for the MWFRS wind story forces of Chapter 3, which exceed F<sub>px</sub> at %d of the %d levels of "
+               "this building." % (n_wind, NF) if wind_gov else ".") + "</p>")
+    hdr = ["Level x", "w<sub>px</sub> (kip)", "F<sub>px</sub> Eq. 12.10-1 (kip)",
+           "min 0.2S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>", "max 0.4S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>",
+           "F<sub>px</sub> design (kip)"] + (["MWFRS wind story force, larger direction (kip)"] if wind else [])
+    tbl = _table(hdr, rows)
+    coll = [m.get("id") for m in ((pkg or {}).get("members") or []) if isinstance(m, dict)
+            and "collector" in (str(m.get("id", "")) + " " + str((m.get("inputs") or {}).get("role", ""))).lower()] \
+        if isinstance(pkg, dict) else []
+    tail = ("<p class='cnote'>Collector members are designed in Chapter 6 (%s). The deck diaphragm itself (deck shear "
+            "and fasteners) is designed by the deck supplier for these forces.</p>" % ", ".join(_esc(c) for c in coll[:6])
+            if coll else
+            "<p class='cnote'>F<sub>px</sub> (and the wind story forces where larger) are the diaphragm, collector and "
+            "chord design forces; the deck diaphragm design is delegated and confirmed on the drawings.</p>")
+    return just + tbl + tail
+
 
 def _merge(iv):
     out = []
@@ -1526,9 +2531,9 @@ def _irregularity_section(cfg, runs, sf=None):
     anything the framework cannot evaluate is printed as NOT EVALUATED (never a default 'None')."""
     sf = sf or _sfrs(cfg)
     NF = len(cfg["heights"]); hgt = cfg["heights"]; exempt = runs["exempt"]
-    w = [E.floor_w(cfg, k) for k in range(1, NF + 1)]
     sdc = runs.get("sdc", "D"); NE = "<b>NOT EVALUATED</b>"
-    trig = {"12.3.3.4": [], "12.3.3.5": [], "12.3.3.1": [], "12.3.3.2": [], "12.7.3 (3D model)": [], "12.5 (orthogonal)": []}
+    trig = {"12.3.3.4": [], "12.3.3.5": [], "12.3.3.1": [], "12.3.3.2": [], "12.3.3.3": [], "12.7.3 (3D model)": [],
+            "12.5 (orthogonal)": []}
     # ---- H1 torsional (Eq. 12.3-2 TIR from edge drifts with accidental torsion, Ax = 1)
     tirs = {d: max([t for s_, t in enumerate(runs[d]["tir"], 1) if s_ not in exempt] or [1.0]) for d in ("X", "Y")}
     axs = {d: max(runs[d]["ax"] or [1.0]) for d in ("X", "Y")}
@@ -1536,8 +2541,8 @@ def _irregularity_section(cfg, runs, sf=None):
     tiers = [t for t in (1.2, 1.4, 1.6) if tr > t]
     if tr > 1.2:
         both14 = all(v > 1.4 for v in tirs.values())
-        tcls = ("Type 1 torsional: TIR X %.2f / Y %.2f (tiers &gt;%s)%s; A<sub>x</sub> (Eq. 12.8-15, displacements) up to "
-                "X %.2f / Y %.2f (&sect;12.8.4.3)%s%s"
+        tcls = ("Type 1 TORSIONAL: YES &mdash; TIR X %.3f / Y %.3f, largest &gt; 1.2 (Table 12.3-1a tiers exceeded: "
+                "&gt;%s)%s; A<sub>x</sub> (Eq. 12.8-15, displacements) up to X %.2f / Y %.2f (&sect;12.8.4.3)%s%s"
                 % (tirs["X"], tirs["Y"], "/&gt;".join("%.1f" % t for t in tiers),
                    "" if sdc in ("C", "D", "E", "F") else " (A<sub>x</sub> not required in SDC %s)" % sdc,
                    axs["X"], axs["Y"],
@@ -1545,7 +2550,7 @@ def _irregularity_section(cfg, runs, sf=None):
                    "; &rho; = 1.3 (&gt;1.4 in both directions, &sect;12.3.4.2.1)" if both14 and sdc in ("D", "E", "F") else ""))
         trig["12.3.3.5"].append("H1"); trig["12.7.3 (3D model)"].append("H1")
     else:
-        tcls = "None: TIR X %.2f / Y %.2f &le; 1.2" % (tirs["X"], tirs["Y"])
+        tcls = "Not present: TIR X %.2f / Y %.2f &le; 1.2" % (tirs["X"], tirs["Y"])
     # ---- H2 / H3 geometric plan screens
     try:
         pl = E.plan_irregularity_levels(cfg)
@@ -1569,12 +2574,12 @@ def _irregularity_section(cfg, runs, sf=None):
         elif rel:
             k, g = max(rel, key=lambda t: min(t[1]["worst_cutout"]["rx"], t[1]["worst_cutout"]["ry"]))
             c = g["worst_cutout"]
-            h2 = ("None: largest notch at %s projects %.0f%% (X) / %.0f%% (Y) of the plan dimensions &mdash; both must "
+            h2 = ("Not present: largest notch at %s projects %.0f%% (X) / %.0f%% (Y) of the plan dimensions &mdash; both must "
                   "exceed 20%%" % (_glab(g, k), 100 * c["rx"], 100 * c["ry"]))
         else:
-            h2 = "None (no re-entrant corner in the framed footprint%s)" % (
-                "; split-level wings screened per cfg['level_groups']" if cfg.get("level_groups") else
-                "" if not runs["exempt"] else "; split-level building: declare cfg['level_groups'] to screen wings at offset elevations together")
+            h2 = "Not present (no re-entrant corner in the framed footprint%s)" % (
+                "; split-level wings screened together as declared" if cfg.get("level_groups") else
+                "" if not runs["exempt"] else "; split-level building: wings at offset elevations screened per level")
         omax = max(pl["levels"].items(), key=lambda t: t[1]["open_ratio"], default=(None, None))
         if omax[0] is None:
             h3 = NE
@@ -1582,7 +2587,7 @@ def _irregularity_section(cfg, runs, sf=None):
             k, g = omax
             op = ("open area %.0f%% of the gross enclosed area at %s (limit 25%%%s)"
                   % (100 * g["open_ratio"], _glab(g, k),
-                     "" if cfg.get("diaphragm_openings") else "; interior bay openings only &mdash; declare other openings in cfg['diaphragm_openings']"))
+                     "" if cfg.get("diaphragm_openings") else "; framed-bay openings only &mdash; other slab openings are not modelled"))
             h3 = ("Type 3 DIAPHRAGM DISCONTINUITY: YES &mdash; " + op if g["open_ratio"] > 0.25 else "Openings: " + op) + \
                  ("; story-to-story change in effective diaphragm stiffness: " + NE + " (diaphragm modelled rigid)")
             if g["open_ratio"] > 0.25: trig["12.3.3.5"].append("H3")
@@ -1600,7 +2605,7 @@ def _irregularity_section(cfg, runs, sf=None):
                   "&times; &Omega;<sub>0</sub> per &sect;12.10.1.1/12.10.3.3)" % lst)
             trig["12.3.3.4"].append("H4"); trig["12.3.3.5"].append("H4"); trig["12.7.3 (3D model)"].append("H4")
         else:
-            h4 = "None: every SFRS plane is continuous to the base (checked in the built model)"
+            h4 = "Not present: every SFRS plane is continuous to the base (checked in the analysis model)"
         if term or inpl:
             parts = ["%s terminates at story %d on supporting members" % (_plane(d, p), s_) for d, p, s_ in term[:6]]
             parts += ["%s offset in its own plane at story %d" % (_plane(d, p), s_) for d, p, s_ in inpl[:6]]
@@ -1609,20 +2614,20 @@ def _irregularity_section(cfg, runs, sf=None):
                   "&Omega;<sub>0</sub> (&sect;12.3.3.4)")
             trig["12.3.3.4"].append("V3"); trig["12.3.3.5"].append("V3")
         else:
-            v3 = "None: no SFRS plane is offset or interrupted below any story (checked in the built model)"
+            v3 = "Not present: no SFRS plane is offset or interrupted below any story (checked in the analysis model)"
     # ---- H5 nonparallel
     npar = (_frame_inventory(cfg).get("nonparallel") or [])
     if npar or cfg.get("skew"):
         h5 = ("Type 5 NONPARALLEL: YES &mdash; %s; orthogonal combination (&sect;12.5) and 3D analysis (&sect;12.7.3)"
-              % ("%d lateral element(s) skewed to the principal axes" % len(npar) if npar else "cfg['skew'] grid"))
+              % ("%d lateral element(s) skewed to the principal axes" % len(npar) if npar else "skewed column grid"))
         trig["12.5 (orthogonal)"].append("H5"); trig["12.7.3 (3D model)"].append("H5")
     else:
-        h5 = "None: all lateral elements parallel to X or Y (checked in the built model)" if sf.get("inv_ok") else NE
+        h5 = "Not present: all lateral elements parallel to X or Y (checked in the analysis model)" if sf.get("inv_ok") else NE
     # ---- V1 soft story (Table 12.3-2 1a/1b, with the 12.3.2.2 exceptions)
     def _soft(d):
         k = runs[d]["k"]; dr = runs[d]["drift_cm"]
         if NF == 1 or (NF == 2 and sdc in ("B", "C", "D")):
-            return "None: Exception 2 (12.3.2.2) &mdash; %d-story building" % NF, None
+            return "Not present: Exception 2 (12.3.2.2) &mdash; %d-story building" % NF, None
         worst = None
         for s_ in range(1, NF):
             if s_ in exempt: continue
@@ -1640,10 +2645,10 @@ def _irregularity_section(cfg, runs, sf=None):
         s_, r1, r3, typ = worst
         txt = ("story %d: K/K<sub>above</sub> = %.2f%s" % (s_, r1, (", K/avg(3 above) = %.2f" % r3) if r3 is not None else ""))
         if typ and exc1:
-            return "None: %s, but Exception 1 (12.3.2.2) applies &mdash; no story drift ratio exceeds 130%% of the story above" % txt, None
+            return "Not present: %s, but Exception 1 (12.3.2.2) applies &mdash; no story drift ratio exceeds 130%% of the story above" % txt, None
         if typ:
             return ("Type %s %sSOFT STORY: YES &mdash; %s" % (typ, "EXTREME " if typ == "1b" else "", txt)), typ
-        return "None: %s (limits 0.70 / 0.80)" % txt, None
+        return "Not present: %s (limits 0.70 / 0.80)" % txt, None
     v1x, tx = _soft("X"); v1y, ty = _soft("Y")
     if "1b" in (tx, ty) and sdc in ("E", "F"): trig["12.3.3.1"].append("V1b")
     v1 = "X: %s<br>Y: %s" % (v1x, v1y)
@@ -1658,7 +2663,7 @@ def _irregularity_section(cfg, runs, sf=None):
                     v2p.append("%s: stories %d/%d SFRS dimension %.0f/%.0f ft" % (d, s_ - 1, s_, b_ / 12, a_ / 12))
         v2 = ("Type 2 VERTICAL GEOMETRIC: YES &mdash; " + "; ".join(v2p[:4]) + " (&gt; 130%; no Table 12.3-2 reference "
               "section &mdash; informs the analysis-procedure choice)") if v2p else \
-             "None: SFRS horizontal dimension within 130% between adjacent stories (both directions)"
+             "Not present: SFRS horizontal dimension within 130% between adjacent stories (both directions)"
     else:
         v2 = NE
     # ---- V4 weak story (needs the story lateral strengths)
@@ -1674,21 +2679,17 @@ def _irregularity_section(cfg, runs, sf=None):
             dmin = min(rr, key=lambda t: t[2])
             typ = "4b EXTREME WEAK" if dmin[2] < 0.65 else "4a WEAK"
             v4 = ("Type %s STORY: YES &mdash; %s story %d strength = %.0f%% of the story above "
-                  "(cfg['story_strength'])" % (typ, dmin[0], dmin[1], 100 * dmin[2]))
+                  "(declared story strengths)" % (typ, dmin[0], dmin[1], 100 * dmin[2]))
             if dmin[2] < 0.65:
                 if sdc in ("E", "F"): trig["12.3.3.1"].append("V4b")
                 elif sdc == "D": trig["12.3.3.2"].append("V4b")
+                elif sdc in ("B", "C") and (NF > 2 or sum(hgt) > 360.0 + 0.5): trig["12.3.3.3"].append("V4b")
             elif sdc in ("E", "F"): trig["12.3.3.1"].append("V4a")
         else:
-            v4 = "None: every story at least as strong as the story above (cfg['story_strength'])"
+            v4 = "Not present: every story at least as strong as the story above (declared story strengths)"
     else:
-        v4 = (NE + " &mdash; story lateral strengths are not computed by the framework; provide "
-              "cfg['story_strength'] = {'X': [...], 'Y': [...]} (kip, story 1 first)")
-    # ---- supplementary mass screen (Vertical Type 2 mass irregularity of 7-16, deleted in 7-22)
-    massr = max((max(w[k] / w[k - 1], w[k - 1] / w[k]) for k in range(1, NF) if w[k] > 0 and w[k - 1] > 0), default=1.0)
-    mcls = ("None (adjacent floor-weight ratio %.2f)" % massr if massr <= 1.5 else
-            "Adjacent floor-weight ratio %.2f &gt; 1.5 &mdash; ADVISORY only (the 7-16 mass irregularity was deleted "
-            "in ASCE 7-22; no requirement triggered)" % massr)
+        v4 = (NE + " &mdash; story lateral strengths are not computed by the analysis; the weak-story check "
+              "(Table 12.3-2 Types 4a/4b) requires the story strengths")
     rows = [
         ["Horizontal 1 &mdash; Torsional (Table 12.3-1a tiers)", tcls],
         ["Horizontal 2 &mdash; Re-entrant corner (both projections &gt; 20%)", h2],
@@ -1698,13 +2699,12 @@ def _irregularity_section(cfg, runs, sf=None):
         ["Vertical 1a/1b &mdash; Soft / extreme soft story (70/80%, 60/70%)", v1],
         ["Vertical 2 &mdash; Geometric (SFRS dimension &gt; 130%)", v2],
         ["Vertical 3 &mdash; In-plane discontinuity", v3],
-        ["Vertical 4a/4b &mdash; Weak / extreme weak story", v4],
-        ["Mass &mdash; supplementary screen (deleted in 7-22)", mcls]]
+        ["Vertical 4a/4b &mdash; Weak / extreme weak story", v4]]
     intro = ("<p>Evaluated against ASCE 7-22 Tables 12.3-1, 12.3-1a and 12.3-2 (SDC %s). TIR (Eq. 12.3-2) uses the "
              "story drifts at the two diaphragm edges under the &plusmn;5%% accidental eccentricity with A<sub>x</sub> = 1; "
              "story stiffness is V<sub>x</sub>/&Delta;<sub>xe</sub> at the centre of mass; the re-entrant, opening, "
              "offset and SFRS-dimension tests use the framed footprint and the lateral elements of the built model "
-             "(plane coordinates from the element list)%s. Items marked NOT EVALUATED need data the framework does "
+             "(plane coordinates from the element list)%s. Items marked NOT EVALUATED need data the analysis does "
              "not compute.</p>" % (sdc, "; declared drift-exempt split-level offsets are skipped" if exempt else ""))
     req = []
     if trig["12.3.3.4"]:
@@ -1718,6 +2718,10 @@ def _irregularity_section(cfg, runs, sf=None):
         req.append("<b>&sect;12.3.3.1: %s is NOT PERMITTED in SDC %s</b>" % ("/".join(trig["12.3.3.1"]), sdc))
     if trig["12.3.3.2"]:
         req.append("<b>&sect;12.3.3.2: Type 4b extreme weak story is NOT PERMITTED in SDC D</b>")
+    if trig["12.3.3.3"]:
+        req.append("<b>&sect;12.3.3.3: with a Type 4b extreme weak story in SDC %s the structure shall not be more than two "
+                   "stories or 30 ft in structural height h<sub>n</sub>, unless the weak story resists &Omega;<sub>0</sub> times the "
+                   "&sect;12.8 design force (Exception)</b>" % sdc)
     if trig["12.7.3 (3D model)"]:
         req.append("&sect;12.7.3: 3D analysis model required (%s) &mdash; the model is 3D" % "/".join(sorted(set(trig["12.7.3 (3D model)"]))))
     if trig["12.5 (orthogonal)"]:
@@ -1734,107 +2738,305 @@ def _irregularity_section(cfg, runs, sf=None):
     return out
 
 
-def _gravity_loads_note():
-    return ("<p class='cnote'>Dead D is the bundled member self-weight + superimposed dead (MEP, ceilings, "
-            "finishes, partition allowance) plus fa&ccedil;ade cladding &mdash; itemise on the load schedule. "
-            "Live L is applied at full L<sub>0</sub> (no &sect;4.7 reduction taken &mdash; conservative); "
-            "L = L<sub>0</sub>(0.25 + 15/&radic;(K<sub>LL</sub>A<sub>T</sub>)) may be used in member design where "
-            "K<sub>LL</sub>A<sub>T</sub> &ge; 400 ft&sup2; and reduction is permitted. Roof carries a uniform "
-            "L<sub>r</sub>/snow; flat-roof snow, drift, unbalanced/sliding snow, rain-on-snow and ponding stability "
-            "are confirmed separately (out of scope for the uniform roof model).</p>")
+def _llr_record(cfg, pkg=None):
+    """The ASCE 7-22 4.7 live load reduction actually applied in the demand run (calc package record), or None."""
+    da = ((pkg or {}).get("demand_analysis") or {}) if isinstance(pkg, dict) else {}
+    llr = da.get("live_load_reduction")
+    return llr if isinstance(llr, dict) else None
+
+
+def _llr_sentence(cfg, pkg=None):
+    llr = _llr_record(cfg, pkg)
+    if llr and llr.get("applied"):
+        unr = llr.get("unreduced_psf") or 0
+        return ("Floor live load is reduced per ASCE 7-22 &sect;4.7 member by member: L = L<sub>o</sub>(0.25 + "
+                "15/&radic;(K<sub>LL</sub>A<sub>T</sub>)) (Eq. 4.7-1), not less than 0.50L<sub>o</sub> for members supporting "
+                "one floor and 0.40L<sub>o</sub> for members supporting two or more floors; K<sub>LL</sub> = %s for columns "
+                "and %s for beams (Table 4.7-1); L/L<sub>o</sub> = %s to %s over the reduced members.%s Roof live load, "
+                "live loads over 100 psf, garages and assembly occupancies are not reduced."
+                % (_n(llr.get("KLL_col", 4)), _n(llr.get("KLL_beam", 2)), _n(llr.get("RF_min")), _n(llr.get("RF_max")),
+                   (" The %s psf partition allowance is not reduced." % _n(unr)) if unr else ""))
+    return ("No live-load reduction is taken (ASCE 7-22 &sect;4.7 not applied): every member carries the unreduced "
+            "L<sub>o</sub> (conservative).")
+
+
+def _gravity_loads_note(cfg=None, pkg=None):
+    cfg = cfg or {}
+    part = _partition_psf(cfg, pkg)
+    snow = float(cfg.get("snow", 0) or 0)
+    ptxt = ("The floor live load includes a %s psf partition allowance, which ASCE 7-22 &sect;4.3.2 treats as live "
+            "load." % _n(part)) if part else \
+           ("Any partition allowance (ASCE 7-22 &sect;4.3.2, a live load) is part of the declared floor live load.")
+    smo = cfg.get("seismic_mass_only")
+    wtxt = (" For the seismic weight W the partition weight (&sect;12.7.2 item 2) is included as listed above."
+            if isinstance(smo, dict) and _levels_txt(smo) else "")
+    rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>%s; snow drift, unbalanced or sliding snow "
+            "and ponding, where they apply, are addressed in the member design records (Chapter 6) and are not part "
+            "of the analysis-model loading." % (" and the uniform roof snow load S" if snow > 0 else
+                                                  " (no snow load applies at the site)"))
+    return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
+            "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
+
 
 def _wind_cc_note():
-    return ("<p class='cnote'>The forces above are the MWFRS (main wind force-resisting system) for the overall "
-            "building (windward C<sub>p</sub> = 0.8 at q<sub>z</sub> plus leeward C<sub>p</sub>(L/B) at q<sub>h</sub>). Components &amp; cladding (C&amp;C) "
-            "pressures &mdash; zone GC<sub>p</sub> of &sect;30 for cladding, fasteners and their supports &mdash; "
-            "and across-wind/torsional MWFRS load cases are part of the (delegated) cladding design.</p>")
+    return ("<p class='cnote'>The forces above are the main wind force-resisting system (MWFRS) loads on the building. "
+            "Components and cladding (C&amp;C) pressures (ASCE 7-22 Ch. 30) for the cladding, its fasteners and their "
+            "supports are part of the delegated cladding design.</p>")
 
-def _seismic_loads_section(cfg, T, eX, eY, Cs, V, Tu, Ta, Fx, W):
-    s = cfg["seis"]; NF = len(cfg["heights"]); z = E.zlevels(cfg)
-    R = s["R"]; Ie = s["Ie"]; SDS = s["SDS"]; SD1 = s["SD1"]; S1 = s.get("S1", 0); TL = s.get("TL", 8.0)
-    kk = 1.0 if Tu <= 0.5 else (2.0 if Tu >= 2.5 else 1 + (Tu-0.5)/2.0)
-    Cs_eq = SDS/(R/Ie)
-    cap = SD1/(Tu*(R/Ie)) if Tu <= TL else SD1*TL/(Tu**2*(R/Ie))
-    cmin = max(0.044*SDS*Ie, 0.01); cmin_s1 = (0.5*S1/(R/Ie)) if S1 >= 0.6 else None
-    low = max(cmin, cmin_s1 or 0.0); upper = min(Cs_eq, cap)
-    if upper <= low: gov = "C<sub>s,min</sub> (Eq.12.8-7, S<sub>1</sub>)" if (cmin_s1 and low == cmin_s1) else "C<sub>s,min</sub> (Eq.12.8-6)"
-    elif cap < Cs_eq: gov = "C<sub>s,max</sub> (Eq.12.8-4)"
-    else: gov = "C<sub>s</sub> (Eq.12.8-3)"
-    intro = (f"<p>ASCE 7-22 &sect;12.8 equivalent lateral force. Seismic weight W = {W:.0f} kip; S<sub>DS</sub> = "
-             f"{SDS} g, S<sub>D1</sub> = {SD1} g, S<sub>1</sub> = {S1} g, R = {R}, I<sub>e</sub> = {Ie}. Approximate "
-             f"period T<sub>a</sub> = C<sub>t</sub>h<sub>n</sub><sup>x</sup> = {Ta:.2f} s; design period "
-             f"T = min(T<sub>computed</sub>, C<sub>u</sub>T<sub>a</sub>) = {Tu:.2f} s (&sect;12.8.2).</p>")
-    crows = [["C<sub>s</sub> = S<sub>DS</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-3)", f"{Cs_eq:.4f}"],
-             ["C<sub>s,max</sub> = S<sub>D1</sub>/(T&middot;R/I<sub>e</sub>) &nbsp;(Eq.12.8-4)", f"{cap:.4f}"],
-             ["C<sub>s,min</sub> = max(0.044&middot;S<sub>DS</sub>I<sub>e</sub>, 0.01) &nbsp;(Eq.12.8-6)", f"{cmin:.4f}"]]
-    if cmin_s1 is not None:
-        crows.append(["C<sub>s,min</sub> = 0.5&middot;S<sub>1</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-7, S<sub>1</sub>&ge;0.6)", f"{cmin_s1:.4f}"])
-    crows.append(["<b>Governing C<sub>s</sub></b>", f"<b>{Cs:.4f}</b> &nbsp;({gov})"])
-    cstab = "<h4>Seismic response coefficient C<sub>s</sub> and its limits</h4>" + _table(["C<sub>s</sub> equation", "Value"], crows)
-    base = f"<p>Design base shear V = C<sub>s</sub>W = {Cs:.4f} &times; {W:.0f} = <b>{V:.0f} kip</b> in each direction.</p>"
-    vrows = [[k, f"{E.floor_w(cfg,k):.0f}", f"{z[k]/12:.1f}", f"{E.floor_w(cfg,k)*(z[k]/12)**kk:,.0f}",
-              f"{Fx[k]/V:.3f}", f"{Fx[k]:.1f}"] for k in range(1, NF+1)]
-    vtab = (f"<h4>Vertical distribution of base shear (k = {kk:.2f}, &sect;12.8.3)</h4>"
-            "<p>F<sub>x</sub> = C<sub>vx</sub>V, &nbsp; C<sub>vx</sub> = w<sub>x</sub>h<sub>x</sub><sup>k</sup> / "
-            "&Sigma; w<sub>i</sub>h<sub>i</sub><sup>k</sup>.</p>"
-            + _table(["Floor", "w (kip)", "h (ft)", "w&middot;h<sup>k</sup>", "C<sub>vx</sub>", "F<sub>x</sub> (kip)"], vrows))
+
+def _seismic_by_dir(cfg):
+    """Per-direction seismic design data {'X': {...}, 'Y': {...}, 'basis': 'ELF'|'MRSA'|'envelope'} from the
+    engine's single source (engine3d.seismic_design_forces), falling back to elf_dir."""
+    try:
+        SF = E.seismic_design_forces(cfg)
+        return {"X": SF["X"], "Y": SF["Y"], "basis": SF.get("basis", "ELF")}
+    except Exception:
+        out = {"basis": "ELF"}
+        for d in ("X", "Y"):
+            Cs, V, Tu, Ta, kk, Fx, W = E.elf_dir(cfg, d)
+            s = E.seis_dir(cfg, d)
+            out[d] = dict(Fx=Fx, F_elf=Fx, V=V, Cs=Cs, T=E.period_dir(cfg, d)[0], Tu=Tu, Ta=Ta, k=kk, W=W,
+                          R=s["R"], Ie=s["Ie"], Cd=s.get("Cd"), Om0=s.get("Om0"), rho=s.get("rho"), rs=None)
+        return out
+
+
+def _cs_terms(cfg, d, Tu):
+    s = E.seis_dir(cfg, d)
+    R = float(s["R"]); Ie = float(s["Ie"]); SDS = float(s["SDS"]); SD1 = float(s["SD1"])
+    S1 = float(s.get("S1", 0) or 0); TL = float(s.get("TL", 8.0) or 8.0)
+    cs3 = SDS / (R / Ie)
+    if Tu <= TL:
+        cap, capeq = SD1 / (Tu * (R / Ie)), "12.8-4"
+    else:
+        cap, capeq = SD1 * TL / (Tu ** 2 * (R / Ie)), "12.8-5"
+    cmin = max(0.044 * SDS * Ie, 0.01)
+    cmin7 = 0.5 * S1 / (R / Ie) if S1 >= 0.6 else None
+    low = max(cmin, cmin7 or 0.0); upper = min(cs3, cap)
+    if upper <= low:
+        gov = "Eq. 12.8-7" if (cmin7 and low == cmin7) else "Eq. 12.8-6 (minimum)"
+    elif cap < cs3:
+        gov = "Eq. %s" % capeq
+    else:
+        gov = "Eq. 12.8-3"
+    return dict(cs3=cs3, cap=cap, capeq=capeq, cmin=cmin, cmin7=cmin7, gov=gov, R=R, Ie=Ie)
+
+
+def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx=None, W=None):
+    """Chapter 3 seismic loads, per principal direction (ASCE 7-22 12.2.2 / 12.8): each direction's period,
+    C_s and its limits, k, base shear and vertical distribution; the 12.9 MRSA scaling where 'RS' is run."""
+    NF = len(cfg["heights"]); z = E.zlevels(cfg); s = cfg["seis"]
+    SD = _seismic_by_dir(cfg)
+    X, Y = SD["X"], SD["Y"]
+    Wt = X.get("W") or W
+    smo = cfg.get("seismic_mass_only")
+    wtxt = ("dead load, cladding" + (" and the partition allowance (%s, &sect;12.7.2 item 2)" % _levels_txt(smo)
+                                     if isinstance(smo, dict) and _levels_txt(smo) else "")
+            + (", 25% of the storage live load" if cfg.get("storage") or cfg.get("storage_levels") else "")
+            + (", 15% of the uniform design snow load (p<sub>f</sub> &gt; 45 psf, item 4)"
+               if float(cfg.get("snow", 0) or 0) > 45.0 else ""))
+    rs_on = SD.get("basis", "ELF") != "ELF"
+    intro = ("<p>ASCE 7-22 &sect;12.8 equivalent lateral force procedure in each principal direction, each with its own "
+             "fundamental period and its own system factors (&sect;12.2.2)%s. Effective seismic weight W = %s kip "
+             "(&sect;12.7.2: %s). S<sub>DS</sub> = %s g, S<sub>D1</sub> = %s g, S<sub>1</sub> = %s g, I<sub>e</sub> = %s. "
+             "Approximate period T<sub>a</sub> = C<sub>t</sub>h<sub>n</sub><sup>x</sup> (Eq. 12.8-8); the period used is "
+             "T = min(T<sub>model</sub>, C<sub>u</sub>T<sub>a</sub>) (&sect;12.8.2).</p>"
+             % ("; a modal response spectrum analysis (&sect;12.9.1) is also run (below)" if rs_on else "",
+                _n(Wt), wtxt, _sa(s.get("SDS")), _sa(s.get("SD1")), _sa(s.get("S1", 0)), _fac(s.get("Ie", 1.0))))
+    def _cs(v):         # 4 significant figures: V = C_s W re-derives from the printed numbers
+        return "%.4g" % float(v) if v else "0"
+    def _k(v):
+        return _strip0(_fx(float(v), 3))
+    rows = []; csr = {}
+    for d in ("X", "Y"):
+        r = SD[d]; ct = _cs_terms(cfg, d, r["Tu"]); csr[d] = ct
+        sd = E.seis_dir(cfg, d)
+        rows.append([d, _fac(r["R"]), "%.3f" % r["T"], "%.3f" % r["Ta"], "%.3f" % (float(sd.get("Cu", 0) or 0) * r["Ta"]),
+                     "%.3f" % r["Tu"], "%s (%s)" % (_cs(r["Cs"]), ct["gov"]), _k(r["k"]), _n(r["V"])])
+    ptab = ("<h4>Period, seismic response coefficient and base shear per direction</h4>"
+            + _table(["Direction", "R", "T<sub>model</sub> (s)", "T<sub>a</sub> (s)", "C<sub>u</sub>T<sub>a</sub> (s)",
+                      "T used (s)", "C<sub>s</sub> (governing)", "k (&sect;12.8.3)", "V (kip)"], rows))
+    crows = [["C<sub>s</sub> = S<sub>DS</sub>/(R/I<sub>e</sub>) &nbsp;(Eq. 12.8-3)", _cs(csr["X"]["cs3"]), _cs(csr["Y"]["cs3"])],
+             ["C<sub>s,max</sub> = S<sub>D1</sub>/(T&middot;R/I<sub>e</sub>) &nbsp;(Eq. %s)" % csr["X"]["capeq"]
+              if csr["X"]["capeq"] == csr["Y"]["capeq"] else "C<sub>s,max</sub> (Eq. 12.8-4 / 12.8-5)",
+              _cs(csr["X"]["cap"]), _cs(csr["Y"]["cap"])],
+             ["C<sub>s,min</sub> = max(0.044S<sub>DS</sub>I<sub>e</sub>, 0.01) &nbsp;(Eq. 12.8-6)",
+              _cs(csr["X"]["cmin"]), _cs(csr["Y"]["cmin"])]]
+    if csr["X"]["cmin7"] is not None or csr["Y"]["cmin7"] is not None:
+        crows.append(["C<sub>s,min</sub> = 0.5S<sub>1</sub>/(R/I<sub>e</sub>) &nbsp;(Eq. 12.8-7, S<sub>1</sub> &ge; 0.6g)",
+                      _cs(csr["X"]["cmin7"] or 0), _cs(csr["Y"]["cmin7"] or 0)])
+    crows.append(["<b>Governing C<sub>s</sub></b>", "<b>%s</b>" % _cs(X["Cs"]), "<b>%s</b>" % _cs(Y["Cs"])])
+    cstab = ("<h4>Seismic response coefficient C<sub>s</sub> and its limits (&sect;12.8.1.1)</h4>"
+             + _table(["C<sub>s</sub> equation", "X direction", "Y direction"], crows))
+    same = abs(X["V"] - Y["V"]) < 0.5
+    if same:
+        base = ("<p>Design base shear V = C<sub>s</sub>W = %s &times; %s = <b>%s kip in each direction</b> (Eq. 12.8-1).</p>"
+                % (_cs(X["Cs"]), _n(Wt), _n(X["V"])))
+    else:
+        base = ("<p>Design base shear (Eq. 12.8-1): <b>V<sub>X</sub> = %s &times; %s = %s kip</b>; "
+                "<b>V<sub>Y</sub> = %s &times; %s = %s kip</b>.</p>"
+                % (_cs(X["Cs"]), _n(Wt), _n(X["V"]), _cs(Y["Cs"]), _n(Y.get("W") or Wt), _n(Y["V"])))
+    FX, FY = X.get("F_elf") or X.get("Fx"), Y.get("F_elf") or Y.get("Fx")
+    same_f = same and abs(X["k"] - Y["k"]) < 1e-6
+    if same_f:
+        kk = X["k"]
+        vrows = [[k, _n(E.floor_w(cfg, k)), _n(z[k] / 12), _n(E.floor_w(cfg, k) * (z[k] / 12) ** kk),
+                  "%.4f" % (FX[k] / X["V"] if X["V"] else 0.0), _n(FX[k])] for k in range(1, NF + 1)]
+        vtab = ("<h4>Vertical distribution of the base shear (k = %s, &sect;12.8.3)</h4>" % _k(kk)
+                + "<p>F<sub>x</sub> = C<sub>vx</sub>V, &nbsp; C<sub>vx</sub> = w<sub>x</sub>h<sub>x</sub><sup>k</sup> / "
+                "&Sigma; w<sub>i</sub>h<sub>i</sub><sup>k</sup> (Eq. 12.8-12, 12.8-13); identical in both directions.</p>"
+                + _table(["Level", "w<sub>x</sub> (kip)", "h<sub>x</sub> (ft)", "w<sub>x</sub>h<sub>x</sub><sup>k</sup>",
+                          "C<sub>vx</sub>", "F<sub>x</sub> (kip)"], vrows))
+    else:
+        vrows = [[k, _n(E.floor_w(cfg, k)), _n(z[k] / 12),
+                  "%.4f" % (FX[k] / X["V"] if X["V"] else 0.0), _n(FX[k]),
+                  "%.4f" % (FY[k] / Y["V"] if Y["V"] else 0.0), _n(FY[k])] for k in range(1, NF + 1)]
+        vtab = ("<h4>Vertical distribution of the base shear (&sect;12.8.3; k<sub>X</sub> = %s, k<sub>Y</sub> = %s)</h4>"
+                % (_k(X["k"]), _k(Y["k"]))
+                + "<p>F<sub>x</sub> = C<sub>vx</sub>V, &nbsp; C<sub>vx</sub> = w<sub>x</sub>h<sub>x</sub><sup>k</sup> / "
+                "&Sigma; w<sub>i</sub>h<sub>i</sub><sup>k</sup> (Eq. 12.8-12, 12.8-13), per direction.</p>"
+                + _table(["Level", "w<sub>x</sub> (kip)", "h<sub>x</sub> (ft)", "C<sub>vx</sub> X", "F<sub>x</sub> X (kip)",
+                          "C<sub>vx</sub> Y", "F<sub>x</sub> Y (kip)"], vrows))
+    mr = ""
+    if rs_on and (X.get("rs") or Y.get("rs")):
+        rr = []
+        for d in ("X", "Y"):
+            q = SD[d].get("rs") or {}
+            if not q:
+                continue
+            rr.append([d, _n(q.get("Vt")), _n(q.get("V")), "%.3f" % float(q.get("force_scale", 1.0)),
+                       "%.3f" % float(q.get("drift_scale", 1.0)), "%.0f%%" % (100.0 * float(q.get("mass", 0) or 0)),
+                       _n(q.get("nmodes"))])
+        mr = ("<h4>Modal response spectrum analysis (&sect;12.9.1)</h4>"
+              "<p>CQC combination, 5%% damping. Forces are scaled to the ELF base shear where V<sub>t</sub> &lt; V "
+              "(&sect;12.9.1.4.1); drifts are scaled by C<sub>s</sub>W/V<sub>t</sub> only where C<sub>s</sub> is set by "
+              "Eq. 12.8-7 (&sect;12.9.1.4.2). Member demands use the %s.</p>"
+              % ("story-shear envelope of the ELF and the scaled MRSA (never below either in any story)"
+                 if SD.get("basis") == "envelope" else "scaled MRSA story forces" if SD.get("basis") == "MRSA" else "ELF forces")
+              + _table(["Direction", "V<sub>t</sub> MRSA (kip)", "V ELF (kip)", "force scale V/V<sub>t</sub>",
+                        "drift scale", "modal mass", "modes"], rr))
+        srows = []
+        for k in range(1, NF + 1):
+            row = [k]
+            for d in ("X", "Y"):
+                r = SD[d]; q = r.get("rs") or {}
+                Fe = r.get("F_elf") or {}; Fd = r.get("Fx") or {}
+                ve = sum(Fe.get(i, 0.0) for i in range(k, NF + 1)); vd = sum(Fd.get(i, 0.0) for i in range(k, NF + 1))
+                vm = (q.get("shear") or [None] * NF)[k - 1]
+                row += [_n(ve), _n(vm) if vm is not None else "&mdash;", _n(vd)]
+            srows.append(row)
+        mr += _table(["Story", "ELF shear X (kip)", "scaled MRSA X (kip)", "design X (kip)", "ELF shear Y (kip)",
+                      "scaled MRSA Y (kip)", "design Y (kip)"], srows)
     cumX = cumY = 0.0; mrows = []
     for m in range(min(len(T), 12)):
         cumX += eX[m]; cumY += eY[m]
-        mrows.append([m+1, f"{T[m]:.3f}", f"{eX[m]*100:.1f}", f"{cumX*100:.1f}", f"{eY[m]*100:.1f}", f"{cumY*100:.1f}"])
-    mtab = ("<h4>Modal periods &amp; mass participation (&ge; 90% per &sect;12.9.1)</h4>"
-            + _table(["Mode", "T (s)", "mX %", "&Sigma;mX %", "mY %", "&Sigma;mY %"], mrows)
-            + "<p class='cnote'>Mode-shape figures are in Chapter 5. Vertical seismic E<sub>v</sub> = 0.2&middot;S<sub>DS</sub>D, "
-            "redundancy &rho;, the 100/30 directional combination and &plusmn;5% accidental torsion are applied in the "
-            "load combinations (Chapter 4); torsional amplification is screened in Chapter 2.</p>")
-    return intro + cstab + base + vtab + mtab
+        mrows.append([m+1, "%.3f" % T[m], "%.1f" % (eX[m]*100), "%.1f" % (cumX*100), "%.1f" % (eY[m]*100), "%.1f" % (cumY*100)])
+    mtab = ("<h4>Modal periods and mass participation (&ge; 90% per &sect;12.9.1.1)</h4>"
+            + _table(["Mode", "T (s)", "m<sub>X</sub> %", "&Sigma;m<sub>X</sub> %", "m<sub>Y</sub> %", "&Sigma;m<sub>Y</sub> %"], mrows)
+            + "<p class='cnote'>Vertical seismic E<sub>v</sub> = 0.2S<sub>DS</sub>D, redundancy &rho;, the 100/30 directional "
+            "combination and &plusmn;5% accidental torsion are applied in the load combinations (Chapter 4); torsional "
+            "amplification is screened in Chapter 2.</p>")
+    return intro + ptab + cstab + base + vtab + mr + mtab
 
-def _governing_lateral(cfg, V, VwX, VwY):
-    if V is None:
+
+def _governing_lateral(cfg, V, VwX, VwY, SD=None):
+    """Strength-level base-shear comparison per direction: each direction's own seismic V (12.2.2) vs its wind V."""
+    if SD is None:
+        try:
+            SD = _seismic_by_dir(cfg)
+        except Exception:
+            SD = None
+    Vd = {d: (SD[d]["V"] if SD else V) for d in ("X", "Y")}
+    if Vd["X"] is None:
         return "<p class='note'>[seismic base shear unavailable]</p>"
     rows = []
-    for d, Vw in (("X (E-W)", VwX), ("Y (N-S)", VwY)):
+    for d, lab, Vw in (("X", "X (E-W)", VwX), ("Y", "Y (N-S)", VwY)):
         if Vw is None:
-            rows.append([d, f"{V:.0f}", "&mdash; (no wind defined)", "<b>Seismic</b>"])
+            rows.append([lab, _n(Vd[d]), "&mdash; (no wind defined)", "<b>Seismic</b>"])
         else:
-            rows.append([d, f"{V:.0f}", f"{Vw:.0f}", f"<b>{'Seismic' if V >= Vw else 'Wind'}</b>"])
-    note = ("<p class='cnote'>Strength-level base-shear comparison (seismic E and wind W are both strength-level in "
-            "ASCE 7-22 LRFD). The governing system per direction sizes the lateral frames; both are carried through "
-            "the load combinations (Chapter 4).</p>")
-    return _table(["Direction", "Seismic V (kip)", "Wind V (kip)", "Governs"], rows) + note
+            rows.append([lab, _n(Vd[d]), _n(Vw), "<b>%s</b>" % ("Seismic" if Vd[d] >= Vw else "Wind")])
+    note = ("<p class='cnote'>Strength-level base-shear comparison (E and W are both strength-level loads in the ASCE "
+            "7-22 LRFD combinations). Both hazards are carried through the load combinations (Chapter 4); the member "
+            "design forces are the envelope of all combinations.</p>")
+    return _table(["Direction", "Seismic V (kip)", "Wind V, Case 1 (kip)", "Governs base shear"], rows) + note
+
+
+def _case_kind(c):
+    return str(getattr(c, "kind", "") or "")
+
+
+def _cases_info(cases):
+    """What the combination set contains: Omega0 column cases (dirs), capacity-limited Ecl, wind Fig. 27.3-8 cases."""
+    om = set(); ecl = False; col_only = False
+    for c in cases or []:
+        lab = str(c[0]); co = bool(c[5]) if len(c) > 5 else False
+        if co: col_only = True
+        if _case_kind(c) == "omega0" or ("Om0" in lab and co):
+            om.add("X" if "EX" in lab else "Y")
+        if _case_kind(c).startswith("ecl") or "Ecl[" in lab or "capacity-limited" in lab or "OCBF V-beam" in lab:
+            ecl = True
+    return {"om0_dirs": sorted(om), "ecl": ecl, "col_only": col_only, "wind_cases": _wind_cases_present(cases)}
 
 
 def _combo_table(cases):
-    def lab(label, lat):
-        if not lat: return "&mdash;"
-        if "WX" in label or "WY" in label: return "wind"
+    def lab(c):
+        label, lat = str(c[0]), c[4]
+        if not lat and "Ecl" not in label: return "&mdash;"
+        wc = getattr(c, "wind_case", None) or next((k for k in (2, 3, 4) if "[C%d" % k in label), None)
+        if "WX" in label or "WY" in label or "W[" in label or wc:
+            return "wind (Fig. 27.3-8 Case %s)" % (wc or 1)
+        if "Ecl" in label: return "seismic, capacity-limited"
         if "EX" in label or "EY" in label: return "seismic"
         return "lateral"
-    rows = [[L, f"{fD:.2f}", f"{fL:.2f}", f"{fLr:.2f}", lab(L, lat), "columns only" if co else "all members"]
-            for (L, fD, fL, fLr, lat, co) in cases]
-    return _table(["Combination", "D", "L", "L<sub>r</sub>/S", "Lateral", "Applies to"], rows)
+    def applies(c):
+        co = bool(c[5]) if len(c) > 5 else False
+        ap = getattr(c, "applies", None)
+        if ap:
+            return ", ".join({"col": "columns", "beam": "beams", "brace": "braces"}.get(a, a) for a in sorted(ap)) + " only"
+        return "columns only" if co else "all members"
+    rows = [[_combo_label(c[0]), "%.2f" % c[1], "%.2f" % c[2], "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
+    return _table(["Combination", "D", "L", "L<sub>r</sub> / S", "Lateral", "Applies to"], rows)
 
-def _combo_legend(cfg):
-    rho = cfg.get("rho", 1.3)
-    s = cfg.get("seis") or {}
+
+def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
+    ctx = ctx or {}
+    info = _cases_info(cases or [])
     try:
-        _sdc_txt = " (SDC %s)" % E.sdc_of(cfg)
+        sdc = E.sdc_of(cfg)
     except Exception:
-        _sdc_txt = ""
+        sdc = ""
+    llr = _llr_record(cfg, pkg)
+    ltxt = ("floor live load, reduced per ASCE 7-22 &sect;4.7 member by member (L/L<sub>o</sub> %s&ndash;%s; Chapter 3)"
+            % (_n(llr.get("RF_min")), _n(llr.get("RF_max"))) if llr and llr.get("applied")
+            else "floor live load, unreduced (no &sect;4.7 reduction taken)")
     items = [("D", "dead load"),
-             ("L", "floor live load (reducible per ASCE 7-22 &sect;4.7)"),
-             ("L<sub>r</sub> / S", "roof live load / snow"),
-             ("E<sub>X</sub>, E<sub>Y</sub>", "horizontal seismic effect Q<sub>E</sub> (ELF) in the X (E-W) / Y (N-S) direction; the vertical term E<sub>v</sub>=0.2S<sub>DS</sub>D is folded into the D factor"),
-             ("W<sub>X</sub>, W<sub>Y</sub>", "wind load in the X / Y direction"),
-             ("&rho;", f"redundancy factor multiplying Q<sub>E</sub> (&sect;12.3.4); &rho;={rho} here{_sdc_txt}"),
-             ("&Omega;<sub>0</sub>", "overstrength factor; the &ldquo;[col]&rdquo; cases apply &Omega;<sub>0</sub>Q<sub>E</sub> to capacity-protected columns only (&sect;12.4.3)"),
-             ("t+ / t&minus;", "&plusmn;5% accidental torsion M<sub>t</sub> = &plusmn;0.05B&middot;F<sub>x</sub> (&sect;12.8.4.2)"),
+             ("L", ltxt),
+             ("L<sub>r</sub> / S", "roof live load / snow load"),
+             ("E<sub>X</sub>, E<sub>Y</sub>", "horizontal seismic load effect Q<sub>E</sub> in the X (E-W) / Y (N-S) direction; "
+              "the vertical term E<sub>v</sub> = 0.2S<sub>DS</sub>D is folded into the D factor"),
+             ("W<sub>X</sub>, W<sub>Y</sub>", "MWFRS wind load in the X / Y direction (Fig. 27.3-8 Case 1)"),
+             ("&rho;", "redundancy factor multiplying Q<sub>E</sub> (&sect;12.3.4): " + _rho_txt(cfg, sdc)),
+             ("t+ / t&minus;", "&plusmn;5% accidental torsion M<sub>t</sub> = &plusmn;0.05B&middot;A<sub>x</sub>&middot;F<sub>x</sub> "
+              "(&sect;12.8.4.2 / 12.8.4.3)"),
              ("+ / &minus;", "sign (direction) of the applied lateral load"),
-             ("[col]", "combination applied to columns only"),
-             ("0.5L/1.0L, 0.3S/0.5Lr, 0.15S, 0.9D", "companion / counteracting load factors (ASCE 7-22 &sect;2.3.1/&sect;2.3.6: "
-              "companion L = 1.0 where L<sub>o</sub> &gt; 100 psf or garage/public assembly, else 0.5; companion snow "
-              "0.3S (gravity/wind) and 0.15S (seismic); principal snow 1.0S)")]
+             ("/0.3X, /0.3Y", "100% of the seismic effect in the loaded direction plus 30% of the orthogonal one (&sect;12.5.3)")]
+    if cfg.get("dam", True) is not False:
+        items.append(("+N<sub>i</sub>", "notional lateral loads N<sub>i</sub> = 0.002&alpha;Y<sub>i</sub>, &alpha; = 1.0 "
+                      "(AISC 360-22 C2.2b), added to the combination in the direction shown"))
+    if info["wind_cases"] & {2, 3, 4}:
+        items.append(("[C2 e&plusmn;], [C3], [C4 e&plusmn;]", "ASCE 7-22 Fig. 27.3-8 wind Cases 2&ndash;4: 75% of Case 1 "
+                      "with eccentricity e = &plusmn;0.15B (Case 2), 75% along both axes (Case 3), 56.3% along both axes "
+                      "with the eccentricity (Case 4)"))
+    if info["om0_dirs"]:
+        items.append(("&Omega;<sub>0</sub>, [col]", "overstrength factor; the &ldquo;[col]&rdquo; cases apply "
+                      "&Omega;<sub>0</sub>Q<sub>E</sub> (axial) to the SFRS columns only (&sect;12.4.3)"))
+    if info["ecl"]:
+        items.append(("E<sub>cl</sub>", "capacity-limited horizontal seismic load effect (&sect;12.4.3.2)"))
+    items.append(("0.5L / 1.0L, 0.3S / 0.5L<sub>r</sub>, 0.15S, 0.9D",
+                  "companion / counteracting load factors (ASCE 7-22 &sect;2.3.1 / &sect;2.3.6: companion L = 1.0 where "
+                  "L<sub>o</sub> &gt; 100 psf or garage / public assembly, else 0.5; companion snow 0.3S (gravity / wind) "
+                  "and 0.15S (seismic); principal snow 1.0S)"))
     return "<h4>Notation used in the combination labels</h4>" + _table(["Symbol", "Meaning"], [[a, b] for a, b in items])
+
 
 def _joint_figure(cfg):
     """Schematic of the ACTUAL modelled boundary conditions for THIS job (base fixity and joint
@@ -1905,27 +3107,39 @@ def _joint_figure(cfg):
     return _b64(fig)
 
 def _floor_serviceability(pkg):
+    """Agent-recorded member serviceability (live / total deflection, camber); empty string when none (the engine
+    deflection table follows in the same chapter)."""
     ms = (pkg or {}).get("members") or []
     rows = []
     for m in ms:
-        sv = m.get("serviceability")
-        if not sv: continue
+        sv = m.get("serviceability") if isinstance(m, dict) else None
+        if not isinstance(sv, dict) or not sv:
+            continue
         sec = (m.get("inputs", {}) or {}).get("section", m.get("id", ""))
-        rows.append([_esc(m.get("id", "")), _esc(sec),
-                     _esc(f"{sv.get('live_in','')}\" = {sv.get('live_ratio','')}"), _esc(sv.get("live_limit", "L/360")),
-                     _esc(f"{sv.get('total_in','')}\" = {sv.get('total_ratio','')}"), _esc(sv.get("total_limit", "L/240")),
-                     (f"{sv.get('camber_in')}\"" if sv.get("camber_in") else "&mdash;"),
-                     "OK" if sv.get("ok") else "NG"])
+        def dfl(a, b):
+            if sv.get(a) in (None, ""):
+                return "&mdash;"
+            return "%s in. (%s)" % (_n(sv.get(a)), _n(sv.get(b))) if sv.get(b) not in (None, "") else "%s in." % _n(sv.get(a))
+        rows.append([_esc(m.get("id", "")), _esc(sec), dfl("live_in", "live_ratio"), _n(sv.get("live_limit", "L/360")),
+                     dfl("total_in", "total_ratio"), _n(sv.get("total_limit", "L/240")),
+                     ("%s in." % _n(sv.get("camber_in"))) if sv.get("camber_in") not in (None, "", 0, 0.0) else "none",
+                     "OK" if sv.get("ok") else ("<b class='ng'>NG</b>" if "ok" in sv else "&mdash;")])
     if not rows:
-        return "<p class='cnote'>Floor/roof beam deflection &amp; camber: no serviceability data in calc_package.json.</p>"
-    return ("<h3>Floor &amp; roof beam deflection and camber (ASCE 7-22 serviceability; AISC 360-22 Ch. L)</h3>"
-            "<p>Live-load deflection is limited to L/360 and total-load deflection to L/240. Composite floor members "
-            "use a lower-bound transformed moment of inertia I<sub>tr</sub>; the bare-steel (pre-composite, wet-concrete) "
-            "dead-load deflection is offset by shop camber.</p>"
+        return ""
+    return ("<h3>Floor and roof beam deflection and camber (design records)</h3>"
+            "<p>Live-load deflection is limited to L/360 and total-load deflection to L/240 (IBC Table 1604.3). Composite "
+            "floor members use a lower-bound transformed moment of inertia I<sub>LB</sub>; the bare-steel (wet-concrete) "
+            "dead-load deflection is offset by shop camber where specified.</p>"
             + _table(["Member", "Section", "Live &delta;", "Limit", "Total &delta;", "Limit", "Camber", "&le; limit"], rows))
 
-def _combo_notes(cfg):
+
+def _combo_notes(cfg, cases=None, ctx=None):
+    """Chapter 4 bullets describing exactly what the combination set contains: E_v, rho, Omega0 only where cases
+    exist (else the reason none is required), E_cl only where formed, 100/30, accidental torsion, uplift, wind
+    load cases, second order."""
+    ctx = ctx or {}
     s = cfg["seis"]; SDS = s["SDS"]
+    info = _cases_info(cases or [])
     def _pd(key, default):
         # per-direction factor (engine3d.seis_dir, ASCE 7-22 12.2.2); one value when X == Y
         try:
@@ -1933,43 +3147,88 @@ def _combo_notes(cfg):
         except Exception:
             v = {d: (cfg.get(key) if key == "rho" else s.get(key)) for d in ("X", "Y")}
         v = {d: (default if x is None else x) for d, x in v.items()}
-        return str(v["X"]) if v["X"] == v["Y"] else "%s (X) / %s (Y)" % (v["X"], v["Y"])
-    rho = _pd("rho", 1.3); Om0 = _pd("Om0", 2.0)
+        return _n(v["X"]) if v["X"] == v["Y"] else "%s (X) / %s (Y)" % (_n(v["X"]), _n(v["Y"]))
+    rho = _pd("rho", 1.0); Om0 = _pd("Om0", 2.0)
+    rho = rho if ("(" in rho) else _fac(rho)
+    Om0 = Om0 if ("(" in Om0) else _fac(Om0)
     dam = cfg.get("dam", True) is not False
+    try:
+        sdc = E.sdc_of(cfg)
+    except Exception:
+        sdc = ""
+    a341d = ctx.get("a341_dirs") or {}
+    if info["om0_dirs"]:
+        why = []
+        if any(a341d.get(d) for d in info["om0_dirs"]):
+            why.append("AISC 341-22 D1.4a(b)")
+        if not all(a341d.get(d) for d in info["om0_dirs"]):
+            why.append("declared for the members supporting discontinuous frames, &sect;12.3.3.4")
+        om_b = ("<li><b>Overstrength &Omega;<sub>0</sub></b> = %s: the <i>columns-only</i> [col] cases apply "
+                "E<sub>mh</sub> = &Omega;<sub>0</sub>Q<sub>E</sub> (axial) to the SFRS columns in the %s direction%s "
+                "(&sect;12.4.3; %s), and are not applied to other members.</li>"
+                % (Om0, "/".join(info["om0_dirs"]), "s" if len(info["om0_dirs"]) > 1 else "", "; ".join(why)))
+    else:
+        reasons = []
+        try:
+            r3 = all(float(E.seis_dir(cfg, d)["R"]) <= 3.0 for d in ("X", "Y"))
+        except Exception:
+            r3 = False
+        if r3:
+            reasons.append("AISC 341 does not apply (R = 3 system not specifically detailed for seismic resistance)")
+        if ctx.get("discontinuity") is False:
+            reasons.append("no Table 12.3-1 Type 4 or Table 12.3-2 Type 3 discontinuity exists (Chapter 2), so "
+                           "&sect;12.3.3.4 does not apply")
+        if sdc in ("A", "B"):
+            reasons.append("the &sect;12.10.2.1 collector overstrength applies in SDC C&ndash;F only (SDC %s)" % sdc)
+        om_b = ("<li><b>No overstrength (&Omega;<sub>0</sub>) combinations</b>: ASCE 7-22 &sect;12.4.3 applies the "
+                "overstrength load effect only where a provision requires it%s.</li>"
+                % ((": " + "; ".join(reasons)) if reasons else ""))
+    ecl_b = ("<li><b>Capacity-limited E<sub>cl</sub></b> (&sect;12.4.3.2; AISC 341-22 Chapter F): where the system has "
+             "yielding braces / links / webs, separate cases replace them by their expected or adjusted strengths, "
+             "yielding in X and Y together; their results enter the column, beam, splice, base and brace-connection "
+             "demands. Effects the analysis does not form are listed in Chapter 5.</li>") if info["ecl"] else ""
+    wc = info["wind_cases"]
+    wind_b = ""
+    if cfg.get("wind"):
+        wind_b = ("<li><b>Wind</b>: combinations 4 (1.2D + 1.0W + L + 0.5L<sub>r</sub>/0.3S) and 5 (0.9D + 1.0W) "
+                  "with W in both senses along each axis; %s 0.9D + 1.0W includes the MWFRS roof suction "
+                  "(Fig. 27.3-1).</li>" % ("the Fig. 27.3-8 Cases 2&ndash;4 are included;" if wc & {2, 3, 4} else
+                                           "only Case 1 of Fig. 27.3-8 is included;"))
+    up_tail = ""
+    if info["om0_dirs"] or info["ecl"]:
+        up_tail = " (incl. the %s cases)" % " and ".join(x for x, f in (("&Omega;<sub>0</sub>", info["om0_dirs"]),
+                                                                      ("E<sub>cl</sub>", info["ecl"])) if f)
     return ("<p>The analysed set is the ASCE 7-22 &sect;2.3 LRFD strength combinations:</p><ul>"
-            f"<li><b>Vertical seismic E<sub>v</sub></b> = 0.2&middot;S<sub>DS</sub>D = {0.2*SDS:.2f}D is folded into the "
-            f"D factor: seismic combinations use (1.2+0.2S<sub>DS</sub>)D = {1.2+0.2*SDS:.2f}D and "
-            f"(0.9&minus;0.2S<sub>DS</sub>)D = {0.9-0.2*SDS:.2f}D.</li>"
+            f"<li><b>Vertical seismic E<sub>v</sub></b> = 0.2&middot;S<sub>DS</sub>D = {0.2*SDS:.3f}D is folded into the "
+            f"D factor: seismic combinations use (1.2+0.2S<sub>DS</sub>)D = {1.2+0.2*SDS:.3f}D and "
+            f"(0.9&minus;0.2S<sub>DS</sub>)D = {0.9-0.2*SDS:.3f}D.</li>"
             f"<li><b>Redundancy &rho;</b> = {rho} multiplies the horizontal seismic effect Q<sub>E</sub> of its "
             "direction (&sect;12.3.4).</li>"
-            f"<li><b>Overstrength &Omega;<sub>0</sub></b> = {Om0}: the <i>columns-only</i> [col] cases apply "
-            "E<sub>mh</sub> = &Omega;<sub>0</sub>Q<sub>E</sub> to the columns of every braced frame and every R &gt; 3 "
-            "system, axial only (&sect;12.4.3; AISC 341-22 D1.4a(b)), and are not applied to other members.</li>"
-            "<li><b>Capacity-limited E<sub>cl</sub></b> (&sect;12.4.3.2; AISC 341-22 F2.3 / F3.3 / F4.3 / F5.3, and "
-            "F1.4a(a) for OCBF V-beams): where the system has yielding braces / links / webs, separate cases replace "
-            "them by their expected or adjusted strengths, yielding in X and Y together; their results enter the "
-            "column, beam, splice, base and brace-connection demands. Items the framework cannot form are listed "
-            "as NOT EVALUATED in the demand summary (design_report.md).</li>"
+            + om_b + ecl_b +
             "<li><b>Directional 100/30</b>: each seismic case carries 100% of F<sub>x</sub> in the loaded direction "
             "plus 30% of the orthogonal direction's own forces and factor, in both signs (&sect;12.5.3/12.5.4).</li>"
             "<li><b>Accidental torsion</b> &plusmn;M<sub>t</sub> = &plusmn;0.05B&middot;A<sub>x</sub>&middot;F<sub>x</sub> "
             "(&sect;12.8.4.2/12.8.4.3), with the story forces applied at the centre of mass, in both signs.</li>"
-            "<li><b>Net uplift / overturning</b> is checked by the 0.9D combinations (minimum gravity with lateral); "
-            "0.9D+1.0W includes the MWFRS roof suction (Fig. 27.3-1), and the column-base reactions are enveloped "
-            "over every combination (incl. &Omega;<sub>0</sub> and E<sub>cl</sub>).</li>"
+            + wind_b +
+            "<li><b>Net uplift / overturning</b> is checked by the 0.9D combinations (minimum gravity with lateral); the "
+            "column-base reactions are enveloped over every combination" + up_tail + " (Chapter 11).</li>"
             "<li><b>Second order</b>: every combination is solved independently through a P-&Delta; analysis; "
             "factored second-order results are never superposed. "
             + ("The strength model uses the Direct Analysis Method (AISC 360-22 C2: 0.8 stiffness reduction with "
-               "&tau;<sub>b</sub> per C2.3, notional loads N<sub>i</sub> = 0.002Y<sub>i</sub> per C2.2b); drift, "
+               "&tau;<sub>b</sub> per C2.3, notional loads N<sub>i</sub> = 0.002&alpha;Y<sub>i</sub>, &alpha; = 1.0, per C2.2b, plus "
+               "0.001&alpha;Y<sub>i</sub> where &tau;<sub>b</sub> = 1.0 is taken per C2.3(c); parameters in Chapter 5); drift, "
                "periods and deflections use nominal stiffness.</li></ul>" if dam else
-               "cfg['dam'] = False: nominal stiffness, no notional loads -- not the Direct Analysis Method.</li></ul>"))
+               "Nominal stiffness without notional loads is used (not the Direct Analysis Method); effective lengths "
+               "follow AISC 360-22 Appendix 7.</li></ul>"))
+
 
 def _modal_mass_check(eX, eY):
     cx = sum(eX); cy = sum(eY)
     return (f"<p><b>Modal mass participation:</b> &Sigma;m<sub>X</sub> = {cx*100:.0f}% "
             f"({'OK' if cx >= 0.90 else 'review &lt; 90%'}), &Sigma;m<sub>Y</sub> = {cy*100:.0f}% "
-            f"({'OK' if cy >= 0.90 else 'review &lt; 90%'}); ASCE 7-22 &sect;12.9.1 requires &ge; 90% in each "
-            "direction. Periods and mode shapes are shown below and in Chapter 3.</p>")
+            f"({'OK' if cy >= 0.90 else 'review &lt; 90%'}); ASCE 7-22 &sect;12.9.1.1 requires &ge; 90% in each "
+            "direction. Periods are listed in Chapter 3.</p>")
+
 
 def _stability_basis_note(cfg=None):
     """Chapter 5 analysis-basis note. Describes the stability method from the cfg / pipeline instead of
@@ -1978,11 +3237,11 @@ def _stability_basis_note(cfg=None):
     cfg = cfg or {}
     meth = cfg.get("stability_method") or cfg.get("analysis_method")
     dam = cfg.get("dam", True) is not False
-    applied = ("the demand pipeline applied the Direct Analysis Method (AISC 360-22 C2: 0.8 stiffness reduction, "
-               "&tau;<sub>b</sub> per C2.3, notional loads 0.002Y<sub>i</sub> per C2.2b; recorded in "
-               "calc_package demand_analysis.dam)" if dam else
-               "cfg['dam'] = False: the demand pipeline used nominal stiffness without notional loads (not DAM)")
-    mtxt = ("cfg declares the stability design method <b>%s</b>; %s" % (_esc(meth), applied)) if meth else applied
+    applied = ("the member demands use the Direct Analysis Method (AISC 360-22 C2: 0.8 stiffness reduction, "
+               "&tau;<sub>b</sub> per C2.3, notional loads N<sub>i</sub> = 0.002&alpha;Y<sub>i</sub>, &alpha; = 1.0, per C2.2b, plus "
+               "0.001&alpha;Y<sub>i</sub> where &tau;<sub>b</sub> = 1.0 is taken per C2.3(c))" if dam else
+               "the member demands use nominal stiffness without notional loads (not the Direct Analysis Method)")
+    mtxt = ("the declared stability design method is <b>%s</b>; %s" % (_esc(meth), applied)) if meth else applied
     return ("<p class='cnote'><b>Analysis basis:</b> a second-order P-&Delta; geometric transformation is applied to "
             "the columns under every factored combination (no superposition of factored results); %s. Member "
             "effective length K = 1 is valid only under the Direct Analysis Method of AISC 360-22 &sect;C1/C2 "
@@ -1991,9 +3250,78 @@ def _stability_basis_note(cfg=None):
             "(ASCE 7-22 &sect;12.8.7) is reported in Chapter 7.</p>" % mtxt)
 
 
-_KNOWN_PKG_KEYS = {"members", "connections", "connection_demands", "capacity_design", "scwb",
-                   "framework_screen", "building", "code", "note", "notes", "meta", "name",
-                   "composite_design"}   # composite_design gets its OWN Chapter-6 section (below)
+def _analysis_record_html(cfg, pkg):
+    """Chapter 5 summary of how the member demands were produced (demand_analysis), as labelled values -- never the
+    raw record: method and DAM parameters, number of combinations and solves, floor load distribution, live load
+    reduction, Omega0 basis and any effect NOT evaluated by the analysis."""
+    da = (pkg or {}).get("demand_analysis") if isinstance(pkg, dict) else None
+    if not isinstance(da, dict) or not da:
+        return ""
+    rows = []
+    if da.get("analysis"):
+        rows.append(["Stability / analysis method", _n(da.get("analysis"))])
+    dm = da.get("dam") if isinstance(da.get("dam"), dict) else {}
+    if dm:
+        bits = []
+        if dm.get("stiffness_factor") is not None:
+            bits.append("stiffness reduction %s EI, EA (C2.3(a))" % _n(dm.get("stiffness_factor")))
+        if dm.get("tau_b"):
+            bits.append("&tau;<sub>b</sub> = 1.0 with the additional notional load (C2.3(c))" if "notional" in
+                        str(dm.get("tau_b")).lower() else "&tau;<sub>b</sub>: %s" % _n(dm.get("tau_b")))
+        if dm.get("notional_gravity_only") is not None:
+            bits.append("notional load %s&middot;Y<sub>i</sub> in gravity-only combinations" % _n(dm.get("notional_gravity_only")))
+        if dm.get("notional_lateral_cases") is not None:
+            bits.append("%s&middot;Y<sub>i</sub> added in the lateral combinations" % _n(dm.get("notional_lateral_cases")))
+        if dm.get("drift_ratio_2nd_1st") is not None:
+            bits.append("second- to first-order drift ratio %s" % _n(dm.get("drift_ratio_2nd_1st")))
+        rows.append(["Direct Analysis Method parameters", "; ".join(bits) if bits else "&mdash;"])
+        hi = dm.get("alphaPr_over_Pns_gt_0.5")
+        if isinstance(hi, list) and hi:
+            secs = sorted({str(x[2]) for x in hi if isinstance(x, (list, tuple)) and len(x) >= 3})
+            mx = max((float(x[0]) for x in hi if isinstance(x, (list, tuple)) and x), default=None)
+            rows.append(["Members with &alpha;P<sub>r</sub>/P<sub>ns</sub> &gt; 0.5 (C2.3(b))",
+                         "%s (max %s)" % (", ".join(_esc(s_) for s_ in secs), _n(mx))])
+    if da.get("cases") is not None:
+        rows.append(["Load combinations analysed", "%s (%s second-order solves)" % (_n(da.get("cases")), _n(da.get("solves")))
+                     if da.get("solves") else _n(da.get("cases"))])
+    fm = da.get("floor_load_modes")
+    if isinstance(fm, dict) and fm:
+        rows.append(["Floor load distribution", "; ".join("%s: %s bays" % (_esc(k).replace("/declared", " (declared)"), _n(v))
+                                                          for k, v in fm.items())])
+    llr = da.get("live_load_reduction")
+    if isinstance(llr, dict):
+        rows.append(["Live load reduction (&sect;4.7)", ("applied: L/L<sub>o</sub> %s&ndash;%s, K<sub>LL</sub> %s (columns) / %s "
+                     "(beams)%s" % (_n(llr.get("RF_min")), _n(llr.get("RF_max")), _n(llr.get("KLL_col")),
+                                    _n(llr.get("KLL_beam")), ("; %s psf not reduced" % _n(llr.get("unreduced_psf")))
+                                    if llr.get("unreduced_psf") else "")) if llr.get("applied") else "not applied (unreduced L<sub>o</sub>)"])
+    if da.get("omega0_columns"):
+        rows.append(["Overstrength (&Omega;<sub>0</sub>) column cases", _n(da.get("omega0_columns"))])
+    gad = da.get("gravity_audit_dead_kip")
+    if isinstance(gad, dict) and isinstance(gad.get("levels"), dict):
+        try:
+            tot = [sum(float(v[i]) for v in gad["levels"].values()) for i in (0, 1)]
+            rows.append(["Dead-load audit: static model vs seismic weight", "%s kip vs %s kip" % (_n(tot[0]), _n(tot[1]))])
+        except Exception:
+            pass
+    out = ""
+    if rows:
+        out = "<h3>How the member demands were produced</h3>" + _table(["Item", "Value"], rows)
+    ne = [x for x in (da.get("not_evaluated") or []) if x]
+    if ne:
+        out += ("<p class='note'><b>Not evaluated by the analysis</b> (addressed in the member / connection design "
+                "records):</p><ul>" + "".join("<li>%s</li>" % _n(x) for x in ne[:12]) + "</ul>")
+    nts = [x for x in (da.get("notes") or []) + (da.get("warnings") or []) if x]
+    if nts:
+        out += "<p class='cnote'>Analysis notes:</p><ul>" + "".join("<li>%s</li>" % _n(x) for x in nts[:12]) + "</ul>"
+    return out
+
+
+# calc-package keys rendered by their own section, summarised elsewhere, or internal to the harness (never dumped)
+_KNOWN_PKG_KEYS = {"members", "connections", "connection_demands", "capacity_design", "scwb", "detailing",
+                   "framework_screen", "building", "code", "note", "notes", "meta", "name", "composite_design",
+                   "demand_analysis", "ddm_analysis", "gate_waivers", "pipeline_seed", "corpus_defects",
+                   "design_agent", "floor_vibration", "analysis_results", "activity", "rag", "agent"}
+_HARNESS_KEYS = {"corpus_defects", "gate_waivers", "pipeline_seed", "framework_screen", "demand_analysis", "note"}
 
 _COMPOSITE_SYN = {   # tolerant key synonyms seen across agent packages (candidates + gold)
     "pct":   ("partial_composite_ratio", "partial_composite_percent", "partial_composite_pct",
@@ -2007,42 +3335,113 @@ _COMPOSITE_SYN = {   # tolerant key synonyms seen across agent packages (candida
 }
 
 
+def _record_html(v, depth=0, path=""):
+    """A calc-package record as clean labelled tables: human key labels with units, numbers through _n, no
+    None / Python reprs, harness keys dropped, lists of uniform dicts as one table. Small nested records are
+    written inline ("X = 1.36; Y = 1.259"); larger ones follow as their own titled tables (never a table
+    inside a table cell)."""
+    if isinstance(v, dict):
+        rows = []; subs = []
+        for k, x in v.items():
+            ks = str(k)
+            if ks.lower() in _DROP_KEYS or ks.startswith("_") or ks.lower().startswith("cfg"):
+                continue
+            if x is None or (isinstance(x, str) and x.strip().lower() in _EMPTY) or x in ([], {}):
+                continue
+            lab, unit, sc = _human_key(ks)
+            if isinstance(x, dict):
+                flat = all(not isinstance(y, (dict, list)) for y in x.values())
+                if (flat and len(x) <= 6) or depth >= 3:
+                    val = _fmt(x)
+                else:
+                    subs.append((lab, x)); continue
+            elif isinstance(x, list):
+                if any(isinstance(y, (dict, list)) for y in x) and depth < 3:
+                    subs.append((lab, x)); continue
+                val = _record_html(x, depth + 1)
+            elif isinstance(x, bool):
+                val = _n(x)
+            elif isinstance(x, (int, float)):
+                val = _n(float(x) * sc if sc != 1.0 else x) + ((" " + unit) if unit else "")
+            else:
+                val = _n(x)
+            rows.append([lab, val])
+        out = _table(["Item", "Value"], rows) if rows else ""
+        for lab, x in subs:
+            p2 = (path + " &mdash; " + lab) if path else lab
+            body = _record_html(x, depth + 1, p2)
+            if body and body != "&mdash;":
+                out += "<p class='cnote'><b>%s</b></p>%s" % (p2[:1].upper() + p2[1:], body)
+        return out or "&mdash;"
+    if isinstance(v, list):
+        if not v:
+            return "&mdash;"
+        if all(isinstance(x, dict) for x in v):
+            keys = []
+            for x in v:
+                for k in x:
+                    if k not in keys and str(k).lower() not in _DROP_KEYS and not str(k).startswith("_"):
+                        keys.append(k)
+            if len(keys) <= 9 and all(not isinstance(x.get(k), (dict, list)) for x in v for k in keys):
+                hdr = []
+                for k in keys:
+                    lab, unit, _sc = _human_key(k)
+                    hdr.append(lab + ((" (%s)" % unit) if unit else ""))
+                body = []
+                for x in v[:40]:
+                    r = []
+                    for k in keys:
+                        val = x.get(k)
+                        _l, _u, sc = _human_key(k)
+                        r.append(_n(float(val) * sc) if isinstance(val, (int, float)) and not isinstance(val, bool)
+                                 and sc != 1.0 else _n(val))
+                    body.append(r)
+                more = ("<p class='cnote'>%d further rows retained in the calc package.</p>" % (len(v) - 40)) if len(v) > 40 else ""
+                return _table(hdr, body) + more
+            return "".join(_record_html(x, depth + 1, path) for x in v[:20])
+        if all(isinstance(x, str) for x in v) and any(len(x) > 60 for x in v):
+            return "<ul>" + "".join("<li>%s</li>" % _n(x) for x in v[:30]) + "</ul>"
+        if any(isinstance(x, (dict, list)) for x in v):
+            return "".join(_record_html(x, depth + 1, path) for x in v[:20])
+        return _n(v)
+    return _n(v)
+
+
 def _extra_blocks_section(pkg):
-    """Supplementary design records: render every agent-authored TOP-LEVEL calc_package block the
-    report does not already show (serviceability, fatigue, crane_runway, equipment_supports,
-    analysis_idealization, ponding, ...) through the same nested-table renderer as capacity_design.
-    These are real design records the agent wrote for the reviewer -- before this section existed
-    they lived only in calc_package.json."""
+    """Supplementary design records: every top-level calc-package block the report does not render elsewhere
+    (serviceability, governing hazard, delegated design, loads hand check, scope statements, ...), as clean
+    labelled tables. Harness / pipeline blocks are never dumped (they are summarised in their chapters)."""
     if not isinstance(pkg, dict):
         return ""
     parts = []
     for k, v in pkg.items():
-        if k in _KNOWN_PKG_KEYS or v in (None, "", [], {}):
+        if k in _KNOWN_PKG_KEYS or k in _HARNESS_KEYS or str(k).startswith("_") or v in (None, "", [], {}):
             continue
         if not isinstance(v, (dict, list, str, int, float, bool)):
             continue
-        blob = v if isinstance(v, str) else json.dumps(v)
-        title = _esc(str(k).replace("_", " ").title())
-        if len(blob) > 12000:                      # guard: a runaway dump must not drown the report
-            parts.append("<h4>%s</h4><p class='note'>[block truncated at 12 kB -- full record in "
-                         "design/calc_package.json]</p><pre>%s\u2026</pre>"
-                         % (title, (blob[:12000].replace("<", "&lt;"))))
-            continue
+        title = _human_key(str(k))[0]
+        title = title[:1].upper() + title[1:]
         parts.append("<h4>%s</h4>" % title)
-        parts.append(_capdesign_html(v) if isinstance(v, (dict, list))
-                     else "<p>%s</p>" % _esc(v))
+        try:
+            blob = json.dumps(v)
+        except Exception:
+            blob = ""
+        if len(blob) > 20000 and isinstance(v, dict):
+            v = {kk: vv for kk, vv in v.items() if not isinstance(vv, (dict, list))}
+            parts.append("<p class='cnote'>Summary fields shown; the full record is retained in the calc package.</p>")
+        parts.append(_record_html(v) if isinstance(v, (dict, list)) else "<p>%s</p>" % _n(v))
     if not parts:
         return ""
-    return ("<h3>Supplementary design records (from the calc package)</h3>"
-            "<p>Agent-authored design records beyond the member/connection/capacity-design tables "
-            "&mdash; rendered verbatim from <code>design/calc_package.json</code>.</p>" + "".join(parts))
+    return ("<h3>Supplementary design records</h3>"
+            "<p>Additional design records of this package, beyond the member, connection and capacity-design "
+            "tables.</p>" + "".join(parts))
 
 
 def _composite_section(pkg):
     """Chapter-6 'Composite floor design (AISC 360 Ch. I)' section. Two tolerant sources:
-    (a) the standard top-level `composite_design` block (rendered as nested tables), and
-    (b) composite values embedded in member capacity dicts (stud counts / partial ratio / camber /
-        I_LB / wet stage) -- summarised one row per member. Renders nothing when neither exists."""
+    (a) the standard top-level `composite_design` block, and (b) composite values embedded in member capacity
+    dicts (stud counts / partial ratio / camber / I_LB / wet stage) -- one row per member. The Ch. I note is
+    printed only when composite values are actually recorded and composite action is relied upon (19b)."""
     if not isinstance(pkg, dict):
         return ""
     parts = []
@@ -2057,36 +3456,111 @@ def _composite_section(pkg):
                     found[col] = cap[kk]; break
         if found:
             rows.append([_esc(m.get("id", "")), _esc((m.get("inputs") or {}).get("section", ""))]
-                        + [(_esc(found[c]) if c in found else "&mdash;") for c in ("pct", "Qn", "studs", "camber", "ILB", "wet")])
+                        + [(_n(found[c]) if c in found else "&mdash;") for c in ("pct", "Qn", "studs", "camber", "ILB", "wet")])
     if not cd and not rows:
         return ""
-    parts.append("<h3>Composite floor design (AISC 360 Ch. I)</h3>")
+    scope = str((cd or {}).get("scope") or pkg.get("composite_scope") or "") if isinstance(cd, dict) else ""
+    not_relied = bool(re.search(r"not relied|bare[- ]steel|not used for strength|neglected", scope, re.I))
+    parts.append("<h3>Composite floor design (AISC 360-22 Ch. I)</h3>")
     if rows:
-        parts.append("<p>Per-member composite design values recorded in the calc package (partial-"
-                     "composite ratio, stud strength/schedule, camber, lower-bound moment of inertia, "
-                     "unshored wet-concrete stage):</p>")
-        parts.append(_table(["member", "section", "partial comp.", "Q<sub>n</sub> (kip)", "studs",
-                             "camber (in)", "I<sub>LB</sub> (in<sup>4</sup>)", "wet stage"], rows))
+        parts.append("<p>Per-member composite design values recorded in the calc package (partial-composite ratio, stud "
+                     "strength / schedule, camber, lower-bound moment of inertia, unshored wet-concrete stage):</p>")
+        parts.append(_table(["Member", "Section", "Partial composite", "Q<sub>n</sub> (kip)", "Studs",
+                             "Camber (in.)", "I<sub>LB</sub> (in.<sup>4</sup>)", "Wet stage"], rows))
     if cd:
-        parts.append("<h4>Composite design record (calc package `composite_design`)</h4>")
-        parts.append(_capdesign_html(cd))
-    parts.append("<p class='note'>Stud strengths per AISC 360-22 &sect;I8.2a (with deck-rib position "
-                 "factors); flexure per &sect;I3.2a; service deflection on the lower-bound moment of "
-                 "inertia; camber rule and the unshored construction stage as recorded above.</p>")
+        parts.append("<h4>Composite design record</h4>")
+        parts.append(_record_html(cd))
+    numeric = bool(rows) or (isinstance(cd, dict) and any(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and v
+        for k, v in cd.items() if re.search(r"stud|qn|composite|i_?lb|camber", str(k), re.I)))
+    if not_relied:
+        parts.append("<p class='cnote'>Composite action is not relied upon for strength or deflection (scope above); the "
+                     "beams are designed as bare steel.</p>")
+    elif numeric:
+        parts.append("<p class='cnote'>Stud strengths per AISC 360-22 &sect;I8.2a (with the deck-rib position factors); "
+                     "composite flexure per &sect;I3.2a; service deflections on the lower-bound moment of inertia; camber "
+                     "and the unshored construction stage as recorded above.</p>")
     return "".join(parts)
 
 
+def _ddm_summary(pkg):
+    """Supplementary system check by advanced analysis (Direct Design Method, AISC 360-22 Appendix 1): method,
+    verdict and the governing combinations -- never the raw record (19a). Combinations without a system
+    resistance factor (seismic: no phi_s is established) are information only, never printed as PASS."""
+    d = (pkg or {}).get("ddm_analysis") if isinstance(pkg, dict) else None
+    if not isinstance(d, dict) or not d:
+        return ""
+    combos = [c for c in (d.get("combinations") or []) if isinstance(c, dict)]
+
+    def _status(c):
+        chk = str(c.get("check", "")).strip().upper()
+        if "FAIL" in chk:
+            return "fail"
+        if c.get("phi_s") in (None, "", 0) or chk in ("", "N/A", "NA", "NONE"):
+            return "info"
+        return "pass"
+
+    def _prod(c):
+        try:
+            return float(c.get("phi_s")) * float(c.get("lambda_u"))
+        except (TypeError, ValueError):
+            return None
+    fails = [c for c in combos if _status(c) == "fail"]
+    checked = [c for c in combos if _status(c) != "info"]
+    info = [c for c in combos if _status(c) == "info"]
+    verdict = str(d.get("verdict") or "").upper() or "not stated"
+    order = sorted(checked, key=lambda c: (_status(c) != "fail", _prod(c) if _prod(c) is not None else 9e9))
+    order += sorted(info, key=lambda c: float(c.get("lambda_u") or 9e9))
+    rows = []
+    for c in order[:16]:
+        st = _status(c); prod = _prod(c)
+        rows.append([_combo_label(c.get("label", "")), _n(c.get("kind")), _n(c.get("lambda_u")),
+                     _n(c.get("phi_s")) if st != "info" else "&mdash;",
+                     (_n(prod, dc=True) if prod < 50 else "&gt; 50") if (prod is not None and st != "info") else "&mdash;",
+                     "<b class='ng'>FAIL</b>" if st == "fail" else ("PASS" if st == "pass" else "information only"),
+                     _n(c.get("mechanism"))])
+    meth = str(d.get("method") or "Direct Design Method (system-based design by advanced analysis)")
+    meth = re.sub(r"\s*--\s*steltic_ddm.*$", "", meth)
+    cnt = ((" &mdash; %d of %d checked combinations below 1.0" % (len(fails), len(checked))) if fails else
+           (" (%d combination%s checked)" % (len(checked), "" if len(checked) == 1 else "s") if checked else ""))
+    if info:
+        cnt += ("; %d combination%s (%s) without an established system resistance factor &phi;<sub>s</sub> "
+                "%s information only" % (len(info), "s" if len(info) > 1 else "",
+                                         ", ".join(sorted({_n(c.get("kind")) for c in info})),
+                                         "are" if len(info) > 1 else "is"))
+    h = ["<h3>System check by advanced analysis (Direct Design Method)</h3>",
+         "<p>%s, a supplementary system-level check (AISC 360-22 Appendix 1 type analysis): each combination is "
+         "scaled to collapse in a geometrically and materially nonlinear model; the check is &phi;<sub>s</sub>&lambda;<sub>u</sub> "
+         "&ge; 1.0 with the system resistance factor &phi;<sub>s</sub>. <b>Verdict: %s</b>%s.</p>"
+         % (_esc(meth), "<span class='ng'>FAIL</span>" if verdict == "FAIL" else _esc(verdict), cnt)]
+    if rows:
+        h.append(_table(["Combination", "Type", "&lambda;<sub>u</sub>", "&phi;<sub>s</sub>",
+                         "&phi;<sub>s</sub>&lambda;<sub>u</sub>", "Check", "Mechanism at the peak"], rows))
+        if len(combos) > 16:
+            h.append("<p class='cnote'>%d further combinations (none below 1.0 unless listed above) are retained in the "
+                     "calc package.</p>" % (len(combos) - 16))
+    cav = d.get("caveats")
+    if isinstance(cav, list) and cav:
+        h.append("<p class='cnote'>Caveats:</p><ul>" + "".join("<li>%s</li>" % _n(x) for x in cav[:8]) + "</ul>")
+    if verdict == "FAIL":
+        h.append("<p class='note'>The supplementary system check does not pass for the combinations marked FAIL; it is "
+                 "listed as an open item in Chapter 13.</p>")
+    return "".join(h)
+
+
 def _member_dc_summary(pkg):
-    ms = pkg.get("members") or []
-    have = [m for m in ms if m.get("DC") is not None]
+    C = _consistency_mod()
+    ms = [m for m in (pkg.get("members") or []) if isinstance(m, dict)]
+    have = [(C._dc_num(m.get("DC")) if C else m.get("DC"), m) for m in ms]
+    have = [(d, m) for d, m in have if isinstance(d, (int, float))]
     if have:
-        gov = max(have, key=lambda m: m.get("DC") or 0.0)
-        return (f"<p>Governing member: <b>{_esc(gov.get('id'))}</b> at D/C = <b>{gov.get('DC'):.2f}</b> "
-                f"({_esc(gov.get('limit_state'))}, combo {_esc((gov.get('inputs', {}) or {}).get('governing_combo', ''))}).</p>")
-    return ("<p class='cnote'>The member <b>demands</b> (axial, moment, shear, L<sub>b</sub>, section properties and "
-            "governing combination) are computed by the framework and listed below; the <b>capacities</b>, limit "
-            "states and D/C ratios are derived by the agent from the AISC 360/341 RAG (Appendix A) and are pending "
-            "for this building.</p>")
+        dc, gov = max(have, key=lambda t: t[0])
+        return ("<p>Governing member: <b>%s</b> at D/C = <b>%s</b> (%s; combination %s).</p>"
+                % (_esc(gov.get('id')), _n(dc, dc=True), _n(gov.get('limit_state')),
+                   _combo_label((gov.get('inputs', {}) or {}).get('governing_combo'))))
+    return ("<p class='note'>Member capacities and D/C ratios are not yet recorded in the calc package for this "
+            "building; the analysis demand envelopes are listed in Appendix A.</p>")
+
 
 def _ch6_notes(cfg):
     comp = " Composite floor members (Ch. I) are designed where composite action is used." if cfg.get("composite") else ""
@@ -2136,54 +3610,84 @@ def _drift_section(cfg, runs):
                      "%.3f" % (runs["Y"]["dxe"][k-1]*100), "%.3f" % (runs["Y"]["design"][k-1]*100), "OK" if ok else "NG"])
     h.append(_table(["Story", "&delta;<sub>xe</sub>/h X %", "&Delta;/h X %", "&delta;<sub>xe</sub>/h Y %", "&Delta;/h Y %",
                      "&le; limit (X %.2f%% / Y %.2f%%)" % (runs["X"]["limit"]*100, runs["Y"]["limit"]*100)], rows))
-    h.append("<p class='cnote'>Same analysis as the engine drift gate (ELF story forces, P-&Delta; model, unfactored "
-             "gravity per engine3d.floor_grav). The strength-level ELF forces are used, including the C<sub>s</sub> "
-             "minimum (Eq. 12.8-6) and the C<sub>u</sub>T<sub>a</sub> period cap &mdash; conservative: &sect;12.8.6.1 "
-             "Exception and &sect;12.8.6.2 permit dropping both for drift.</p>")
+    h.append("<p class='cnote'>Drift analysis: ELF story forces on the P-&Delta; model with the unfactored gravity "
+             "load (the same drifts enter the Chapter 13 scorecard). The strength-level ELF forces are used, including the C<sub>s</sub> minimum "
+             "(Eq. 12.8-6) and the C<sub>u</sub>T<sub>a</sub> period cap &mdash; conservative: the &sect;12.8.6.1 Exception "
+             "and &sect;12.8.6.2 permit dropping both for drift.</p>")
     return "".join(h)
 
 
+_CC_MAP = {10: "CC.2-2", 25: "CC.2-3", 50: "CC.2-4", 100: "CC.2-5"}
+
+
+def _wind_story_drifts(cfg_w):
+    return (_drift_from_forces(cfg_w, E.wind_forces(cfg_w, "X"), "X"),
+            _drift_from_forces(cfg_w, E.wind_forces(cfg_w, "Y"), "Y"))
+
+
 def _wind_drift_section(cfg):
+    """Wind drift. With cfg['wind_service'] = {'V': mph, 'MRI': yr, 'basis': ..} the serviceability check uses
+    W_a at the service wind speed (ASCE 7-22 Appendix CC, Eq. CC.2-3 D + 0.5L + W_a; Fig. CC.2-2 for a 10-year
+    MRI) against cfg['wind_drift_limit'] and the strength-level wind drifts are shown for information only;
+    without it the strength-level wind is used (conservative for a serviceability check)."""
     if not cfg.get("wind"):
-        return "<p class='cnote'>Wind drift not evaluated (no wind parameters defined).</p>"
-    NF = len(cfg["heights"]); lim = cfg.get("wind_drift_limit", 1.0/400.0)
+        return "<p class='cnote'>Wind drift not evaluated (no wind load defined).</p>"
+    NF = len(cfg["heights"]); lim = float(cfg.get("wind_drift_limit", 1.0/400.0) or 1.0/400.0)
+    ws = cfg.get("wind_service") if isinstance(cfg.get("wind_service"), dict) else None
     try:
-        dX = _drift_from_forces(cfg, E.wind_forces(cfg, "X"), "X")
-        dY = _drift_from_forces(cfg, E.wind_forces(cfg, "Y"), "Y")
+        dX, dY = _wind_story_drifts(cfg)
     except Exception as ex:
-        return f"<p class='note'>[wind drift run failed: {ex}]</p>"
-    rows = [[k, f"{dX[k-1]*100:.3f}", f"{dY[k-1]*100:.3f}", "OK" if max(dX[k-1], dY[k-1]) <= lim else "NG"]
-            for k in range(1, NF+1)]
+        return f"<p class='note'>[wind drift run failed: {_esc(ex)}]</p>"
+    limtxt = "h<sub>sx</sub>/%d (%.2f%%)" % (int(round(1 / lim)), lim * 100)
+    h = []
+    if ws and ws.get("V"):
+        try:
+            Vs = float(ws["V"])
+            cfg_s = dict(cfg); cfg_s["wind"] = dict(cfg["wind"], V=Vs)
+            for k in ("story_forces",):
+                cfg_s["wind"].pop(k, None)
+            sX, sY = _wind_story_drifts(cfg_s)
+        except Exception as ex:
+            return f"<p class='note'>[service wind drift run failed: {_esc(ex)}]</p>"
+        try:
+            mri = int(round(float(ws.get("MRI", 10))))
+        except (TypeError, ValueError):
+            mri = 10
+        fig = _CC_MAP.get(mri)
+        basis = str(ws.get("basis") or "")
+        btxt = (" Basis: %s." % _n(basis)) if basis and "CC.2-1" not in basis else ""
+        rows = [[k, "%.3f" % (sX[k-1]*100), "%.3f" % (sY[k-1]*100), "OK" if max(abs(sX[k-1]), abs(sY[k-1])) <= lim else
+                 "<b class='ng'>NG</b>"] for k in range(1, NF+1)]
+        worst = max(max(abs(x) for x in sX), max(abs(y) for y in sY))
+        h.append("<h3>Service wind drift, W<sub>a</sub> at V = %s mph (%d-year MRI%s), D + 0.5L + W<sub>a</sub> (Eq. CC.2-3)</h3>"
+                 % (_n(Vs), mri, (", ASCE 7-22 Fig. %s" % fig) if fig else ""))
+        h.append("<p>Interstory drift under the serviceability wind W<sub>a</sub> (ASCE 7-22 Appendix CC.2.2: same MWFRS "
+                 "procedure as Chapter 3 at the service wind speed, gust factor recomputed) against the project limit "
+                 "%s; Appendix CC cites limits of h/600 to h/400 in common use. First-order analysis: the D + 0.5L part of "
+                 "Eq. CC.2-3 does not change the first-order drift.%s</p>" % (limtxt, btxt))
+        h.append(_table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows))
+        h.append("<p><b>Worst service wind drift %.3f%% &mdash; %s.</b></p>"
+                 % (worst * 100, "OK" if worst <= lim else "<span class='ng'>exceeds the project limit</span>"))
+        _QA["wind_drift"] = (worst, lim, "service wind, %d-year MRI" % mri)
+        irows = [[k, "%.3f" % (dX[k-1]*100), "%.3f" % (dY[k-1]*100)] for k in range(1, NF+1)]
+        h.append("<h4>Drift under the design (strength-level) wind &mdash; information only</h4>"
+                 + _table(["Story", "drift X %", "drift Y %"], irows))
+        return "".join(h)
+    rows = [[k, "%.3f" % (dX[k-1]*100), "%.3f" % (dY[k-1]*100), "OK" if max(abs(dX[k-1]), abs(dY[k-1])) <= lim else
+             "<b class='ng'>NG</b>"] for k in range(1, NF+1)]
+    _QA["wind_drift"] = (max(max(abs(x) for x in dX), max(abs(y) for y in dY)), lim, "design wind")
     return ("<h3>Wind drift</h3>"
-            f"<p>Interstory drift under the design MWFRS wind vs a serviceability limit of h/{int(round(1/lim))} "
-            f"({lim*100:.2f}%). Wind drift has no code-mandated limit (ASCE 7-22 Appendix CC is advisory); a "
-            "10-year-MRI service wind may be used for a less conservative check.</p>"
-            + _table(["Story", "drift X %", "drift Y %", f"&le; {lim*100:.2f}%"], rows))
+            "<p>Interstory drift under the design (strength-level) MWFRS wind &mdash; conservative for a serviceability "
+            "check &mdash; against the project limit %s. ASCE 7-22 sets no mandatory wind drift limit; Appendix CC "
+            "(Eq. CC.2-3, D + 0.5L + W<sub>a</sub>) suggests a serviceability wind W<sub>a</sub> of a shorter mean "
+            "recurrence interval (e.g. 10-year, Fig. CC.2-2) with limits of h/600 to h/400.</p>" % limtxt
+            + _table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows))
+
 
 def _capdesign_html(cap):
-    """Render the agent's capacity_design / scwb block as readable nested tables (NOT raw JSON)."""
-    def fmt(v):
-        if isinstance(v, bool): return "yes" if v else "no"
-        if isinstance(v, float): return ("%.3f" % v).rstrip("0").rstrip(".")
-        return _esc(str(v))
-    def block(d):
-        rows = []
-        for k, v in d.items():
-            label = _esc(str(k).replace("_", " "))
-            if isinstance(v, dict):
-                rows.append([label, block(v)])
-            elif isinstance(v, list):
-                if any(isinstance(x, dict) for x in v):
-                    rows.append([label, "".join(block(x) if isinstance(x, dict)
-                                                else "<p>%s</p>" % fmt(x) for x in v)])
-                else:
-                    rows.append([label, ", ".join(fmt(x) for x in v)])
-            else:
-                rows.append([label, fmt(v)])
-        return _table(["Item", "Value"], rows)
-    if isinstance(cap, dict): return block(cap)
-    if isinstance(cap, list): return "".join(_capdesign_html(x) for x in cap)
-    return "<p>%s</p>" % fmt(cap)
+    """Render a capacity_design / scwb record as clean labelled tables (never raw JSON)."""
+    return _record_html(cap)
+
 
 _DETAIL_CHECKS = {
     "SMF": [("Strong-column/weak-beam", "&Sigma;M*<sub>pc</sub>/&Sigma;M*<sub>pb</sub> &gt; 1.0 (E3.4a)"),
@@ -2224,104 +3728,345 @@ _DETAIL_CHECKS = {
 }
 
 
-def _aisc341_detailing(cfg, pkg, sf=None):
-    s = cfg["seis"]; sf = sf or _sfrs(cfg)
+def _uplift_summary(pkg):
+    """One sentence on the net-uplift load path from the base-reaction envelope (19r)."""
+    br = _base_reactions(pkg)
+    if not br:
+        return ""
+    up = max(br.items(), key=lambda t: t[1].get("uplift", 0.0) or 0.0)
+    if (up[1].get("uplift") or 0.0) <= 0.05:
+        return ("<p>Net uplift: no column base is in net tension in any combination (base-reaction envelope, "
+                "Chapter 11).</p>")
+    n_up = sum(1 for r in br.values() if (r.get("uplift") or 0.0) > 0.05)
+    return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest net uplift is <b>%s kip</b> at "
+            "base %s (%s). It is resisted by the anchor rods of the base-plate design (Chapter 10) and delivered to the "
+            "foundations (Chapter 11).</p>" % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is",
+                                               _n(up[1].get("uplift")), _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo"))))
+
+
+_NEG_341 = re.compile(r"not appl|does not apply|do not apply|n/a|not required|\bno\b|without", re.I)
+
+
+def _no_341_claims(obj):
+    """For a building where AISC 341 does not apply: a copy of a design record without positive AISC 341
+    references (a parenthetical citing AISC 341 is dropped; statements that it does not apply are kept)."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            vv = _no_341_claims(v)
+            if vv not in (None, "", {}, []):
+                out[k] = vv
+        return out
+    if isinstance(obj, list):
+        return [x for x in (_no_341_claims(v) for v in obj) if x not in (None, "", {}, [])]
+    if isinstance(obj, str) and "341" in obj and not _NEG_341.search(obj):
+        s = re.sub(r"\s*\([^()]*341[^()]*\)", "", obj)
+        return s if "341" not in s else ""
+    return obj
+
+
+def _aisc341_detailing(cfg, pkg, sf=None, ctx=None):
+    s = cfg["seis"]; sf = sf or _sfrs(cfg); ctx = ctx or {}
     det = (pkg or {}).get("detailing")
-    if det:
-        _rows = [[_esc(c.get("check", "")), _esc(c.get("status", ""))] for c in det.get("checks", [])]
-        _intro = (f"<p><b>System:</b> {_esc(det.get('system',''))} &mdash; R = {det.get('R', s.get('R'))}, "
-                  f"C<sub>d</sub> = {det.get('Cd', s.get('Cd'))}, &Omega;<sub>0</sub> = {det.get('Omega0', s.get('Om0'))}, "
-                  f"SDC {_esc(det.get('SDC',''))}. <b>AISC 341 applies:</b> {'yes' if det.get('aisc341_applies') else 'no'}.</p>"
-                  f"<p>{_esc(det.get('basis',''))}</p>")
-        return _intro + _table(["Required check", "Status / basis"], _rows)
     cap = (pkg or {}).get("capacity_design") or (pkg or {}).get("scwb")
-    out = []
-    try:
-        R = float(s.get("R") or 0)
-    except Exception:
-        R = 0.0
-    if R and R <= 3.0:
-        out.append("<p>R = %g &le; 3: the system is not specifically detailed for seismic resistance; AISC 341 does not "
-                   "apply and members/connections are designed to AISC 360 (ASCE 7-22 Table 12.2-1 item H).</p>" % R)
+    a341 = ctx.get("a341")
+    if a341 is None:
+        try:
+            a341 = float(s.get("R") or 0) > 3.0
+        except Exception:
+            a341 = True
+    if not a341:
+        try:
+            R = float(s.get("R") or 0)
+        except Exception:
+            R = 0.0
+        out = ["<p>The seismic force-resisting system is a steel system not specifically detailed for seismic "
+               "resistance (R = %s, ASCE 7-22 Table 12.2-1 row H): AISC 341 does not apply. Members and connections are "
+               "designed to AISC 360-22 for the forces from the analysis (Chapters 6 and 10); no capacity-design "
+               "(expected-strength) forces, protected zones or AISC 341 width-thickness limits are required.</p>" % _n(R)]
+        out.append(_uplift_summary(pkg))
+        if det:
+            out.append("<h4>Detailing record</h4>" + _record_html(_no_341_claims(det)))
+        if cap:
+            out.append("<h4>Seismic design basis (calc package record)</h4>" + _record_html(_no_341_claims(cap)))
+        out.append("<p class='cnote'>Wind: components and cladding (C&amp;C) and the cladding attachments are part of the "
+                   "delegated cladding design.</p>")
         return "".join(out)
+    if det:
+        _rows = [[_n(c.get("check", "")), _n(c.get("status", ""))] for c in det.get("checks", []) if isinstance(c, dict)]
+        _intro = ("<p><b>System:</b> %s &mdash; R = %s, C<sub>d</sub> = %s, &Omega;<sub>0</sub> = %s, SDC %s.</p><p>%s</p>"
+                  % (_n(det.get('system', '')), _n(det.get('R', s.get('R'))), _n(det.get('Cd', s.get('Cd'))),
+                     _n(det.get('Omega0', s.get('Om0'))), _n(det.get('SDC', '')), _n(det.get('basis', ''))))
+        return _intro + _table(["Required check", "Status / basis"], _rows)
+    out = []
     for f in sf["families"]:
+        if f not in FAM_341:
+            continue
         checks = _DETAIL_CHECKS.get(f)
-        title = FAM_NAME.get(f, f) + ((" &mdash; AISC 341-22 &sect;%s" % FAM_341[f]) if f in FAM_341 else "")
+        title = FAM_NAME.get(f, f) + " &mdash; AISC 341-22 &sect;%s" % FAM_341[f]
         dirs = "/".join(d for d in ("X", "Y") if f in sf["dirs"][d])
         out.append(f"<h4>{title} ({dirs} direction)</h4>")
         if not checks:
-            out.append("<p class='note'>System type not declared &mdash; declare cfg['system'] to list its AISC 341 "
-                       "detailing and capacity-design checks.</p>")
+            out.append("<p class='cnote'>The AISC 341-22 provisions of this system are addressed in the capacity-design "
+                       "record below.</p>")
             continue
-        rows = [[n, b, "see Appendix A" if cap else "agent-derived (AISC 341 RAG) &mdash; pending"] for n, b in checks]
+        rows = [[n, b, "see the capacity-design record and Appendix A" if cap else "<b>not recorded in the calc package</b>"]
+                for n, b in checks]
         out.append(_table(["Required check", "Basis", "Status"], rows))
+    if any(f in ("MF?", "BF?") for f in sf["families"]):
+        out.append("<p class='note'>The seismic force-resisting system is not identified, so its AISC 341-22 detailing "
+                   "checks cannot be listed.</p>")
     if sf["dual"]:
         out.append("<p class='cnote'>Dual system: the moment frames resist at least 25% of the design seismic forces "
                    "independently (ASCE 7-22 &sect;12.2.5.1).</p>")
-    intro = ("<p>Required AISC 341-22 ductile-detailing and capacity-design checks for each system in cfg['system']. "
-             "They are derived by the agent from the AISC 341/358 RAG; values populate from the calc package where present.</p>")
-    extra = ("<h4>Capacity-design results (from the calc package)</h4>" + _capdesign_html(cap)) if cap else ""
-    note = ("<p class='cnote'>Width-thickness ductility, AISC 358 prequalification limits, weld NDT and the C&amp;C "
-            "cladding / net-uplift checks are confirmed on the drawings and connection submittal (delegated).</p>")
-    return intro + "".join(out) + extra + note
+    intro = ("<p>Required AISC 341-22 ductile-detailing and capacity-design checks for each seismic force-resisting "
+             "system; the computed values are in the capacity-design record below and in Appendix A.</p>")
+    extra = ("<h4>Capacity-design results (calc package record)</h4>" + _record_html(cap)) if cap else ""
+    note = ("<p class='cnote'>Weld inspection (NDT) and the C&amp;C cladding are confirmed on the drawings and the "
+            "connection submittal%s.</p>" % ("; AISC 358 prequalification limits are listed with the moment connections"
+                                           if ctx.get("mf358") else ""))
+    return intro + "".join(out) + extra + _uplift_summary(pkg) + note
 
 
-def _connection_demands(cfg, pkg, reX, sf=None):
-    rows = []; ms = (pkg or {}).get("members") or []
-    sf = sf or _sfrs(cfg)
+def _base_reactions(pkg):
+    """{node: reaction-envelope dict} from calc_package demand_analysis.base_reactions (all combinations), else {}."""
+    da = ((pkg or {}).get("demand_analysis") or {}) if isinstance(pkg, dict) else {}
+    br = da.get("base_reactions")
+    out = {}
+    if isinstance(br, dict):
+        for n, r in br.items():
+            if isinstance(r, dict):
+                out[str(n)] = r
+    return out
+
+
+def _grid_txt(node, r=None):
+    g = (r or {}).get("grid")
+    if isinstance(g, (list, tuple)) and len(g) == 2:
+        return "(%s, %s)" % (g[0], g[1])
+    try:
+        n = int(node)
+        return "(%d, %d)" % ((n % 100000) // 100, n % 100)
+    except Exception:
+        return _esc(node)
+
+
+def _base_groups(br):
+    """[(label, rows)] -- bases with net uplift and the others (foundation-design grouping)."""
+    up = {n: r for n, r in br.items() if (r.get("uplift") or 0.0) > 0.05}
+    rest = {n: r for n, r in br.items() if n not in up}
+    out = []
+    if up: out.append(("column bases with net uplift (%d)" % len(up), up))
+    if rest: out.append((("other column bases (%d)" % len(rest)) if up else "column bases (%d)" % len(rest), rest))
+    return out
+
+
+def _max_of(rows, key):
+    best = max(rows.items(), key=lambda t: abs(float(t[1].get(key) or 0.0)))
+    return best[0], best[1]
+
+
+def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
+    """Chapter 10 connection-demand table: one row per member group (analysis envelope) plus the column bases from
+    the all-combination base-reaction envelope. Beams carrying axial force (collector / drag / strut) show it with
+    the shear; brace connections cite AISC 341 only where it applies."""
+    rows = []; ms = [m for m in ((pkg or {}).get("members") or []) if isinstance(m, dict)]
+    sf = sf or _sfrs(cfg); ctx = ctx or {}
+    a341 = ctx.get("a341")
+    if a341 is None:
+        a341 = any(f in FAM_341 for f in sf.get("families", []))
+    vmax_sec = {}
+    for m in ms:
+        inp = m.get("inputs", {}) or {}
+        try:
+            vmax_sec[inp.get("section")] = max(vmax_sec.get(inp.get("section"), 0.0), float(inp.get("V_kip") or 0.0))
+        except (TypeError, ValueError):
+            pass
+    def f(x):
+        try:
+            return float(x or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
     for m in ms:
         inp = m.get("inputs", {}) or {}; kind = inp.get("kind", ""); sec = inp.get("section", "")
-        V = inp.get("V_kip") or 0.0; Mz = inp.get("Mz_kipin") or 0.0
-        P = max(inp.get("P_comp_kip", 0) or 0, inp.get("P_tens_kip", 0) or 0)
+        if not sec:
+            continue
+        V = f(inp.get("V_kip")); Mz = f(inp.get("Mz_kipin"))
+        Pc, Pt = f(inp.get("P_comp_kip")), f(inp.get("P_tens_kip")); Pcol = f(inp.get("collector_axial_kip"))
         if kind == "beam":
-            # moment connection only where the member is tagged as a moment-frame beam (role / id) and the
-            # system has moment frames; every other beam is a shear connection
             _tag = (str(inp.get("role", "")) + " " + str(m.get("id", ""))).lower()
             _role = str(inp.get("role", "")).lower()
             _joints = str(((cfg.get("model") or {}).get("joints")) or "").lower()
-            if any(t in _tag for t in ("smf", "imf", "omf", "stmf", "moment", "mf_", "mf-", "lateral")):
+            if any(t in _tag for t in ("smf", "imf", "omf", "stmf", "moment", "mf_", "mf-")):
                 mf = sf["has_mf"]
-            elif _role in ("roof", "floor") or "grav" in _tag:
-                mf = False                         # gravity beams: shear connections unless tagged otherwise
+            elif _role in ("roof", "floor") or "grav" in _tag or "collector" in _tag or "infill" in _tag:
+                mf = False                         # gravity / collector beams: shear connections unless tagged otherwise
             else:
                 mf = sf["has_mf"] and (_joints.startswith("rigid") or not sf["has_br"])
-            typ = "beam-to-column (moment)" if mf else "beam-to-column (shear)"
-            dem = f"V = {V:.0f} kip" + (f", M = {Mz/12:.0f} k-ft" if mf and Mz else "")
-            basis = ("AISC 358 prequalified moment connection / CJP flange welds (J2, AISC 341 E%s)"
-                     % ("3" if "SMF" in sf["families"] else "2" if "IMF" in sf["families"] else "1/E3")) if mf \
-                    else "bolted shear tab (J3 / J4)"
+            ax = max(Pc, Pt, Pcol)
+            if V <= 0 and ax > 0:
+                V = vmax_sec.get(sec, 0.0)
+            vtxt = ("V = %s kip" % _n(V)) if V > 0 else "V per the beam group"
+            if mf:
+                typ = "beam-to-column moment connection"
+                dem = vtxt + (", M<sub>end</sub> = %s kip-ft" % _n(Mz / 12.0) if Mz else "")
+                fams = sf.get("families", [])
+                basis = ("AISC 358-22 prequalified connection; AISC 341-22 %s" %
+                         ("E3" if "SMF" in fams else "E2" if "IMF" in fams else "E1")) if a341 else \
+                        "AISC 360-22 Ch. J fully restrained moment connection (J2 welds, J3 bolts, J10) for the analysis forces"
+            else:
+                typ = "simple shear connection" + (" + axial (collector / drag strut)" if ax > 0.5 else "")
+                dem = vtxt + ((", axial T / C = %s / %s kip" % (_n(max(Pt, Pcol)), _n(max(Pc, Pcol)))) if ax > 0.5 else "")
+                basis = ("single plate or clip angles: AISC 360-22 J3 / J4 and AISC Manual Part 10 (bolt-group "
+                         "eccentricity, plate ductility" + ("; axial transfer with the shear" if ax > 0.5 else "") + ")")
         elif "col" in kind:
-            typ = "column splice / base"; dem = f"P = {P:.0f} kip" + (f", M = {Mz/12:.0f} k-ft" if Mz else "")
-            basis = "splice (J1.4) / base plate J8 + ACI 318 Ch.17"
+            typ = "column splice"
+            dem = "P = %s kip" % _n(Pc) + ((", T = %s kip" % _n(Pt)) if Pt > 0.5 else "") + \
+                  ((", M<sub>x</sub> = %s kip-ft" % _n(Mz / 12.0)) if Mz else "")
+            basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
         elif kind == "brace":
-            typ = "brace-to-gusset"; dem = f"axial = {P:.0f} kip"
-            basis = ("adjusted brace strength (AISC 341 F4.6c)" if "BRBF" in sf["families"] else
-                     "capacity-limited by the link (AISC 341 F3.6)" if "EBF" in sf["families"] else
-                     "expected strength / &Omega;<sub>0</sub> (AISC 341 F1.6a)" if "OCBF" in sf["families"] else
-                     "expected strength (AISC 341 F2.6c)")
+            typ = "brace-to-gusset"
+            dem = "P = +%s / &minus;%s kip (tension / compression)" % (_n(Pt), _n(Pc))
+            fams = sf.get("families", [])
+            if not a341:
+                basis = "AISC 360-22 Ch. J / Ch. K for the analysis forces (Whitmore J4, block shear J4.3, welds J2)"
+            else:
+                basis = ("adjusted brace strength (AISC 341-22 F4.6c)" if "BRBF" in fams else
+                         "capacity-limited by the link (AISC 341-22 F3.6)" if "EBF" in fams else
+                         "expected strength or &Omega;<sub>0</sub> load effect (AISC 341-22 F1.6a)" if "OCBF" in fams else
+                         "expected brace strengths (AISC 341-22 F2.6c)" if "SCBF" in fams else
+                         "AISC 360-22 Ch. J for the analysis forces")
         else:
             continue
-        rows.append([_esc(f"{sec} {kind}"), typ, dem, basis])
-    if reX is not None:
-        pmax = max((r[2][2] for r in reX), default=0.0); vmax = max((abs(r[2][0]) for r in reX), default=0.0)
-        rows.append(["column base", "base plate / anchor rods", f"P = {pmax:.0f} kip, V = {vmax:.0f} kip",
-                     "J8/J9 + ACI 318 Ch.17 (min 4 rods)"])
+        rows.append([_esc(f"{sec} {_KIND_LABEL.get(kind, kind)}") + (" (%s)" % _esc(m.get("id"))), typ, dem, basis])
+    br = _base_reactions(pkg)
+    if br:
+        for lab, grp in _base_groups(br):
+            nP, rP = _max_of(grp, "P"); nU, rU = _max_of(grp, "uplift"); nV, rV = _max_of(grp, "V")
+            dem = "P = %s kip [%s]" % (_n(rP.get("P")), _combo_label(rP.get("P_combo")))
+            if (rU.get("uplift") or 0) > 0.05:
+                dem += "; net uplift = %s kip [%s]" % (_n(rU.get("uplift")), _combo_label(rU.get("uplift_combo")))
+            dem += "; V = %s kip [%s]" % (_n(rV.get("V")), _combo_label(rV.get("V_combo")))
+            nM, rM = _max_of(grp, "M")
+            if abs(float(rM.get("M") or 0.0)) > 0.5:
+                dem += "; M = %s kip-ft" % _n(float(rM["M"]) / 12.0)
+            rows.append([lab, "base plate / anchor rods", dem,
+                         "AISC 360-22 J8 / J9 and ACI 318-19 Ch. 17 (minimum 4 anchor rods)" + ("; AISC 341-22 D2.6" if a341 else "")])
+    else:
+        for c in ((pkg or {}).get("connections") or []):
+            if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base"):
+                rows.append([_esc(c.get("id")), "base plate / anchor rods", _fmt(c.get("demand") or {}),
+                             "AISC 360-22 J8 / J9 and ACI 318-19 Ch. 17 (minimum 4 anchor rods)"])
     if not rows:
         return None
-    return _table(["Member / location", "Connection type", "Governing demand", "Design basis (limit states)"], rows)
+    return _table(["Member / location", "Connection type", "Governing demand (analysis envelope)",
+                   "Design basis (limit states)"], rows)
 
-def _qa_scorecard(cfg, Fx, reX, eX, eY, runs):
-    s = cfg["seis"]; rows = []
-    FxX, FxY = _fx_by_dir(Fx) if Fx is not None else (None, None)
-    if runs:
-        FxX, FxY = runs["X"]["F"], runs["Y"]["F"]
-    if reX is not None and FxX is not None:
-        Rx = sum(r[2][0] for r in reX); base = sum(FxX.values())
-        rows.append(["Equilibrium &mdash; |&Sigma;R<sub>x</sub>| = applied base shear", f"{abs(Rx):.0f} vs {base:.0f} kip",
+
+def _connection_summary(pkg):
+    """Designed connections of the calc package: type, demand, governing limit state, D/C and status (Appendix A)."""
+    C = _consistency_mod()
+    cd = (pkg or {}).get("connections") if isinstance(pkg, dict) else None
+    if not isinstance(cd, list) or not cd:
+        return ""
+    rows = []
+    for c in cd:
+        if not isinstance(c, dict):
+            continue
+        chks = [k for k in (c.get("checks") or []) if isinstance(k, dict)]
+        ls, dc = c.get("limit_state"), (C._dc_num(c.get("DC")) if C else None)
+        if chks and C:
+            best = max(((C._dc_num(k.get("DC")), k) for k in chks if C._dc_num(k.get("DC")) is not None),
+                       key=lambda t: t[0], default=(None, None))
+            if best[0] is not None and (dc is None or best[0] > dc):
+                dc = best[0]
+                ls = best[1].get("limit_state")
+        issues = C._entry_issues("connection", c) if C else []
+        cid = str(c.get("id", ""))
+        rows.append(["<a href='#c-%s'>%s</a>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", cid)), _esc(cid)),
+                     _n(c.get("type", "")),
+                     _fmt(c.get("demand")) if isinstance(c.get("demand"), dict) else _n(c.get("demand")),
+                     (_n(ls) + (" (+%d more checks)" % (len(chks) - 1) if len(chks) > 1 else "")) if ls else "&mdash;",
+                     _n(dc, dc=True) if dc is not None else "&mdash;",
+                     _dc_status(dc, issues) if (dc is not None or issues) else "not recorded"])
+    return ("<h3>Designed connections</h3><p>Each connection type is designed in this package; its components and every "
+            "limit-state check are in Appendix A.</p>"
+            + _table(["Connection", "Type", "Design demand", "Governing limit state", "D/C", "Status"], rows))
+
+
+def _base_reactions_section(cfg, pkg, ctx=None):
+    """Chapter 11: column-base reactions for the foundation design from the all-combination base-reaction envelope
+    (calc_package demand_analysis.base_reactions): headline largest compression, largest net uplift with its
+    combination and largest shear, then a table of every base (19h)."""
+    br = _base_reactions(pkg)
+    if not br:
+        bases = [c for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)
+                 and str(c.get("id", "")).lower().startswith("conn-base")]
+        if not bases:
+            return ("<p class='note'>Column-base reactions are not recorded in the calc package for this building.</p>")
+        rows = [[_esc(c.get("id")), _fmt(c.get("demand") or {})] for c in bases]
+        return ("<p>Column-base design reactions (from the base-connection design records; a per-base envelope is not "
+                "recorded in this calc package):</p>" + _table(["Base connection", "Design reactions"], rows))
+    nP, rP = _max_of(br, "P"); nU, rU = _max_of(br, "uplift"); nV, rV = _max_of(br, "V")
+    up = float(rU.get("uplift") or 0.0)
+    ci = (ctx or {}).get("cases_info") or {}
+    extra = " and ".join(x for x, on in (("&Omega;<sub>0</sub>", ci.get("om0_dirs")), ("E<sub>cl</sub>", ci.get("ecl"))) if on)
+    head = ["<p>Column-base reactions for the foundation design: envelope over every LRFD combination (gravity, %sseismic"
+            "%s), second-order analysis, factored (strength level).</p><ul>"
+            % ("wind incl. the 0.9D + 1.0W roof uplift, " if cfg.get("wind") else "",
+               (" incl. the %s cases" % extra) if extra else ""),
+            "<li>Largest compression: <b>%s kip</b> at base %s (%s).</li>" % (_n(rP.get("P")), _grid_txt(nP, rP), _combo_label(rP.get("P_combo"))),
+            ("<li>Largest net uplift: <b>%s kip</b> at base %s (%s).</li>" % (_n(up), _grid_txt(nU, rU), _combo_label(rU.get("uplift_combo")))
+             if up > 0.05 else "<li>No column base is in net uplift in any combination.</li>"),
+            "<li>Largest base shear: <b>%s kip</b> at base %s (%s).</li>" % (_n(rV.get("V")), _grid_txt(nV, rV), _combo_label(rV.get("V_combo")))]
+    nM, rM = _max_of(br, "M")
+    if abs(float(rM.get("M") or 0.0)) > 0.5:
+        head.append("<li>Largest base moment: <b>%s kip-ft</b> at base %s (%s).</li>"
+                    % (_n(float(rM.get("M")) / 12.0), _grid_txt(nM, rM), _combo_label(rM.get("M_combo"))))
+    head.append("</ul>")
+    order = sorted(br.items(), key=lambda t: (-(t[1].get("uplift") or 0.0), -(t[1].get("P") or 0.0)))
+    fixed = any(abs(float(r.get("M") or 0.0)) > 0.5 for _n_, r in order)
+    rows = []
+    for n, r in order[:60]:
+        row = [_grid_txt(n, r), _n(r.get("P")), _combo_label(r.get("P_combo")),
+               _n(r.get("uplift")) if (r.get("uplift") or 0) > 0.05 else "&mdash;",
+               _combo_label(r.get("uplift_combo")) if (r.get("uplift") or 0) > 0.05 else "&mdash;",
+               _n(r.get("V")), _combo_label(r.get("V_combo"))]
+        if fixed:
+            row += [_n(float(r.get("M") or 0.0) / 12.0), _combo_label(r.get("M_combo"))]
+        rows.append(row)
+    hdr = ["Base (i, j)", "P max (kip)", "combination", "net uplift (kip)", "combination", "V max (kip)", "combination"]
+    if fixed:
+        hdr += ["M max (kip-ft)", "combination"]
+    tail = ("<p class='cnote'>Base grid labels (i, j) as in the plan figure of Chapter 1. Reactions are factored "
+            "(LRFD); the foundation and geotechnical design (bearing, sliding, uplift anchorage, footing sizing) is by "
+            "others. Overall overturning and sliding stability are confirmed against the geotechnical capacities.</p>")
+    more = ("<p class='cnote'>%d further bases (no uplift, lower compression) are retained in the calc package.</p>"
+            % (len(order) - 60)) if len(order) > 60 else ""
+    return "".join(head) + _table(hdr, rows) + more + tail
+
+
+_SANITY_NAMES = {"drift_X": "seismic drift X", "drift_Y": "seismic drift Y", "period": "period vs C<sub>u</sub>T<sub>a</sub>",
+                 "equil_X": "equilibrium X", "equil_Y": "equilibrium Y", "stability": "stability",
+                 "modalmass_X": "modal mass X", "modalmass_Y": "modal mass Y", "baseshear_X": "base shear X",
+                 "baseshear_Y": "base shear Y", "model_declared": "model input complete", "model_consistent":
+                 "built model matches the input", "stability_theta": "&theta; (&sect;12.8.7)", "beam_deflection": "beam deflection",
+                 "model_complete": "model completeness", "dual_25pct": "dual-system 25% check"}
+
+
+def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
+    """Automated checks evaluated for this report (each row says exactly what was compared)."""
+    rows = []
+    for d, re_ in (("X", reX), ("Y", reY)):
+        if re_ is None or not runs:
+            continue
+        di = 0 if d == "X" else 1
+        Rx = sum(r[2][di] for r in re_); base = sum(runs[d]["F"].values())
+        rows.append(["Equilibrium, ELF %s: |&Sigma;R| = applied base shear" % d, "%s vs %s kip" % (_n(abs(Rx)), _n(base)),
                      "PASS" if base and abs(abs(Rx)-base)/base < 0.01 else "REVIEW"])
     if eX is not None and eY is not None:
         cx = sum(eX)*100; cy = sum(eY)*100
-        rows.append(["Modal mass &ge; 90% (X / Y)", f"{cx:.0f}% / {cy:.0f}%", "PASS" if min(cx, cy) >= 90 else "REVIEW"])
+        rows.append(["Modal mass &ge; 90% (X / Y, &sect;12.9.1.1)", f"{cx:.0f}% / {cy:.0f}%", "PASS" if min(cx, cy) >= 90 else "REVIEW"])
     if runs:
         try:
             from preflight import relief_active as _ra
@@ -2333,16 +4078,55 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs):
             _limlab = f"{lim*100:.2f}%" + (" (&Delta;<sub>a</sub>/&rho;, &sect;12.12.1.1)" if r["limit_rho"] else "") \
                       + (" (&sect;16.1.2 relief)" if _rel else "")
             _rbs = (" &times; RBS %.3f" % r["rbs"][0]) if r["rbs"][0] > 1.0 else ""
-            rows.append([f"Seismic design drift {d} &le; limit ({'edge' if runs['edge_basis'] else 'CM'}{_rbs})",
+            rows.append([f"Seismic design drift {d} &le; limit ({'diaphragm edge' if runs['edge_basis'] else 'centre of mass'}{_rbs})",
                          f"{r['design_max']*100:.3f}% &le; {_limlab}", "PASS" if r["design_max"] <= lim else "FAIL"])
         for d in ("X", "Y"):
             trs, tmax, beta = _theta_rows(cfg, runs, d)
             tw = max([t["theta"] for t in trs if not t["exempt"]] or [0.0])
             rows.append([f"Stability &theta; {d} &le; &theta;<sub>max</sub> (&sect;12.8.7)", f"{tw:.3f} &le; {tmax:.3f}",
                          "PASS" if tw <= tmax else "FAIL"])
+    wd = _QA.get("wind_drift")
+    if wd:
+        rows.append(["Wind drift &le; project limit (%s)" % wd[2], "%.3f%% &le; %.2f%%" % (wd[0] * 100, wd[1] * 100),
+                     "PASS" if wd[0] <= wd[1] else "FAIL"])
+    bd = _QA.get("beam_deflection")
+    if bd:
+        rows.append(["Beam deflection (L/360 live, L/240 total)", bd[1], "PASS" if bd[0] else "FAIL"])
+    hl = _QA.get("height_limit")
+    if hl:
+        rows.append(["Structural height limit (Table 12.2-1)", hl[1], "PASS" if hl[0] else "FAIL"])
+    C = _consistency_mod()
+    for what, key in (("Member", "members"), ("Connection", "connections")):
+        ents = [m for m in ((pkg or {}).get(key) or []) if isinstance(m, dict)] if isinstance(pkg, dict) else []
+        if not ents or C is None:
+            continue
+        dcs = []
+        for m in ents:
+            vals = [C._dc_num(m.get("DC"))] + [C._dc_num(k.get("DC")) for k in (m.get("checks") or []) if isinstance(k, dict)]
+            vals = [v for v in vals if v is not None]
+            dcs.append((max(vals) if vals else None, m.get("id")))
+        have = [t for t in dcs if t[0] is not None]
+        if have:
+            dmax, idm = max(have, key=lambda t: t[0])
+            miss = len(dcs) - len(have)
+            rows.append(["%s D/C &le; 1.0 (%d of %d %ss with a D/C)" % (what, len(have), len(dcs), what.lower()),
+                         "max %s (%s)" % (_n(dmax, dc=True), _esc(idm)),
+                         "PASS" if dmax <= 1.0 + 1e-9 and not miss else ("FAIL" if dmax > 1.0 + 1e-9 else "INCOMPLETE")])
+        else:
+            rows.append(["%s D/C &le; 1.0" % what, "no D/C recorded", "INCOMPLETE"])
+    try:
+        pr = json.load(open(os.path.join(root, "design", "pipeline_results.json"), encoding="utf-8")) if root else None
+    except Exception:
+        pr = None
+    if isinstance(pr, dict) and isinstance(pr.get("checks"), dict):
+        failed = [k for k, v in pr["checks"].items() if not v]
+        names = ", ".join(_SANITY_NAMES.get(k, _esc(k)) for k in pr["checks"])
+        rows.append(["Analysis model checks of the demand analysis (%s)" % names,
+                     "all passed" if not failed else "failed: " + ", ".join(_SANITY_NAMES.get(k, _esc(k)) for k in failed),
+                     "PASS" if not failed else "FAIL"])
     if not rows:
         return ""
-    return ("<h3>QA scorecard (automated checks)</h3>"
+    return ("<h3>QA scorecard (computed checks)</h3>"
             + _table(["Check", "Result", "Status"], rows))
 
 
@@ -2380,7 +4164,7 @@ def _static_case_table(cfg, combo, nseg=2, render_fig=True):
         if key not in best or score > best[key][0]:
             best[key] = (score, N, Mz, My, V, n1, n2)
     for b in mm["beams"]:
-        sec = b.get("sec") or cfg.get("beam", "?"); N = Mz = My = V = 0.0
+        sec = b.get("sec") or cfg.get("beam") or "&mdash;"; N = Mz = My = V = 0.0
         for tag in b["segs"]:
             lf = ops.eleResponse(tag, "localForces")
             N = max(N, abs(lf[0]), abs(lf[6])); Mz = max(Mz, abs(lf[4]), abs(lf[10]))
@@ -2389,7 +4173,7 @@ def _static_case_table(cfg, combo, nseg=2, render_fig=True):
         if N > abs(maxN[0]): maxN = (N, "beam", sec)
         if Mz > abs(maxM[0]): maxM = (Mz, "beam", sec)
     for c in mm["cols"]:
-        sec = c.get("sec") or cfg.get("col", "?"); lf = ops.eleResponse(c["tag"], "localForces")
+        sec = c.get("sec") or cfg.get("col") or "&mdash;"; lf = ops.eleResponse(c["tag"], "localForces")
         N = max(abs(lf[0]), abs(lf[6])); Mz = max(abs(lf[5]), abs(lf[11])); My = max(abs(lf[4]), abs(lf[10]))
         V = max(abs(lf[1]), abs(lf[2]), abs(lf[7]), abs(lf[8]))
         upd("col", sec, N, Mz, My, V, c["n1"], c["n2"], max(Mz, N))
@@ -2401,8 +4185,8 @@ def _static_case_table(cfg, combo, nseg=2, render_fig=True):
         if abs(N) > abs(maxN[0]): maxN = (N, "brace", sec)
     rows = []
     for (kind, sec), (sc, N, Mz, My, V, n1, n2) in sorted(best.items()):
-        rows.append([kind, sec, f"{N:.1f}", f"{Mz/12:.1f}", f"{My/12:.1f}", f"{V:.1f}",
-                     _loc(n1, n2) if n1 else "&mdash;"])
+        rows.append([_KIND_LABEL.get(kind, kind), sec, _n(float(N)), _n(float(Mz) / 12.0), _n(float(My) / 12.0),
+                     _n(float(V)), _loc(n1, n2) if n1 else "&mdash;"])
     d = _lat_dir(lat) or "X"
     uri = None
     if render_fig:                       # per-combo Appendix-B N/V/M figure (opt-in; the governing
@@ -2493,60 +4277,109 @@ def _joint_dist_fig(cfg, direction, model=None):
     fig.tight_layout(rect=[0, 0.06, 1, 0.96])
     return _b64(fig)
 
+_QA = {}          # facts gathered while rendering (worst wind drift, gate results, ...) for the Ch. 13 scorecard
+
+
+def _pkg_camber(pkg):
+    """Camber values recorded in the calc package: {'composite': x, 'members': {id: x}} (in.)."""
+    out = {"composite": None, "members": {}}
+    if not isinstance(pkg, dict):
+        return out
+    cd = pkg.get("composite_design")
+    if isinstance(cd, dict):
+        for k in ("camber_in", "camber"):
+            v = cd.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out["composite"] = float(v); break
+    for m in pkg.get("members") or []:
+        if not isinstance(m, dict):
+            continue
+        for src_ in (m.get("serviceability"), m.get("capacity")):
+            if isinstance(src_, dict):
+                v = src_.get("camber_in")
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    out["members"][str(m.get("id"))] = float(v)
+    return out
+
+
 def _deflection_section(cfg, pkg=None):
     """Beam deflection table = the engine's beam_deflection GATE (engine3d.beam_serviceability_detail,
     one row per governing group), so the report can never print NG beside a gate PASS or vice versa
-    (HR-28). Skipped groups / build errors are listed and make the check FAIL. Where the agent's
-    calc_package serviceability block disagrees with the gate, the difference is stated."""
+    (HR-28). Skipped groups / build errors are listed and make the check FAIL. Where the calc package's
+    serviceability records or camber disagree with the gate, the difference is stated (19c)."""
     try:
         det = E.beam_serviceability_detail(cfg)
     except Exception as ex:
-        return f"<p class='note'>[beam deflection check FAILED to run: {_esc(ex)}] &mdash; the beam_deflection gate does not pass.</p>"
+        _QA["beam_deflection"] = (False, "not evaluated")
+        return f"<p class='note'>[beam deflection check could not be run: {_esc(ex)}] &mdash; the check does not pass.</p>"
     if cfg.get("beam_framing") == "truss":
-        return ("<h3>Beam deflection</h3><p class='cnote'>cfg['beam_framing'] = 'truss': the W-shape deflection gate is "
-                "not applied (long-span trusses/joists); their deflection is part of the joist/truss design.</p>")
-    h = ["<h3>Beam deflection &amp; camber (the engine's beam_deflection gate)</h3>",
-         "<p>Deflection of every beam span / group (section &times; span &times; floor/roof) "
-         "from %s; live (floor L, roof S if any else L<sub>r</sub>) against L/360 and total D+L against L/240. "
-         "Camber suggestion &asymp; 80%% of the dead-load deflection (nearest 1/4 in) where it exceeds 3/4 in.</p>"
-         % _esc(det.get("basis") or "the gate's tributary loads")]
+        return ("<h3>Beam deflection</h3><p class='cnote'>Long-span trusses / joists: the W-shape deflection check is not "
+                "applied; their deflection is part of the joist / truss design.</p>")
+    h = ["<h3>Beam deflection and camber (analysis model check)</h3>",
+         "<p>Deflection of every beam span / group (section &times; span &times; floor/roof) from %s; live (floor L, roof "
+         "S if any, else L<sub>r</sub>) against L/360 and total D + L against L/240. Camber suggestion &asymp; 80%% of the "
+         "dead-load deflection (to the nearest 1/4 in.) where that deflection exceeds 3/4 in.</p>"
+         % _n(det.get("basis") or "the tributary loads of each beam")]
     if det.get("error"):
-        h.append(f"<p class='note'><b>Gate FAILS &mdash; check not evaluated:</b> {_esc(det['error'])}</p>")
+        h.append(f"<p class='note'><b>Check FAILS &mdash; NOT EVALUATED:</b> {_n(det['error'])}</p>")
     grp = det.get("groups") or []
-    rows = []
+    rows = []; sugg = []
     def pick(roof):
         g = [x for x in grp if x["roof"] == roof]
         return sorted(g, key=lambda x: -max(x["rLL"], x["rTL"]))
     for roof, lbl in ((False, "Floor"), (True, "Roof")):
         lst = pick(roof)
         show = [x for x in lst if max(x["rLL"], x["rTL"]) >= 1.0] or lst[:1]
-        for x in show[:8]:
+        uniq, cnt = [], []
+        for x in show:
             L = x["L"]; dD = max(x["dTL"] - x["dLL"], 0.0)
             camber = round(0.8 * dD * 4) / 4 if dD >= 0.75 else 0.0
-            rows.append([lbl, _esc(x["sec"]), f"{L/12:.0f} ft",
-                         (f"{x['trib']/12:.0f} ft" if x.get("trib") is not None else "solved model"),
-                         f"{x['dLL']:.2f} in (L/{(L/x['dLL']) if x['dLL'] > 1e-6 else float('inf'):.0f})",
-                         f"{x['rLL']:.2f}", f"{x['dTL']:.2f} in", f"{x['rTL']:.2f}",
-                         "OK" if max(x["rLL"], x["rTL"]) < 1.0 else "<b>NG</b>",
-                         (f"{camber:.2f} in" if camber > 0 else "none")])
+            if camber > 0:
+                sugg.append((lbl.lower(), x["sec"], L, dD, camber))
+            r = [_esc(x["sec"]), _ftin(L),
+                 (_ftin(x['trib']) if x.get("trib") is not None else "solved model"),
+                 "%s in. (L/%s)" % (_n(x['dLL'], nd=2), ("%.0f" % (L / x['dLL'])) if x['dLL'] > 1e-6 else "&infin;"),
+                 _n(x["rLL"], nd=2), "%s in." % _n(x['dTL'], nd=2), _n(x["rTL"], nd=2),
+                 "OK" if max(x["rLL"], x["rTL"]) < 1.0 else "<b class='ng'>NG</b>",
+                 ("%s in." % _n(camber, nd=2)) if camber > 0 else "none"]
+            if r in uniq:
+                cnt[uniq.index(r)] += 1
+            else:
+                uniq.append(r); cnt.append(1)
+        for r, c in list(zip(uniq, cnt))[:8]:
+            rows.append([lbl + ((" (%d identical groups)" % c) if c > 1 else "")] + r)
     if rows:
-        h.append(_table(["Beam", "Section", "Span", "Trib.", "Live &delta;", "Live/(L/360)", "Total &delta;",
-                         "Total/(L/240)", "Gate", "Camber"], rows))
+        h.append(_table(["Beam", "Section", "Span", "Trib. width", "Live &delta;", "Live/(L/360)", "Total &delta;",
+                         "Total/(L/240)", "Check", "Camber"], rows))
     for key, why in (det.get("skipped") or [])[:10]:
-        h.append(f"<p class='note'>Group {_esc(key)} NOT EVALUATED: {_esc(why)} &mdash; the gate FAILS until fixed.</p>")
+        h.append(f"<p class='note'>Group {_esc(key)} NOT EVALUATED: {_n(why)} &mdash; the check fails until resolved.</p>")
     gate_ok = det["LL"] < 1.0 and det["TL"] < 1.0
-    h.append("<p><b>beam_deflection gate: %s</b> (worst live ratio %s, worst total ratio %s).</p>"
+    _QA["beam_deflection"] = (gate_ok, "worst live %s, total %s" % (
+        "%.2f" % det["LL"] if math.isfinite(det["LL"]) else "not evaluated",
+        "%.2f" % det["TL"] if math.isfinite(det["TL"]) else "not evaluated"))
+    h.append("<p><b>Beam deflection check: %s</b> (worst live ratio %s, worst total ratio %s).</p>"
              % ("PASS" if gate_ok else "FAIL",
                 "%.2f" % det["LL"] if math.isfinite(det["LL"]) else "not evaluated",
                 "%.2f" % det["TL"] if math.isfinite(det["TL"]) else "not evaluated"))
-    ag = [m for m in ((pkg or {}).get("members") or []) if isinstance(m.get("serviceability"), dict)]
+    ag = [m for m in ((pkg or {}).get("members") or []) if isinstance(m, dict) and isinstance(m.get("serviceability"), dict)]
     if ag:
         ag_ok = all(bool(m["serviceability"].get("ok")) for m in ag)
         if ag_ok != gate_ok:
-            h.append("<p class='note'><b>Reconcile:</b> the calc package's serviceability table (above) reports %s "
-                     "while the engine gate reports %s. The gate uses a simple span with the full perpendicular bay; "
-                     "an agent value may use the one-way deck tributary, composite I<sub>LB</sub> or camber. State which "
-                     "governs in the calc package.</p>" % ("all OK" if ag_ok else "NG", "PASS" if gate_ok else "FAIL"))
+            h.append("<p class='note'><b>Reconcile:</b> the member serviceability records report %s while the analysis-model "
+                     "check reports %s. The analysis-model check uses a simple span with the tributary load of the model; a "
+                     "design record may use the one-way deck tributary, a composite I<sub>LB</sub> or camber. The calc "
+                     "package must state which governs.</p>" % ("all OK" if ag_ok else "NG", "PASS" if gate_ok else "FAIL"))
+    cam = _pkg_camber(pkg)
+    rec = cam["members"] or ({"all members": cam["composite"]} if cam["composite"] is not None else {})
+    if sugg and rec:
+        recorded = max(rec.values())
+        worst = max(sugg, key=lambda t: t[4])
+        if recorded <= 1e-9 < worst[4]:                       # camber 'none' recorded vs a suggested camber
+            h.append("<p class='note'><b>Reconcile camber:</b> the analysis gives a dead-load deflection of %s in. for the "
+                     "%s %s beams (span %s), i.e. a camber of about %s in.; the calc package records %s in. camber%s.</p>"
+                     % (_n(worst[3], nd=2), worst[0], _esc(worst[1]), _ftin(worst[2]), _n(worst[4], nd=2), _n(recorded),
+                        "" if cam["composite"] is None else " (composite design record)"))
+            _QA["camber_conflict"] = True
     return "".join(h)
 
 
@@ -2640,60 +4473,318 @@ def _appendix_case_figs(cases, cfg):
 
 
 def _consistency_section(name, root, pkg):
-    """Chapter 13 numerical self-consistency check (engine/consistency.py)."""
+    """Chapter 13 numerical self-consistency check (consistency.py): states exactly what was verified, lists the
+    supplementary-module verdicts, then PASS or the items to reconcile."""
     try:
         import consistency
         issues = consistency.check(name, root=root, pkg=pkg, verbose=False)
+        mods = consistency.module_verdicts(pkg)
     except Exception as ex:
-        return f"<h3>Numerical self-consistency check</h3><p class='note'>[consistency check unavailable: {ex}]</p>"
+        return f"<h3>Numerical self-consistency check</h3><p class='note'>[consistency check unavailable: {_esc(ex)}]</p>"
+    what = ("<p>Automated verification of the calc package (all members and connections):</p><ol>"
+            "<li><b>Completeness</b> &mdash; each member and connection records a limit state, a cited clause and a D/C.</li>"
+            "<li><b>Strength</b> &mdash; no recorded D/C exceeds 1.0.</li>"
+            "<li><b>Governing value</b> &mdash; each headline D/C equals the largest of its limit-state checks.</li>"
+            "<li><b>Arithmetic</b> &mdash; each check's D/C equals its own printed demand &divide; available strength where "
+            "both are recorded (H1-1a / H1-1b recomputed from its printed terms where the check cites them).</li>"
+            "<li><b>Envelope</b> &mdash; for each member, the printed analysis envelope divided by the printed available "
+            "strength does not exceed the headline D/C, and no check of a force quantity uses a demand below 98% of the "
+            "printed envelope without a stated basis.</li>"
+            "<li><b>One value</b> &mdash; a labelled quantity quoted more than once within an entry carries one value.</li>"
+            "<li><b>Code-basis gates</b> &mdash; Seismic Design Category, Table 12.2-1 system and height limits, the "
+            "seismic factors against the declared system, drift-limit vs Risk Category, and the guards for the "
+            "conditions this building has (single-plate eccentricity, base-reaction envelope, composite floor, floor "
+            "vibration, discontinuities with overstrength).</li>"
+            "<li><b>Supplementary analyses</b> &mdash; module verdicts recorded in the package (listed below).</li></ol>"
+            "<p class='cnote'>Not verified by automation: the choice of limit states and the code equations inside each "
+            "capacity (spot-check Appendix A), drawings and specifications (Chapter 12), and engineering judgement.</p>")
+    mtxt = ""
+    if mods:
+        mrows = [[_esc({"ddm_analysis": "Direct Design Method (system check)"}.get(k, _human_key(k)[0])),
+                  ("<b class='ng'>%s</b>" % _esc(v)) if v in ("FAIL", "NG") else _esc(v or "not stated"),
+                  "; ".join(_verdict_item(f) for f in fl[:4]) or "&mdash;"] for k, v, fl in mods]
+        mtxt = "<h4>Supplementary analysis verdicts</h4>" + _table(["Module", "Verdict", "Failing combinations"], mrows)
     if not issues:
-        return ("<h3>Numerical self-consistency check</h3>"
-                "<p class='cnote'>&#10003; <b>PASS</b> &mdash; every member/connection carries a limit state, "
-                "capacity and D/C; each headline D/C equals its worst limit-state check and demand&divide;capacity; "
-                "and no quantity is reported with conflicting values.</p>")
-    rows = [[str(i + 1), _esc(iss)] for i, iss in enumerate(issues)]
-    return ("<h3>Numerical self-consistency check</h3>"
-            f"<p class='note'><b>{len(issues)} item(s) to reconcile</b> before the report is final &mdash; the same "
-            "quantity must carry one value everywhere, every D/C must equal demand&divide;capacity, the headline D/C "
-            "must equal its worst limit-state check, and no D/C may exceed 1.0:</p>" + _table(["#", "issue"], rows))
+        return ("<h3>Numerical self-consistency check</h3>" + what + mtxt +
+                "<p><b>Result: PASS</b> &mdash; no item to reconcile under checks 1&ndash;8.</p>")
+    rows = [[str(i + 1), _pub_issue_html(iss)] for i, iss in enumerate(issues)]
+    return ("<h3>Numerical self-consistency check</h3>" + what + mtxt +
+            f"<p class='note'><b>Result: {len(issues)} item(s) to reconcile</b> before the report is final:</p>"
+            + _table(["#", "Item"], rows))
+
+
+def _gate_waivers_section(pkg):
+    """Items the designer addressed by an engineering justification instead of the automated criterion
+    (calc_package gate_waivers), summarised -- never dumped raw."""
+    gw = (pkg or {}).get("gate_waivers") if isinstance(pkg, dict) else None
+    if not isinstance(gw, dict) or not gw:
+        return ""
+    rows = []
+    for k, v in gw.items():
+        ks = str(k)
+        lab = ("Self-consistency item: &ldquo;%s&hellip;&rdquo;" % _n(ks.split(":", 1)[1].strip()[:90])
+               if ks.lower().startswith("consistency:") else _SANITY_NAMES.get(ks, _human_key(ks)[0]))
+        rows.append([lab, _n(v)])
+    return ("<h4>Items addressed by engineering justification</h4>"
+            "<p class='cnote'>Automated criteria that the designer addressed by a stated justification:</p>"
+            + _table(["Criterion", "Justification"], rows))
+
+
+def _design_credit(pkg):
+    """'Design prepared with Steltic; design agent: <model> (<provider>), <date>' -- only when recorded."""
+    da = (pkg or {}).get("design_agent") if isinstance(pkg, dict) else None
+    if isinstance(da, str) and da.strip():
+        da = {"model": da.strip()}
+    if not isinstance(da, dict) or not da.get("model"):
+        return ""
+    harness = da.get("harness") or "Steltic"
+    return ("Design prepared with %s; design agent: %s%s%s" %
+            (_esc(harness), _esc(da.get("model")), (" (%s)" % _esc(da["provider"])) if da.get("provider") else "",
+             (", %s" % _esc(da["date"])) if da.get("date") else ""))
 
 
 def _design_basis(cfg):
-    """Top-of-report echo of the RESOLVED building parameters so a brief-vs-built mismatch (bay count,
-    spans, stories, loads) is visible on page 1."""
-    NX,NY=cfg["NX"],cfg["NY"]; SX,SY=cfg["SX"],cfg["SY"]; H=cfg["heights"]; s=cfg.get("seis",{})
-    rows=[
-      ["Lateral system", _esc(cfg.get("system") or cfg.get("arch",""))],
-      ["Plan grid", "%d &times; %d bays @ %.0f &times; %.0f ft  (%.0f &times; %.0f ft overall)"
-                    % (NX,NY,SX/12.0,SY/12.0,NX*SX/12.0,NY*SY/12.0)],
-      ["Stories", "%d @ %s ft  (H = %.0f ft)" % (len(H), ", ".join("%.0f"%(h/12.0) for h in H), sum(H)/12.0)],
-      ["Gravity loads", "floor D %s / L %s psf; roof D %s psf, %s"
-                    % (cfg.get("D_floor","?"),cfg.get("L_floor","?"),cfg.get("D_roof","?"),
-                       ("S %s psf" % cfg["snow"]) if cfg.get("snow") else ("L<sub>r</sub> %s psf" % cfg.get("Lr", 20.0)))],
-      ["Seismic", "R=%s, Cd=%s, &Omega;<sub>0</sub>=%s, Ie=%s, S<sub>DS</sub>=%s, S<sub>1</sub>=%s"
-                    % (s.get("R","?"),s.get("Cd","?"),s.get("Om0","?"),s.get("Ie","?"),s.get("SDS","?"),s.get("S1","?"))],
+    """Top-of-report summary of the building parameters used in the analysis model (feet-inch dimensions)."""
+    NX, NY = cfg["NX"], cfg["NY"]; SX, SY = cfg["SX"], cfg["SY"]; H = cfg["heights"]; s = cfg.get("seis", {})
+    xco, yco = cfg.get("xcoords"), cfg.get("ycoords")
+    Lx = (xco[-1] if xco else NX * SX); Ly = (yco[-1] if yco else NY * SY)
+    bays = ("%d &times; %d bays @ %s &times; %s" % (NX, NY, _ftin(SX), _ftin(SY))) if not (xco or yco) else \
+        "%d &times; %d bays (variable spacing)" % (NX, NY)
+    snow = float(cfg.get("snow", 0) or 0)
+    rows = [
+      ["Lateral system", _n(cfg.get("system") or cfg.get("arch", ""))],
+      ["Plan grid", "%s (%s &times; %s overall)" % (bays, _ftin(Lx), _ftin(Ly))],
+      ["Stories", "%d: %s (h<sub>n</sub> = %s)" % (len(H), _heights_txt(H), _ftin(sum(float(h) for h in H)))],
+      ["Gravity loads", "floor D %s / L %s psf; roof D %s psf, L<sub>r</sub> %s psf%s"
+                        % (_n(cfg.get("D_floor")), _n(cfg.get("L_floor")), _n(cfg.get("D_roof")), _n(cfg.get("Lr", 20.0)),
+                           (", S %s psf" % _n(snow)) if snow > 0 else "")],
+      ["Seismic", "S<sub>DS</sub> = %s g, S<sub>D1</sub> = %s g; R / C<sub>d</sub> / &Omega;<sub>0</sub> = %s; I<sub>e</sub> = %s"
+                  % (_sa(s.get("SDS")), _sa(s.get("SD1")), _rcdo_txt(cfg, s), _fac(s.get("Ie", 1.0)))],
     ]
-    return ("<h2>Design basis</h2><p class='note'>Model built to the parameters below &mdash; <b>verify these "
-            "against your brief</b>, especially the bay count and spans.</p>" + _table(["Parameter","Value"], rows))
+    if cfg.get("wind"):
+        w = cfg["wind"]
+        rows.append(["Wind", "V = %s mph, Exposure %s" % (_n(w.get("V")), _esc(w.get("exposure", "C")))])
+    return ("<h2>Design basis</h2><p class='cnote'>Building parameters used in the analysis model; the governing "
+            "criteria are in Chapter 1.</p>" + _table(["Parameter", "Value"], rows))
+
+
+def _all_sections(cfg, pkg):
+    secs = set()
+    try:
+        for e in E.build(cfg, "Linear").get("ele", []):
+            secs.add(str(e[2]).upper())
+    except Exception:
+        pass
+    for m in ((pkg or {}).get("members") or []) if isinstance(pkg, dict) else []:
+        if isinstance(m, dict) and (m.get("inputs") or {}).get("section"):
+            secs.add(str(m["inputs"]["section"]).upper())
+    return secs
+
+
+def _materials_table(cfg, pkg=None):
+    """Material specifications: cfg['materials'] when declared, else inferred from the sections used and from the
+    connection / composite records (W: A992; HSS: A500 Gr. C; plates A572 Gr. 50 (A36 where recorded); bolts ASTM
+    F3125 Grade A325 / A490 as recorded; anchor rods F1554 grades recorded; welds E70XX; concrete where recorded)."""
+    decl = cfg.get("materials")
+    rows = []
+    if isinstance(decl, dict) and decl:
+        rows = [[_n(k), _n(v) if not isinstance(v, dict) else _fmt(v)] for k, v in decl.items()]
+    elif isinstance(decl, (list, tuple)) and decl:
+        for x in decl:
+            if isinstance(x, (list, tuple)):
+                rows.append([_n(x[0]), " ".join(_n(y) for y in x[1:])])
+            elif isinstance(x, dict):
+                rows.append([_n(x.get("item", x.get("element", ""))), _n(x.get("spec", x.get("value", "")))
+                             + ((" &mdash; " + _n(x.get("props"))) if x.get("props") else "")])
+    if rows:
+        return _table(["Element", "Specification"], rows) + "<p class='cnote'>E = 29,000 ksi for all structural steel.</p>"
+    secs = _all_sections(cfg, pkg)
+    blob = ""
+    try:
+        blob = json.dumps({k: (pkg or {}).get(k) for k in ("connections", "composite_design", "capacity_design")}) \
+            if isinstance(pkg, dict) else ""
+    except Exception:
+        blob = ""
+    blob_l = blob.lower()
+    if any(s.startswith("W") for s in secs) or not secs:
+        rows.append(["Wide-flange shapes", "ASTM A992, F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 65 ksi"])
+    rect = [s for s in secs if s.startswith("HSS") and s.count("X") >= 2]
+    rnd = [s for s in secs if s.startswith("HSS") and s.count("X") == 1]
+    if rect:
+        rows.append(["Rectangular / square HSS", "ASTM A500 Grade C, F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 62 ksi"])
+    if rnd:
+        rows.append(["Round HSS", "ASTM A500 Grade C, F<sub>y</sub> = 46 ksi, F<sub>u</sub> = 62 ksi"])
+    if any(s.startswith(("L", "2L")) for s in secs) or re.search(r"\b2?l\s?\d+x\d+", blob_l):
+        rows.append(["Angles", "ASTM A36, F<sub>y</sub> = 36 ksi, F<sub>u</sub> = 58 ksi (or A572 Gr. 50 where noted)"])
+    pl = ["ASTM A572 Grade 50 (F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 65 ksi)"]
+    if "a36" in blob_l:
+        pl.append("ASTM A36 (F<sub>y</sub> = 36 ksi, F<sub>u</sub> = 58 ksi) where noted in the connection design")
+    rows.append(["Plates and bars", "; ".join(pl)])
+    bolts = [g for g in ("A325", "A490") if g.lower() in blob_l] or ["A325"]
+    rows.append(["High-strength bolts", "ASTM F3125 Grade %s (snug-tight or pretensioned as noted)" % " / ".join(bolts)])
+    fg = sorted({m for m in re.findall(r"f1554\s*(?:gr(?:ade)?\.?\s*)?(36|55|105)", blob_l)}, key=int)
+    rows.append(["Anchor rods", "ASTM F1554 Grade %s" % " / ".join(fg) if fg else
+                 "ASTM F1554 (grade per the column-base design, Chapter 10)"])
+    rows.append(["Welds", "E70XX electrodes (F<sub>EXX</sub> = 70 ksi), AWS D1.1"])
+    comp = "composite" in str(cfg.get("floor_system", "")).lower() or bool((pkg or {}).get("composite_design")) \
+        if isinstance(pkg, dict) else "composite" in str(cfg.get("floor_system", "")).lower()
+    if comp:
+        cc = cfg.get("concrete") if isinstance(cfg.get("concrete"), dict) else {}
+        txt = (json.dumps((pkg or {}).get("composite_design") or {}) + " " + str(cfg.get("floor_system", ""))) \
+            if isinstance(pkg, dict) else str(cfg.get("floor_system", ""))
+        fc = cc.get("fc_ksi") or (re.search(r"f'?c'?\s*=\s*(\d+(?:\.\d+)?)\s*ksi", txt, re.I) or [None, None])[1]
+        wc = cc.get("wc_pcf") or (re.search(r"(\d{3})\s*pcf", txt, re.I) or [None, None])[1]
+        lw = bool(re.search(r"\blw\b|lightweight|light-weight", txt, re.I)) or str(cc.get("type", "")).lower().startswith("l")
+        spec = "%s concrete on composite steel deck" % ("lightweight" if lw else "normal-weight")
+        if fc: spec += ", f&prime;<sub>c</sub> = %s ksi" % _n(float(fc))
+        if wc: spec += ", w<sub>c</sub> = %s pcf" % _n(float(wc))
+        if not fc:
+            spec += " (f&prime;<sub>c</sub> per the slab specification)"
+        rows.append(["Floor slab", spec])
+        if re.search(r"\bstud", blob_l):
+            rows.append(["Steel headed stud anchors", "ASTM A108, F<sub>u</sub> = 65 ksi (AWS D1.1 Type B)"])
+    return (_table(["Element", "Specification"], rows)
+            + "<p class='cnote'>E = 29,000 ksi for all structural steel. Specifications inferred from the sections and "
+            "the connection records of this design; the project specification governs.</p>")
+
+
+def _floor_vibration_section(cfg, pkg):
+    """AISC Design Guide 11 walking vibration: calc_package['floor_vibration'] when recorded, else the member checks
+    that address it; office floors without either are stated as not evaluated."""
+    fv = (pkg or {}).get("floor_vibration") if isinstance(pkg, dict) else None
+    h = []
+    if fv:
+        h.append("<h3>Floor vibration (AISC Design Guide 11, walking excitation)</h3>")
+        h.append(_record_html(fv))
+        return "".join(h)
+    rows = []
+    C = _consistency_mod()
+    for m in ((pkg or {}).get("members") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(m, dict):
+            continue
+        for k in m.get("checks") or []:
+            if isinstance(k, dict) and re.search(r"vibrat|dg ?11|walking|footfall", str(k.get("limit_state", "")), re.I):
+                terms = C.check_terms(k) if C else []
+                rows.append([_esc(m.get("id")), _n(k.get("limit_state")), _term_txt(terms, "dem"), _term_txt(terms, "cap"),
+                             _n(C._dc_num(k.get("DC")) if C else k.get("DC"), dc=True)])
+    if rows:
+        return ("<h3>Floor vibration (AISC Design Guide 11, walking excitation)</h3>"
+                + _table(["Member", "Check", "Response", "Criterion", "Ratio"], rows))
+    arch = (str(cfg.get("arch", "")) + " " + str(cfg.get("occupancy", ""))).lower()
+    return ("<p class='cnote'><b>Floor vibration (AISC Design Guide 11):</b> not evaluated in this package%s.</p>"
+            % ("; for office floors the walking criterion a<sub>p</sub>/g &le; 0.5% applies" if "office" in arch else ""))
+
+
+def fig_story_shear_otm_dirs(cfg, series):
+    """Story shear and overturning moment for several load patterns {label: {level: F}} (both directions,
+    wind and seismic)."""
+    NF = len(cfg["heights"]); z = E.zlevels(cfg); lvl = list(range(1, NF + 1))
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 5))
+    for lab, F in series.items():
+        Vs = [sum(F.get(k, 0.0) for k in range(s, NF + 1)) for s in range(1, NF + 1)]
+        OT = [sum(F.get(k, 0.0) * (z[k] - z[s - 1]) / 12.0 for k in range(s, NF + 1)) for s in range(1, NF + 1)]
+        a1.step(Vs, lvl, where="mid", label=lab); a2.plot(OT, lvl, "-o", ms=3, label=lab)
+    a1.set_xlabel("story shear (kip)"); a1.set_ylabel("story"); a1.grid(alpha=0.3); a1.set_title("Story shear")
+    a2.set_xlabel("overturning moment (kip-ft)"); a2.set_title("Overturning moment (above the story)"); a2.grid(alpha=0.3)
+    a1.legend(fontsize=8); a2.legend(fontsize=8)
+    return _b64(fig)
+
+
+def _base_shear_otm_table(cfg, SD, wind):
+    """Chapter 7: base shear and base overturning moment per direction, seismic (ELF) and wind (Case 1)."""
+    NF = len(cfg["heights"]); z = E.zlevels(cfg)
+    def otm(F):
+        return sum(F.get(k, 0.0) * z[k] / 12.0 for k in range(1, NF + 1))
+    rows = []
+    for d in ("X", "Y"):
+        Fs = (SD or {}).get(d, {}).get("Fx") or {}
+        Fw = (wind or {}).get(d) or {}
+        Vs, Ms = sum(Fs.values()), otm(Fs)
+        Vw, Mw = (sum(Fw.values()), otm(Fw)) if Fw else (None, None)
+        gov = "seismic" if Vw is None or Vs >= Vw else "wind"
+        rows.append([d, _n(Vs), _n(Ms), _n(Vw) if Vw is not None else "&mdash;", _n(Mw) if Mw is not None else "&mdash;",
+                     "<b>%s</b>" % gov])
+    return _table(["Direction", "Seismic V (kip)", "Seismic base OTM (kip-ft)", "Wind V (kip)",
+                   "Wind base OTM (kip-ft)", "Governs"], rows)
+
+
+def _report_ctx(cfg, pkg, sf, cases):
+    """Everything the chapter wording depends on: AISC 341 applicability per direction (calc package record of the
+    demand run first, then design_pipeline.aisc341_applies), AISC 358 (SMF / IMF), wind, DG11, discontinuities and
+    the combination-set content."""
+    da = ((pkg or {}).get("demand_analysis") or {}) if isinstance(pkg, dict) else {}
+    rec = da.get("aisc341_applies")
+    a341 = {}
+    for d in ("X", "Y"):
+        if isinstance(rec, dict) and d in rec:
+            a341[d] = bool(rec[d])
+        else:
+            try:
+                a341[d] = bool(PIPE.aisc341_applies(cfg, d)) if HAVE_PIPE and hasattr(PIPE, "aisc341_applies") else \
+                    float(E.seis_dir(cfg, d).get("R") or 0) > 3.0
+            except Exception:
+                a341[d] = float((cfg.get("seis") or {}).get("R") or 0) > 3.0
+    fams = (sf or {}).get("families", []) if sf else []
+    disc = None
+    try:
+        if sf and sf.get("inv_ok"):
+            term, inpl = _discontinuities(cfg, sf)
+            disc = bool(term or inpl)
+    except Exception:
+        disc = None
+    dg11 = bool((pkg or {}).get("floor_vibration")) if isinstance(pkg, dict) else False
+    if not dg11 and isinstance(pkg, dict):
+        dg11 = bool(re.search(r"dg ?11|design guide 11", json.dumps(pkg.get("members") or [])[:400000], re.I))
+    return {"a341_dirs": a341, "a341": any(a341.values()),
+            "mf358": any(a341.values()) and any(f in ("SMF", "IMF") for f in fams),
+            "smf": "SMF" in fams, "wind": bool(cfg.get("wind")), "dg11": dg11,
+            "discontinuity": disc, "cases_info": _cases_info(cases or [])}
+
+
+def _qa_annex(name, cfg, pkg, path):
+    """Separate QA annex (qa_annex.html next to report.html): design-process records that are not part of the
+    published calculation package -- reference-grounding verification, notes on the reference corpus, and the
+    activity log of the tool calls."""
+    parts = ["<h1>%s &mdash; QA annex</h1>" % _esc(cfg.get("project") or name),
+             "<p class='cnote'>Design-process records supporting Chapter 13 of the report. Not part of the calculation "
+             "package.</p>"]
+    cr = _design_credit(pkg)
+    if cr:
+        parts.append("<p class='credit'>%s</p>" % cr)
+    try:
+        parts.append(_grounding_check(cfg, name, pkg))
+    except Exception as ex:
+        parts.append("<p class='note'>[grounding verification unavailable: %s]</p>" % _esc(ex))
+    cdf = (pkg or {}).get("corpus_defects") if isinstance(pkg, dict) else None
+    if cdf:
+        parts.append("<h2>Reference-text notes recorded during the design</h2>" + _record_html(cdf))
+    try:
+        parts.append(_activity_section(name))
+    except Exception as ex:
+        parts.append("<p class='note'>[activity log unavailable: %s]</p>" % _esc(ex))
+    html = ("<!doctype html><html><head><meta charset='utf-8'><title>%s QA annex</title><style>%s%s</style></head>"
+            "<body>%s</body></html>" % (_esc(name), CSS, CHK_CSS, "".join(parts)))
+    open(path, "w", encoding="utf-8").write(html)
+    return path
 
 
 def build_report(name, root=None):
     _register(name); cfg = E.CFG[name]
     if root is None:
         root = os.path.join(os.environ.get("STEEL_BUILDER_JOBS") or HERE, name)
+    pub = _publish(cfg)
     NF = len(cfg["heights"]); s = cfg["seis"]
     SX, SY = cfg["SX"], cfg["SY"]; NX, NY = cfg["NX"], cfg["NY"]
     Lx = (cfg["xcoords"][-1] if cfg.get("xcoords") else NX*SX); Ly = (cfg["ycoords"][-1] if cfg.get("ycoords") else NY*SY)
     Htot = E.zlevels(cfg)[-1]
     pkg, pkgsrc = _load_pkg(name, root)
+    pkg = pkg if isinstance(pkg, dict) else {}
+    _QA.clear()
     try: _PKG_RBS[0] = bool(re.search(r"\bRBS\b|reduced[- ]beam[- ]section", json.dumps(pkg or {}), re.I))
     except Exception: _PKG_RBS[0] = False
-    mat = "ASTM A992 steel: \\(F_y=50\\) ksi, \\(F_u=65\\) ksi, \\(E=29{,}000\\) ksi."
-    parts = [f"<h1>{_esc(name)} &mdash; structural analysis &amp; design report</h1>",
-             f"<p><b>{_esc(cfg.get('arch',''))}</b> &middot; generated {datetime.date.today()}</p>",
-             _toc(), _design_basis(cfg)]
     figdir = os.path.join(root, "figs"); os.makedirs(figdir, exist_ok=True)
     global _FIGDIR; _FIGDIR = figdir; _FIGSEQ[0] = 0
+    pre = []
     try:
         import plot_model as PM
         PM.figures(name, figdir, deformed_fig=bool(cfg.get("deformed_shape_figure")))
@@ -2701,66 +4792,92 @@ def build_report(name, root=None):
         if not os.path.exists(os.path.join(figdir, f"{name}_orientation.png")):
             try: PM.orientation(name, figdir)
             except Exception as _oex:
-                parts.append(f"<p class='note'>[REQUIRED orientation figure (Fig 2) failed twice: {_oex} "
-                             "&mdash; fix the model and re-render]</p>")
+                pre.append(f"<p class='note'>[member orientation figure could not be produced: {_esc(_oex)}]</p>")
     except Exception as ex:
-        parts.append(f"<p class='note'>[model figures failed: {ex}]</p>")
+        pre.append(f"<p class='note'>[model figures could not be produced: {_esc(ex)}]</p>")
 
     # ---- shared computations (used across several chapters) ----
     Fx = None; T = eX = eY = None; Cs = V = Tu = Ta = W = None
     try: T, eX, eY, Cs, V, Tu, Ta, Fx, W = _seismic(cfg)
-    except Exception as ex: parts.append(f"<p class='note'>[seismic analysis failed: {ex}]</p>")
-    windhtml, VwX, VwY = _wind_section(cfg)
-    print("[%s] report: model + ASCE 7 loads + modal done; rendering chapters%s ..."
-          % (name, " + static-model force diagrams (~30-60 s)" if cfg.get("force_diagrams") else ""))
+    except Exception as ex: pre.append(f"<p class='note'>[seismic analysis failed: {_esc(ex)}]</p>")
+    try:
+        cases = load_cases(cfg)
+    except Exception as ex:
+        cases = []; pre.append(f"<p class='note'>[load combinations failed: {_esc(ex)}]</p>")
+    windhtml, VwX, VwY = _wind_section(cfg, cases)
+    FwX = FwY = None
+    if cfg.get("wind"):
+        try: FwX, FwY = E.wind_forces(cfg, "X"), E.wind_forces(cfg, "Y")
+        except Exception: FwX = FwY = None
+    print("[%s] report: model + ASCE 7 loads + modal done; rendering chapters ..." % name)
     reX = reY = None; runs = None
     _INV_CACHE.clear()
     try: sf = _sfrs(cfg)
     except Exception as ex:
-        sf = None; parts.append(f"<p class='note'>[SFRS inventory failed: {_esc(ex)}]</p>")
+        sf = None; pre.append(f"<p class='note'>[SFRS inventory failed: {_esc(ex)}]</p>")
+    try: SD = _seismic_by_dir(cfg)
+    except Exception: SD = None
+    _FxX = _FxY = None
     if Fx is not None:
         _FxX, _FxY = _fx_by_dir(Fx)
         try: runs = _lateral_runs(cfg, Fx, sf)
-        except Exception as ex: parts.append(f"<p class='note'>[drift / torsion runs failed: {_esc(ex)}]</p>")
+        except Exception as ex: pre.append(f"<p class='note'>[drift / torsion runs failed: {_esc(ex)}]</p>")
         if runs is not None:
             _FxX, _FxY = runs["X"]["F"], runs["Y"]["F"]
         try:
             _, _dX, _drX, reX = _run_case(cfg, "X", _FxX); _, _dY, _drY, reY = _run_case(cfg, "Y", _FxY)
-        except Exception as ex: parts.append(f"<p class='note'>[equilibrium run failed: {_esc(ex)}]</p>")
+        except Exception as ex: pre.append(f"<p class='note'>[equilibrium run failed: {_esc(ex)}]</p>")
+    ctx = _report_ctx(cfg, pkg, sf, cases)
+    _CH_CTX[0] = ctx
+    _COMBO_LABELS[0] = [str(c[0]) for c in cases] if cases else None
+    a341 = ctx["a341"]
+    _want_summary = bool(cfg.get("force_summary")); _want_casefigs = bool(cfg.get("appendix_case_figures"))
+
+    title = cfg.get("project") or cfg.get("project_name") or name
+    credit = _design_credit(pkg)
+    parts = [f"<h1>{_esc(title)} &mdash; structural analysis and design calculations</h1>",
+             f"<p class='lead'><b>{_esc(cfg.get('arch', ''))}</b> &middot; {datetime.date.today():%B %d, %Y}</p>"]
+    if credit:
+        parts.append(f"<p class='credit'>{credit}</p>")
+    parts += pre
+    parts += [_toc(ctx, appendix_b=_want_summary), _design_basis(cfg)]
 
     # ============================== Chapter 1 — Design basis & codes ==============================
     parts.append(_chapter(1))
-    parts.append(_design_basis_codes(cfg, s, root))
+    parts.append(_design_basis_codes(cfg, s, root, pkg, ctx))
     parts.append("<h3>Building description</h3>")
+    md = cfg.get("model") or {}
     parts.append(_table(["Item", "Value"], [
-        ["Archetype", _esc(cfg.get("arch", ""))],
-        ["Stories", f"{NF}"],
-        ["Plan", f"{Lx/12:.0f} ft (X) &times; {Ly/12:.0f} ft (Y)"],
-        ["Bays", f"{NX} &times; {NY} @ {SX/12:.0f} ft (X) / {SY/12:.0f} ft (Y)"],
-        ["Height", f"{Htot/12:.0f} ft (h&#8345;)"],
-        ["Column bases", cfg.get("base", "fixed")],
+        ["Description", _esc(cfg.get("arch", ""))],
+        ["Stories", "%d (%s)" % (NF, _heights_txt(cfg["heights"]))],
+        ["Plan", "%s (X) &times; %s (Y)" % (_ftin(Lx), _ftin(Ly))],
+        ["Bays", ("%d &times; %d @ %s (X) / %s (Y)" % (NX, NY, _ftin(SX), _ftin(SY))) if not (cfg.get("xcoords") or cfg.get("ycoords"))
+         else "%d &times; %d (variable spacing)" % (NX, NY)],
+        ["Structural height h<sub>n</sub>", _ftin(Htot)],
+        ["Floor system", _n(cfg.get("floor_system")) if cfg.get("floor_system") else "&mdash;"],
+        ["Column bases", _esc(md.get("bases") or cfg.get("base", "fixed"))],
+        ["Beam-to-column joints", _esc(md.get("joints") or ("pinned" if cfg.get("releases") else "rigid"))],
         ["Lateral system", ("X: %s; Y: %s" % (_sys_label(sf, "X"), _sys_label(sf, "Y"))) if sf else "&mdash;"],
     ]))
-    parts.append("<h3>Materials</h3><p>" + mat + "</p>")
+    parts.append("<h3>Materials</h3>" + _materials_table(cfg, pkg))
     parts.append("<h3>Geometry</h3>")
-    try: parts.append(_img(fig_plan(cfg), "Plan grid &mdash; the (i, j) labels used in the reaction/force tables"))
-    except Exception as ex: parts.append(f"<p class='note'>[plan figure failed: {ex}]</p>")
+    try: parts.append(_img(fig_plan(cfg), "Plan grid &mdash; the (i, j) labels used in the reaction and force tables"))
+    except Exception as ex: parts.append(f"<p class='note'>[plan figure failed: {_esc(ex)}]</p>")
     parts.append(_img(_png_file_b64(os.path.join(figdir, f"{name}_orientation.png")),
-                      "Section orientation (web/depth ticks &mdash; beam strong axis must be vertical)"))
+                      "Section orientation (web/depth ticks &mdash; beam strong axis vertical)"))
 
     # ====================== Chapter 2 — Structural system & load path =======================
     parts.append(_chapter(2))
-    parts.append(_system_loadpath(cfg, sf))
-    parts.append("<h3>Seismic force-resisting system (each principal direction)</h3>")
-    parts.append(_lfrs_table(cfg, sf))
+    if sf:
+        parts.append(_system_loadpath(cfg, sf, pkg))
+        parts.append("<h3>Seismic force-resisting system (each principal direction)</h3>")
+        parts.append(_lfrs_table(cfg, sf, pkg))
     parts.append("<h3>Lateral-load design inputs</h3>"); parts.append(_lateral_inputs_table(cfg))
     if cfg.get("deformed_shape_figure"):   # OFF the default workflow (viewer shows the same live)
         parts.append(_img(_png_file_b64(os.path.join(figdir, f"{name}_deformed_X.png")),
-                          "Deformed shape under lateral X (confirms a continuous lateral load path)"))
-    else:
-        parts.append("<p class='note'>Static deformed-shape figure omitted for faster reporting &mdash; "
-                     "set cfg['deformed_shape_figure']=True and re-render to include it; the interactive "
-                     "3D viewer (viewer_3d.html in the job download) shows the load path live.</p>")
+                          "Deformed shape under lateral X (continuous lateral load path)"))
+    elif not pub:
+        parts.append("<p class='note'>[internal] Static deformed-shape figure not rendered (deformed_shape_figure off).</p>")
     try:
         # The standalone 3D viewer (viewer_3d.html) is WRITTEN here as a side effect -- the frontend
         # "View model" button and the job download need the file even though the report no longer
@@ -2769,14 +4886,14 @@ def build_report(name, root=None):
         viewer3d.report_section(cfg, name, root)   # returns markup we deliberately discard
     except Exception as ex:
         print(f"[report] viewer_3d.html generation failed: {ex}")
-    if Fx is not None:
+    if Fx is not None and sf:
         parts.append("<h3>Horizontal force distribution to the lateral frames</h3>")
         try: parts.append(_horizontal_distribution(cfg, Fx, VwX, VwY, sf, runs))
-        except Exception as ex: parts.append(f"<p class='note'>[distribution failed: {ex}]</p>")
-        parts.append("<h3>Diaphragm classification &amp; design force (ASCE 7-22 &sect;12.10)</h3>")
-        try: parts.append(_diaphragm_section(cfg, _fx_by_dir(Fx)[0]))
-        except Exception as ex: parts.append(f"<p class='note'>[diaphragm section failed: {ex}]</p>")
-        parts.append("<h3>Plan &amp; vertical irregularity screening</h3>")
+        except Exception as ex: parts.append(f"<p class='note'>[distribution failed: {_esc(ex)}]</p>")
+        parts.append("<h3>Diaphragm classification and design force (ASCE 7-22 &sect;12.10)</h3>")
+        try: parts.append(_diaphragm_section(cfg, _fx_by_dir(Fx)[0], (FwX, FwY) if FwX else None, pkg))
+        except Exception as ex: parts.append(f"<p class='note'>[diaphragm section failed: {_esc(ex)}]</p>")
+        parts.append("<h3>Plan and vertical irregularity screening</h3>")
         if runs is not None:
             try: parts.append(_irregularity_section(cfg, runs, sf))
             except Exception as ex: parts.append(f"<p class='note'>[irregularity screen failed: {_esc(ex)}] &mdash; irregularities NOT EVALUATED</p>")
@@ -2788,37 +4905,35 @@ def build_report(name, root=None):
 
     # ================================= Chapter 3 — Loads ==================================
     parts.append(_chapter(3))
-    parts.append("<h3>Gravity loads</h3>"); parts.append(_gravity_loads_table(cfg))
-    parts.append(_gravity_loads_note())
-    parts.append("<h3>Wind load determination (ASCE 7-22 Ch. 26-31)</h3>"); parts.append(windhtml)
-    parts.append(_wind_cc_note())
-    parts.append("<h3>Seismic load determination (ASCE 7-22 Ch. 11-12)</h3>")
+    parts.append("<h3>Gravity loads</h3>"); parts.append(_gravity_loads_table(cfg, pkg))
+    parts.append(_gravity_loads_note(cfg, pkg))
+    parts.append("<h3>Wind loads (ASCE 7-22 Ch. 26&ndash;27)</h3>"); parts.append(windhtml)
+    if cfg.get("wind"):
+        parts.append(_wind_cc_note())
+    parts.append("<h3>Seismic loads (ASCE 7-22 Ch. 11&ndash;12)</h3>")
     if Fx is not None:
-        parts.append(_seismic_loads_section(cfg, T, eX, eY, Cs, V, Tu, Ta, Fx, W))
+        try: parts.append(_seismic_loads_section(cfg, T, eX, eY, Cs, V, Tu, Ta, Fx, W))
+        except Exception as ex: parts.append(f"<p class='note'>[seismic load section failed: {_esc(ex)}]</p>")
     else:
         parts.append("<p class='note'>[seismic data unavailable]</p>")
     parts.append("<h3>Governing lateral load per direction</h3>")
-    parts.append(_governing_lateral(cfg, V, VwX, VwY))
+    parts.append(_governing_lateral(cfg, V, VwX, VwY, SD))
 
     # ========================== Chapter 4 — Load combinations ============================
     parts.append(_chapter(4))
     case_detail_parts = []
     try:
-        cases = load_cases(cfg)
-        parts.append(_combo_notes(cfg))
+        parts.append(_combo_notes(cfg, cases, ctx))
         parts.append("<h3>Combinations analysed (load factors)</h3>")
         parts.append(_combo_table(cases))
-        parts.append(_combo_legend(cfg))
-        # --- THREE separate opt-in items (each requestable on its own) -------------------
-        #   cfg['force_summary']          -> the per-combination force SUMMARY table (heavy 27-combo solve)
+        parts.append(_combo_legend(cfg, cases, pkg, ctx))
+        # --- opt-in items (each requestable on its own) -------------------
+        #   cfg['force_summary']          -> the per-combination force SUMMARY table (heavy all-combo solve)
         #   cfg['appendix_case_figures']  -> the Appendix-B per-combo N/V/M FIGURES (heavy; figs in the same loop)
         #   cfg['force_diagrams']         -> the Chapter-5 governing N/V/M frame DIAGRAMS (light; rendered below)
-        _want_summary  = bool(cfg.get("force_summary"))
-        _want_casefigs = bool(cfg.get("appendix_case_figures"))
-        if Fx is not None and (_want_summary or _want_casefigs):      # this 27-combo solve feeds the table AND/OR the figs
+        if Fx is not None and (_want_summary or _want_casefigs):
             # RESUMABLE per-combo cache (design/_case_cache.pkl): each solved combo is saved as soon as
-            # it finishes, so an interrupted render (client timeout / instance recycle) resumes instead
-            # of restarting the whole 27+ solve loop. Keyed by a cfg fingerprint -> stale after redesign.
+            # it finishes, so an interrupted render resumes instead of restarting the solve loop.
             import pickle as _pk, hashlib as _hl, os as _os
             _cache_p = _os.path.join(root, "design", "_case_cache.pkl")
             _fp = _hl.md5(repr(sorted((k, str(v)) for k, v in cfg.items()
@@ -2844,10 +4959,10 @@ def build_report(name, root=None):
                 if col_only:        # Omega0 / E_cl cases: member-specific -> reported in the member schedule (Ch.6)
                     if _want_summary:
                         _kd = getattr(combo, "kind", "")
-                        _what = ("capacity-limited E<sub>cl</sub> (AISC 341-22 Ch. F; see Ch. 6)" if _kd == "ecl" else
+                        _what = ("capacity-limited E<sub>cl</sub> (see Ch. 6)" if _kd == "ecl" else
                                  "OCBF V-beam F1.4a(a) (see Ch. 6)" if _kd == "ecl_ocbf" else
                                  "&Omega;<sub>0</sub> column overstrength, axial (see Ch. 6)")
-                        srows.append([label, "&mdash;", _what, "&mdash;", ""])
+                        srows.append([_combo_label(label), "&mdash;", _what, "&mdash;", ""])
                     continue
                 try:
                     _ckey = (str(label), bool(_want_casefigs))
@@ -2858,59 +4973,55 @@ def build_report(name, root=None):
                         _cc[_ckey] = (rows, (Nv, Nk, Ns), (Mv, Mk, Ms), uri, d)
                         _cc_save()
                     if _want_summary:
-                        srows.append([label, f"{Nv:.0f}", f"{Nk} {Ns}".strip(), f"{Mv/12:.0f}", f"{Mk} {Ms}".strip()])
-                        case_detail_parts.append(f"<h4>Load case: {label}</h4><p>{_case_desc(label, col_only)}</p>")
+                        srows.append([_combo_label(label), _n(float(Nv)), _esc(f"{Nk} {Ns}".strip()), _n(float(Mv) / 12.0),
+                                      _esc(f"{Mk} {Ms}".strip())])
+                        case_detail_parts.append(f"<h4>Load combination: {_combo_label(label)}</h4><p>{_case_desc(label, col_only, a341)}</p>")
                         case_detail_parts.append(_table(
-                            ["member", "section", "N (kip)", "Mz (k-ft)", "My (k-ft)", "V (kip)", "location (i,j / level)"],
-                            rows))
+                            ["member", "section", "N (kip)", "M<sub>x</sub> (kip-ft)", "M<sub>y</sub> (kip-ft)", "V (kip)",
+                             "location (i,j / level)"], rows))
                     if uri and _want_casefigs:
                         _save_case_fig(uri, figdir, label)   # -> figs/case_<label>.png (NOT embedded)
                 except Exception as ex:
                     if _want_summary:
-                        srows.append([label, "&mdash;", f"[failed: {ex}]", "&mdash;", ""])
+                        srows.append([_esc(label), "&mdash;", f"[failed: {_esc(ex)}]", "&mdash;", ""])
             if _want_summary:
-                parts.append("<h3>Load-case force summary</h3>")
-                parts.append("<p>One row per combination: the largest axial force and the largest bending moment "
-                             "anywhere in the structure, with the member type/section that carries it (from the "
-                             "<b>static model</b>, so gravity beam moments are correct). The governing N/V/M diagrams are "
-                             "in Chapter 5 (cfg['force_diagrams']); the per-combination N/V/M figures are in Appendix B "
-                             "(cfg['appendix_case_figures']).</p>")
-                parts.append(_table(["Load case", "Max axial N (kip)", "carried by", "Max moment M (k-ft)", "carried by"], srows))
+                parts.append("<h3>Load-combination force summary</h3>")
+                parts.append("<p>One row per combination: the largest axial force and the largest bending moment anywhere "
+                             "in the structure, with the member type / section that carries it (static model with the "
+                             "distributed gravity loads). Member forces per combination are in Appendix B.</p>")
+                parts.append(_table(["Load combination", "Max axial N (kip)", "carried by", "Max moment M (kip-ft)",
+                                     "carried by"], srows))
         elif Fx is not None:
-            parts.append("<h3>Load-case force summary</h3>")
-            parts.append("<p class='note'>The per-combination force-summary table (one row per LRFD combination) is "
-                         "temporarily omitted for faster reporting &mdash; it can be populated here on request at the "
-                         "completion of the design. The governing per-member design demands are the enveloped values in "
-                         "Chapter 6 / the member schedule.</p>")
+            parts.append("<p class='cnote'>The member design forces are the envelopes over all combinations listed above "
+                         "(Chapter 6 and Appendix A).</p>")
     except Exception as ex:
-        parts.append(f"<p class='note'>[load combinations failed: {ex}]</p>")
+        parts.append(f"<p class='note'>[load combinations failed: {_esc(ex)}]</p>")
 
     # ======================= Chapter 5 — Analysis model fidelity =========================
     print("[%s] report: chapter 5 (analysis-model fidelity) ..." % name)
     parts.append(_chapter(5))
     rel = cfg.get("releases"); cb = cfg.get("custom_build")
-    jt = ("custom (defined in custom_build)" if cb else
+    jt = ("as defined in the analysis model, member by member (releases per the declared joint types)" if cb else
           "rigid / continuous except where moment releases are set" if rel else "all rigid / continuous (no releases)")
     parts.append("<h3>Modelling assumptions</h3>")
     parts.append(_table(["Assumption", "As modelled"], [
-        ["Column bases", cfg.get("base", "fixed")],
-        ["Beam-column &amp; brace joints", jt],
-        ["Floor diaphragm", "rigid (in-plane), masters at floor centroid"],
-        ["Geometric transform", "P-&Delta; (second-order) on columns"],
-        ["Leaning gravity columns", "yes" if cfg.get("lean_gravity") else "framed into the lateral system"],
-        ["Gravity for member forces", "static model &mdash; true two-way (45&deg;) tributary line loads on sub-divided beams"],
+        ["Column bases", _esc(md.get("bases") or cfg.get("base", "fixed"))],
+        ["Beam-column and brace joints", jt],
+        ["Floor diaphragm", "rigid in-plane diaphragm; story masses and forces at the centre of mass of each level"],
+        ["Geometric transformation", "P-&Delta; (second order) on the columns"],
+        ["Leaning gravity columns", "yes" if cfg.get("lean_gravity") else "framed into the floor system (pinned beams where released)"],
+        ["Gravity loads for member forces", "static model with distributed loads on sub-divided beams: " + _floor_mode_txt(cfg, pkg)],
     ]))
     try:
-        _md = (cfg.get("model") or {})
-        _bs = str(_md.get("bases") or cfg.get("base") or "pinned")
-        _jt = str(_md.get("joints") or ("pinned" if cfg.get("releases") else "rigid"))
-        _cap = f"Modelled joint &amp; base fixity &mdash; column bases: {_bs}; girder joints: {_jt}"
+        _bs = str(md.get("bases") or cfg.get("base") or "pinned")
+        _jt = str(md.get("joints") or ("pinned" if cfg.get("releases") else "rigid"))
+        _cap = f"Modelled joint and base fixity &mdash; column bases: {_esc(_bs)}; girder joints: {_esc(_jt)}"
         try:
             if E.is_braced(cfg): _cap += "; braces pin-ended (axial-only truss members)"
         except Exception: pass
         if cfg.get("lean_gravity"): _cap += "; leaning gravity columns"
         parts.append(_img(_joint_figure(cfg), _cap + ".", full=True))
-    except Exception as _jex: parts.append(f"<p class='note'>[joint figure failed: {_jex}]</p>")
+    except Exception as _jex: parts.append(f"<p class='note'>[joint figure failed: {_esc(_jex)}]</p>")
     _jmodel = None
     if cfg.get("custom_build"):
         try:
@@ -2921,85 +5032,84 @@ def build_report(name, root=None):
         try:
             _ju = _joint_dist_fig(cfg, _d, model=_jmodel)
             if _ju:
-                parts.append(_img(_ju, f"Joint-fixity distribution &mdash; {_d}-direction perimeter vs internal frame "
+                parts.append(_img(_ju, f"Joint-fixity distribution &mdash; {_d}-direction perimeter and internal frame "
                                        "(filled square = rigid/continuous, open circle = pinned/shear release, "
-                                       "triangle = column base; pinned = strong-axis vertical moment released)"))
+                                       "triangle = column base; pinned = strong-axis moment released)"))
         except Exception as ex:
-            parts.append(f"<p class='note'>[joint-distribution figure {_d} failed: {ex}]</p>")
+            parts.append(f"<p class='note'>[joint-distribution figure {_d} failed: {_esc(ex)}]</p>")
     parts.append(_stability_basis_note(cfg))
+    parts.append(_analysis_record_html(cfg, pkg))
     if Fx is not None and reX is not None:
-        Rx = sum(r[2][0] for r in reX); Rz = sum(r[2][2] for r in reX)
-        parts.append("<h3>Equilibrium check (seismic X combination)</h3>")
-        parts.append(f"<p>|&Sigma;R<sub>x</sub>| = {abs(Rx):.0f} kip vs applied base shear {sum(_FxX.values()):.0f} kip "
-                     f"(equal and opposite); &Sigma;R<sub>z</sub> = {abs(Rz):.0f} kip factored gravity delivered to the "
-                     "ground. Reactions balance the applied loads in all three axes (load path verified).</p>")
+        parts.append("<h3>Equilibrium check (ELF load cases)</h3>")
+        for d, re_, F_ in (("X", reX, _FxX), ("Y", reY, _FxY)):
+            if re_ is None or F_ is None:
+                continue
+            di = 0 if d == "X" else 1
+            Rh = sum(r[2][di] for r in re_); Rz = sum(r[2][2] for r in re_)
+            parts.append(f"<p>{d}: |&Sigma;R<sub>{d.lower()}</sub>| = {_n(abs(Rh))} kip against the applied base shear "
+                         f"{_n(sum(F_.values()))} kip (equal and opposite); &Sigma;R<sub>z</sub> = {_n(abs(Rz))} kip of factored "
+                         "gravity delivered to the supports.</p>")
         if eX is not None and eY is not None:
             parts.append(_modal_mass_check(eX, eY))
-        _want_modefigs = bool(cfg.get("mode_figures"))     # 3D mode-shape figures: OFF the default workflow
-        for m in (1, 2, 3):
-            if m <= NF*3:
-                if _want_modefigs:
+        if cfg.get("mode_figures"):
+            for m in (1, 2, 3):
+                if m <= NF*3:
                     try: parts.append(_img(fig_mode_3d(cfg, m, 3), f"Mode {m} (T = {T[m-1]:.2f} s)", full=True))
-                    except Exception as ex: parts.append(f"<p class='note'>[mode {m} failed: {ex}]</p>")
-                else:
-                    parts.append(f"<p class='note'>Mode {m} (T = {T[m-1]:.2f} s) shape figure temporarily omitted for faster "
-                                 "reporting &mdash; can be populated here on request at the completion of the design.</p>")
-        # animated mode-shape GIFs removed from the report: the interactive 3D viewer
-        # ("View model" button, Chapter 2) animates all six modes on demand.
-        else:
-            pass   # animated mode-shape GIFs are gone for good -- the interactive 3D viewer animates all modes live
+                    except Exception as ex: parts.append(f"<p class='note'>[mode {m} failed: {_esc(ex)}]</p>")
+        elif not pub:
+            parts.append("<p class='note'>[internal] Mode-shape figures not rendered (mode_figures off).</p>")
     try:
-        if not bool(cfg.get("force_diagrams")):
-            parts.append("<p class='note'>Governing N/V/M frame diagrams (perimeter &amp; internal lines, from the "
-                         "static model) temporarily omitted for faster reporting &mdash; can be populated here on "
-                         "request at the completion of the design.</p>")
-            gd = {}
-        else:
+        gd = {}
+        if bool(cfg.get("force_diagrams")):
             import frame_diagram as FD
-            gd = FD.governing_diagrams(cfg, load_cases(cfg), nseg=6, lines=("perimeter", "internal"))   # nseg 2->6 (opt-in figures)
+            gd = FD.governing_diagrams(cfg, load_cases(cfg), nseg=6, lines=("perimeter", "internal"))
+        elif not pub:
+            parts.append("<p class='note'>[internal] Governing N/V/M diagrams not rendered (force_diagrams off).</p>")
         if gd.get("perimeter"):
             parts.append("<h3>Governing internal-force diagrams &mdash; perimeter frames (static model)</h3>")
-            parts.append("<p>N / V / M for each perimeter frame under its governing LRFD combination, from the "
-                         "static model (true two-way tributary loads on sub-divided beams). Peak values annotated "
-                         "per member; columns are single elements (linear between ends).</p>")
+            parts.append("<p>N / V / M for each perimeter frame under its governing LRFD combination, from the static "
+                         "model with the distributed gravity loads. Peak values annotated per member; columns are single "
+                         "elements (linear between ends).</p>")
             for _d in ("X", "Y"):
                 if _d in gd["perimeter"]:
                     _uri, _label, _pkM = gd["perimeter"][_d]
-                    parts.append(_img(_uri, f"{_d}-direction perimeter frame &mdash; governing combo {_label} "
-                                            f"(peak beam moment {_pkM:.0f} k-ft)"))
+                    parts.append(_img(_uri, f"{_d}-direction perimeter frame &mdash; governing combination {_esc(_label)} "
+                                            f"(peak beam moment {_n(float(_pkM))} kip-ft)"))
         if gd.get("internal"):
             parts.append("<h3>Governing internal-force diagrams &mdash; internal frames (static model)</h3>")
-            parts.append("<p>The same diagrams for an interior frame line, which generally carries more gravity "
-                         "tributary (and less lateral) than the perimeter &mdash; the gravity-governed companion check.</p>")
             for _d in ("X", "Y"):
                 if _d in gd["internal"]:
                     _uri, _label, _pkM = gd["internal"][_d]
-                    parts.append(_img(_uri, f"{_d}-direction internal frame &mdash; governing combo {_label} "
-                                            f"(peak beam moment {_pkM:.0f} k-ft)"))
+                    parts.append(_img(_uri, f"{_d}-direction internal frame &mdash; governing combination {_esc(_label)} "
+                                            f"(peak beam moment {_n(float(_pkM))} kip-ft)"))
     except Exception as ex:
-        parts.append(f"<p class='note'>[static-model diagrams unavailable: {ex}]</p>")
+        parts.append(f"<p class='note'>[static-model diagrams unavailable: {_esc(ex)}]</p>")
 
     # ===================== Chapter 6 — Member strength design (AISC 360) ==================
     parts.append(_chapter(6))
+    sysn = ", ".join(dict.fromkeys(_sys_label(sf, d) for d in ("X", "Y"))) if sf else "SFRS"
+    if pkg.get("members"):
+        parts.append("<p>Member design summary by type: the analysis demand envelope, the governing combination, the "
+                     "governing limit state and D/C. The full calculation of each member (section properties, demand, "
+                     "available strengths, every limit-state check with its reference) is in Appendix A.</p>")
     parts.append(_member_section(cfg, name, pkg, {"roof"}, "Roof members",
-        "Roof beams/girders for roof dead + roof live (and snow); governing flexure/shear/deflection limit state."))
+        "Roof beams and girders for roof dead load, roof live load (and snow); flexure, shear and deflection."))
     parts.append(_member_section(cfg, name, pkg, {"floor"}, "Floor members",
-        "Typical floor beams/girders for floor dead + live load."))
+        "Typical floor beams and girders for floor dead and live load (incl. collectors / struts where recorded)."))
     parts.append(_member_section(cfg, name, pkg, {"gravity_col"}, "Gravity columns",
-        "Interior gravity columns for accumulated tributary gravity (AISC 360 &sect;E3 compression)."))
+        "Interior and perimeter gravity columns for the accumulated gravity load (AISC 360-22 Ch. E and H)."))
     parts.append(_member_section(cfg, name, pkg, {"lateral_col"}, "Lateral-system columns",
-        "Columns of the seismic force-resisting system (%s) for combined gravity + lateral (AISC 360 &sect;H1; "
-        "AISC 341 required strengths)." % (", ".join(FAM_NAME.get(f, f) for f in sf["families"]) if sf else "SFRS")))
+        "Columns of the seismic force-resisting system (%s) for combined gravity and lateral load (AISC 360-22 &sect;H1%s)."
+        % (sysn, "; AISC 341-22 required strengths" if a341 else "")))
     if (sf and sf["has_br"]) or cfg.get("braces"):
-        _bt = ", ".join(FAM_NAME.get(f, f) for f in (sf["families"] if sf else []) if f in BR_FAMS or f == "BF?") or "braces"
-        parts.append(_member_section(cfg, name, pkg, {"brace"}, "Braces / lateral web members",
-            f"Lateral web members of the {_bt} for the design story shear (AISC 360 &sect;E3 compression, "
-            "&sect;D2 tension; AISC 341 capacity design per system)."))
+        parts.append(_member_section(cfg, name, pkg, {"brace"}, "Braces",
+            "Braces of the lateral frames for the design story shear (AISC 360-22 &sect;E3 compression, &sect;D2 tension%s)."
+            % ("; AISC 341-22 capacity design per system" if a341 else "")))
+    if any(_role_of(m.get("id", ""), m.get("inputs") or {}) == "other" for m in (pkg.get("members") or []) if isinstance(m, dict)):
+        parts.append(_member_section(cfg, name, pkg, {"other"}, "Other members", "Members of other types."))
     parts.append(_ch6_notes(cfg))
     if pkg:
-        parts.append("<h3>Member design summary (calc_package.json)</h3>")
-        parts.append(f"<p>Source: <code>{os.path.relpath(pkgsrc, HERE)}</code>. Capacities/D-C derived by the agent "
-                     "from the AISC 360/341 RAG; full referenced calc in Appendix A.</p>")
+        parts.append("<h3>Governing member</h3>")
         parts.append(_member_dc_summary(pkg))
         _comp = _composite_section(pkg)
         if _comp:
@@ -3007,23 +5117,16 @@ def build_report(name, root=None):
         _xtra = _extra_blocks_section(pkg)
         if _xtra:
             parts.append(_xtra)
-        _msfig = ""
         if cfg.get("section_color_figure"):    # OFF the default workflow (viewer's 'Color by section' shows it live)
             try:
                 import viz3d as _VZ
                 _msu = _VZ.members_by_size(cfg)
                 if _msu:
-                    _msfig = _img(_msu, "Model members coloured by section size &mdash; each distinct member size "
-                                        "(e.g. each W-column / beam / HSS brace) drawn in its own colour (legend)")
+                    parts.append(_img(_msu, "Model members coloured by section size"))
             except Exception as _mex:
-                _msfig = f"<p class='note'>[member-size figure failed: {_mex}]</p>"
-        else:
-            _msfig = ("<p class='note'>Member-size colour figure omitted for faster reporting &mdash; set "
-                      "cfg['section_color_figure']=True and re-render to include it; the interactive 3D viewer's "
-                      "'Color by section' view shows the same.</p>")
-        parts.append(_narrative_html(pkg, members_fig_html=_msfig))
+                parts.append(f"<p class='note'>[member-size figure failed: {_esc(_mex)}]</p>")
     else:
-        parts.append("<p class='note'>[no calc_package.json found &mdash; run the design first]</p>")
+        parts.append("<p class='note'>No calc package is available for this building.</p>")
 
     # ====================== Chapter 7 — Stability & second-order =========================
     parts.append(_chapter(7))
@@ -3031,13 +5134,23 @@ def build_report(name, root=None):
         try:
             parts.append(_stability_section(cfg, runs))
             parts.append(_img(fig_drift_profile(cfg, runs), "Interstory drift profile (both directions)"))
-            ss_uri, Vstory, OTM = fig_story_shear_otm(cfg, _fx_by_dir(Fx)[0])
-            parts.append(f"<p>Base shear &Sigma;F = {sum(_fx_by_dir(Fx)[0].values()):.0f} kip (X); base overturning &asymp; {OTM:.0f} k-ft.</p>")
-            parts.append(_img(ss_uri, "Story-shear and overturning-moment profiles"))
+            parts.append("<h3>Base shear and overturning per direction</h3>")
+            parts.append(_base_shear_otm_table(cfg, SD, {"X": FwX, "Y": FwY} if FwX else None))
+            series = {}
+            if SD:
+                series["seismic X"] = SD["X"]["Fx"]; series["seismic Y"] = SD["Y"]["Fx"]
+            if FwX:
+                series["wind X"] = FwX; series["wind Y"] = FwY
+            if series:
+                parts.append(_img(fig_story_shear_otm_dirs(cfg, series), "Story shear and overturning moment, seismic "
+                                  "(ELF) and wind (Case 1), both directions"))
         except Exception as ex:
             parts.append(f"<p class='note'>[stability section failed: {_esc(ex)}]</p>")
     else:
         parts.append("<p class='note'>[needs seismic drift data]</p>")
+    _ddm = _ddm_summary(pkg)
+    if _ddm:
+        parts.append(_ddm)
 
     # ============================ Chapter 8 — Serviceability =============================
     parts.append(_chapter(8))
@@ -3046,85 +5159,75 @@ def build_report(name, root=None):
     parts.append(_wind_drift_section(cfg))
     parts.append(_floor_serviceability(pkg))
     parts.append(_deflection_section(cfg, pkg))
-    parts.append("<p class='cnote'><b>Out of scope (this model):</b> floor vibration (AISC Design Guide 11) and "
-                 "building separation/pounding are detail-level serviceability checks confirmed against the framing drawings.</p>")
+    parts.append(_floor_vibration_section(cfg, pkg))
+    if not re.search(r"seismic joint|pounding|separation", json.dumps(pkg)[:300000], re.I):
+        parts.append("<p class='cnote'><b>Building separation and pounding</b> (ASCE 7-22 &sect;12.12.2): not evaluated in "
+                     "this package; confirmed against the site and architectural drawings.</p>")
 
-    # ===================== Chapter 9 — Seismic / wind detailing (AISC 341) ================
+    # ===================== Chapter 9 — Seismic / wind detailing ================
     parts.append(_chapter(9))
-    parts.append(_aisc341_detailing(cfg, pkg, sf))
+    parts.append(_aisc341_detailing(cfg, pkg, sf, ctx))
 
     # ========================= Chapter 10 — Connections ==================================
     parts.append(_chapter(10))
-    _ctbl = _connection_demands(cfg, pkg, reX, sf)
+    _ctbl = _connection_demands(cfg, pkg, None, sf, ctx) if sf else None
     if _ctbl:
-        parts.append("<p>Connection design demands transmitted to the fabricator / connection engineer (member end "
-                     "forces from the analysis; each connection is then DESIGNED to these demands below):</p>")
+        parts.append("<h3>Connection design demands</h3>")
+        parts.append("<p>Member-end forces from the analysis envelope (all LRFD combinations) for each member group, and "
+                     "the column-base reactions (Chapter 11):</p>")
         parts.append(_ctbl)
-    parts.append("<p class='cnote'><b>Designed in this package:</b> each connection is sized to the demands above per "
-                 "AISC 360 Ch. J (bolts J3, welds J2, block shear J4, HSS Ch. K, base plates/anchors J8/J9 + ACI 318 "
-                 "Ch.17) and AISC 341 for seismic systems &mdash; limit state, capacity and D/C &le; 1.0 derived by the "
-                 "agent from the RAG (see the Connections table in Chapter 6 / Appendix A). Only shop-level detailing "
-                 "is confirmed on the fabricator's connection submittal.</p>")
+    _csum = _connection_summary(pkg)
+    if _csum:
+        parts.append(_csum)
+        parts.append("<p class='cnote'>Connections are designed per AISC 360-22 Ch. J (bolts J3, welds J2, block shear J4.3, "
+                     "connecting elements J4, base plates and anchorage J8 / J9 with ACI 318-19 Ch. 17) and Ch. K for HSS"
+                     + ("; seismic connections per AISC 341-22" if a341 else "") + "; single-plate shear connections per the "
+                     "AISC Manual Part 10. Only shop-level detailing is left to the fabricator's connection submittal.</p>")
+    else:
+        parts.append("<p class='note'>No connection design is recorded in the calc package; the demands above are for the "
+                     "connection designer.</p>")
 
     # ===================== Chapter 11 — Foundations interface ============================
     parts.append(_chapter(11))
-    if reX is not None:
-        Rz = sum(r[2][2] for r in reX); Rx = sum(r[2][0] for r in reX)
-        pmax = max((r[2][2] for r in reX), default=0.0); pmin = min((r[2][2] for r in reX), default=0.0)
-        parts.append("<p>Column base reactions delivered to the foundation design (seismic X combination):</p>")
-        parts.append(_table(["Quantity", "Value"], [
-            ["&Sigma; vertical to ground &Sigma;R<sub>z</sub>", f"{Rz:.0f} kip"],
-            ["&Sigma; horizontal base shear &Sigma;R<sub>x</sub>", f"{Rx:.0f} kip"],
-            ["Max single-column vertical reaction", f"{pmax:.0f} kip (compression)"],
-            ["Min single-column vertical reaction", f"{pmin:.0f} kip " + ("&mdash; <b>net uplift</b>" if pmin < 0 else "(no uplift)")]]))
-    parts.append("<p class='cnote'>Net column uplift is governed by the 0.9D&minus;E combinations; the value above "
-                 "is from the seismic-X case shown. <b>Out of scope:</b> foundation/geotechnical design (bearing, "
-                 "sliding, uplift anchorage, footing sizing) is delegated; per-column base reactions are available "
-                 "from the model on request. Overall overturning/sliding stability is confirmed against the "
-                 "geotechnical capacities.</p>")
+    parts.append(_base_reactions_section(cfg, pkg, ctx))
 
     # ============== Chapter 12 — Drawings, specifications & documentation ================
-    parts.append(_chapter(12, status="out of scope for the analysis package &mdash; verified on the contract drawings"))
-    parts.append("<p class='cnote'>Drawing/specification consistency, general notes, special-inspection schedule, "
-                 "member schedules, framing plans, brace/MF elevations, connection details and the deferred-submittal "
-                 "list are produced and checked on the contract documents, not in this analysis report.</p>")
+    parts.append(_chapter(12, status="verified on the contract documents"))
+    parts.append("<p class='cnote'>Drawing and specification consistency, general notes, the special-inspection schedule, "
+                 "member schedules, framing plans, brace / moment-frame elevations, connection details and the "
+                 "deferred-submittal list are produced and checked on the contract documents, not in this report.</p>")
 
     # ===================== Chapter 13 — QA / professional acceptance =====================
     parts.append(_chapter(13))
-    parts.append(_qa_scorecard(cfg, Fx, reX, eX, eY, runs))
-    parts.append(_grounding_check(cfg, name, pkg))
+    parts.append(_qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg, root, reY))
     parts.append(_consistency_section(name, root, pkg))
-    parts.append("<p>Automated QA evidence in this report: per-combination equilibrium balances to ~0 in all three "
-                 "axes (Chapter 5); every member demand is enveloped over the full ASCE 7-22 combination set "
-                 "(Chapter 4 / Appendix B); each capacity is traceable to a cited AISC clause (Appendix A); and the "
-                 "tool-call activity log is in Appendix C.</p>")
-    parts.append("<p class='cnote'><b>Out of scope (engineer judgement):</b> independent third-party check, software "
-                 "validation sign-off, reconciliation of model assumptions against final detailing, and the EOR seal "
-                 "are professional-responsibility steps completed outside the automated package.</p>")
+    parts.append(_gate_waivers_section(pkg))
+    annex = os.path.join(root, "qa_annex.html")
+    try:
+        _qa_annex(name, cfg, pkg, annex)
+        parts.append("<p class='cnote'>Design-process records (reference-grounding verification and the activity log of "
+                     "the design) are in the <a href='qa_annex.html'>QA annex</a>.</p>")
+    except Exception as ex:
+        print(f"[report] QA annex not written: {ex}")
+    parts.append("<p class='cnote'><b>Professional responsibility:</b> the independent check, software validation, "
+                 "reconciliation of the model assumptions with the final details, and the engineer-of-record seal are "
+                 "completed outside this calculation package.</p>")
 
     # ============================== Appendices ==========================================
-    parts.append("<h2>Appendix A &mdash; Referenced AISC 360/341 member calculations</h2>")
+    parts.append("<h2>Appendix A &mdash; AISC 360-22 member and connection calculations</h2>")
     if pkg:
-        try: parts.append(appendix(cfg, name, pkg))
-        except Exception as ex: parts.append(f"<p class='note'>[Appendix A failed: {ex}]</p>")
+        try: parts.append(appendix(cfg, name, pkg, a341))
+        except Exception as ex: parts.append(f"<p class='note'>[Appendix A failed: {_esc(ex)}]</p>")
     else:
-        parts.append("<p class='note'>[no calc_package.json found]</p>")
-    parts.append("<h2>Appendix B &mdash; Member forces by load case</h2>")
+        parts.append("<p class='note'>No calc package is available for this building.</p>")
     if case_detail_parts:
-        parts.append("<p>Full per-combination detail (summarised in Chapter 4): the worst member of each type "
-                     "with its location, from the static model (true distributed gravity). The per-combination "
-                     "N / V / M diagrams are written to the <code>figs/</code> folder (<code>case_&lt;label&gt;.png</code>) for "
-                     "review &mdash; not embedded here, to keep the report compact. The headline governing diagrams "
-                     "(perimeter + internal) are in Chapter 5.</p>")
+        parts.append("<h2>Appendix B &mdash; Member forces by load combination</h2>")
+        parts.append("<p>For each combination, the worst member of each type with its location, from the static model with "
+                     "the distributed gravity loads (summarised in Chapter 4).</p>")
         parts.extend(case_detail_parts)
-    else:
-        parts.append("<p class='note'>Per-load-case member force tables temporarily omitted for faster "
-                     "reporting &mdash; can be populated here on request at the completion of the design "
-                     "(set cfg['force_summary']=True and re-render report.build_report).</p>")
-    parts.append(_activity_section(name))
 
-    html = (f"<!doctype html><html><head><meta charset='utf-8'><title>{name} report</title>"
-            f"<style>{CSS}{CHK_CSS}</style>{MATHJAX}</head><body>" + "".join(parts) + "</body></html>")
+    html = (f"<!doctype html><html><head><meta charset='utf-8'><title>{_esc(title)} calculations</title>"
+            f"<style>{CSS}{CHK_CSS}</style>{MATHJAX}</head><body>" + "".join(p_ for p_ in parts if p_) + "</body></html>")
     _fc = [0]
     def _fignum(_m):
         _fc[0] += 1; return f"<b>Figure {_fc[0]}.</b>"
@@ -3135,48 +5238,6 @@ def build_report(name, root=None):
     print(f"[{name}] wrote {path}")
     return path
 
-def _narrative_html(pkg, members_fig_html=""):
-    out = []
-    ar = pkg.get("analysis_results")
-    if isinstance(ar, dict) and isinstance(ar.get("base_shear"), dict):
-        out.append("<p><b>Lateral:</b> " + _fmt(ar["base_shear"]) + "</p>")
-    if isinstance(pkg.get("members"), list):
-        def _dmd(inp):
-            return _fmt({k: inp.get(k) for k in ("P_comp_kip","P_tens_kip","Mz_kipin","My_kipin","V_kip") if inp.get(k) is not None})
-        rows = [[_esc(m.get("id", "")), _esc((m.get("inputs", {}) or {}).get("section", "")),
-                 _esc(_dmd(m.get("inputs", {}) or {})), _esc((m.get("inputs", {}) or {}).get("governing_combo", "")),
-                 (_esc(m.get("limit_state")) if m.get("limit_state") else "- (agent/RAG)"),
-                 (_esc(m.get("DC")) if m.get("DC") is not None else "- (agent/RAG)")] for m in pkg["members"]]
-        out.append("<h3>Members (demands; capacities derived by the agent from the RAG)</h3>"
-                   + members_fig_html
-                   + _table(["member", "section", "demand", "gov. combo", "limit state", "D/C"], rows))
-    cd = pkg.get("connections") or pkg.get("connection_demands")
-    if isinstance(cd, list) and cd:
-        def _conn_govern(c):
-            # a connection has several limit states; the agent nests them in 'checks' [{limit_state, DC}, ...].
-            # Surface the governing (max-D/C) one; fall back to any top-level limit_state/DC.
-            ls, dc = c.get("limit_state"), c.get("DC")
-            chk = c.get("checks")
-            if (ls is None or dc is None) and isinstance(chk, list) and chk:
-                best = max((k for k in chk if isinstance(k, dict) and k.get("DC") is not None),
-                           key=lambda k: k.get("DC") or 0, default=None)
-                if best:
-                    if dc is None: dc = best.get("DC")
-                    if ls is None: ls = best.get("limit_state")
-            return ls, dc
-        rows = []
-        for c in cd:
-            ls, dc = _conn_govern(c)
-            nchk = len(c.get("checks")) if isinstance(c.get("checks"), list) else 0
-            ls_txt = (str(ls) + (f"  (+{nchk - 1} more)" if nchk > 1 else "")) if ls else "- (agent/RAG)"
-            dc_txt = (f"{dc:.2f}" if isinstance(dc, (int, float)) else (str(dc) if dc else "- (agent/RAG)"))
-            rows.append([_esc(c.get("id", "")), _esc(c.get("type", "")), _esc(_fmt(c.get("demand", {}))), _esc(ls_txt), _esc(dc_txt)])
-        out.append("<h3>Connections (demands; capacities derived by the agent from the RAG)</h3>"
-                   + _table(["connection", "type", "demand", "governing limit state", "D/C"], rows))
-    elif isinstance(cd, dict):
-        rows = [[_esc(k), _esc(v.get("type", "")), _esc(_fmt(v.get("demands", {}))), _esc(v.get("notes", ""))] for k, v in cd.items()]
-        out.append("<h3>Connections</h3>" + _table(["connection", "type", "demand", "design basis"], rows))
-    return "".join(out) if out else "<pre>" + json.dumps(pkg, indent=1)[:4000] + "</pre>"
 
 if __name__ == "__main__":
     for nm in (sys.argv[1:] or ["B02"]):

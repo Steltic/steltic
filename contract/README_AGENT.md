@@ -120,7 +120,9 @@ primitives (`modal`, `elf`, `static_lateral`, `rs_baseshear`) directly.
   `n1`/`beta`/`Gf`, `parapet_ft`, `roofs={k:{eave_ft,ridge_ft,ridge}}`, `ground_band`, and the hand-force override
   `story_forces={'X':{k:kip},'Y':{k:kip}}` -- see `engine3d.wind_detail`); `snow` (psf);
   `extra_mass_floors={level:psf}` (seismic weight AND gravity dead); `seismic_mass_only={level:psf}` /
-  `seismic_weight_kip={level:kip}` (seismic weight only); `openings` / `omitted_columns` / `floor_bays`
+  `seismic_weight_kip={level:kip}` (seismic weight only; ≥ 10 psf partition weight per §12.7.2 item 2);
+  `live_load_reduction={"unreduced_psf": 15}` (§4.7, partition allowance unreduced); `wind_service={"V": mph,
+  "MRI": 10}` + `wind_drift_limit` (service wind drift, ASCE 7-22 Fig. CC.2-2, Eq. CC.2-3); `openings` / `omitted_columns` / `floor_bays`
   (floor plate per level, see `engine3d.floor_bays`); `skew` (parallelogram), `xcoords`/`ycoords`
   (non-uniform grid); `torsion_check`, `dual_check`, `softstorey_check`,
   `drift_limit`; `D_floor`,`D_roof`,`clad`,`L_floor`; `drift_relief_16_1_2` (ONLY when the Nonlinear
@@ -279,8 +281,14 @@ P(kip) | Mx(kip-ft) | My | V | φPn | φMnx | φMny | φVn | interaction D/C | s
 List every connection: beam-to-column (shear &/or moment), brace-to-gusset/column,
 column splice, **column base plate/anchorage**, collector/diaphragm chord.
 - **Demand** = forces of the connected member(s) from the governing combo. For
-  **seismic** systems, use **capacity-design** demands per A341 (e.g., brace expected
-  strength RyFyAg; amplified collector forces with Ω₀) — query `engineering_standards_A341`.
+  **seismic** systems with R > 3, use **capacity-design** demands per A341 (e.g., brace expected
+  strength RyFyAg) — query `engineering_standards_A341`. For **R ≤ 3** systems AISC 341 does not apply:
+  brace (and all other) connections take the analysis forces. Collector connections carry the drag
+  axial force (Ω₀ where ASCE 7-22 §12.10.2.1 requires it) together with the shear. Apply Ω₀ only where
+  ASCE 7-22 requires it (collectors §12.10.2.1, §12.3.3.4 supports, AISC 341 D1.4a columns).
+- **Single-plate shear connections** per AISC Manual Part 10: conventional configuration with the
+  bolt-group eccentricity of Table 10-9 (e = a/2 or a) and tp (or tw) ≤ db/2 + 1/16 in.; extended
+  configuration with e = a and the plate / supporting-member checks. See AGENT_START, CONNECTIONS.
 - **Capacity** per A360 **Chapter J** (bolts J3 + Table J3.2, welds J2 + Table J2.5,
   block shear J4.3, bearing/tearout J3.11, base plates J8 + anchor rods J9) and **A358** for the
   prequalified SMF/IMF moment connection (AISC 341-22 E3.6c / E2.6c).

@@ -220,6 +220,30 @@ On the FIRST OpenSees error (build, analysis, or `eigen`), STOP retrying blindly
   unconservative R/Cd/Om0/Ct/x) cannot be waived. The 12.2.5.4 height increase is shown with numbers in
   `capacity_design['height_limit'] = {'TIR_max':..,'max_plane_share_X':..,'max_plane_share_Y':..}`; a
   dual system below a 25 % MF share is cleared by `capacity_design['dual_25pct']` with the MF-only D/Cs.
+- **Live load reduction (ASCE 7-22 §4.7):** `cfg['live_load_reduction'] = {"unreduced_psf": 15}` reduces the
+  floor live load member by member (Eq. 4.7-1, K_LL per Table 4.7-1: `KLL_col` default 4, `KLL_beam` default 2),
+  keeping the 15 psf partition allowance of §4.3.2 unreduced; roofs, L_o > 100 psf, garages and assembly
+  are never reduced. Omit the key to carry the unreduced L (conservative; the report says so).
+- **Partition weight in W (§12.7.2 item 2):** where a partition allowance is carried, set
+  `cfg['seismic_mass_only'] = {level: 10.0}` (psf of floor area, the actual partition weight but not less than
+  10 psf) -- seismic weight only, never gravity. Lumped equipment: `cfg['seismic_weight_kip'] = {level: kip}`.
+  Snow enters W only where p_f > 45 psf (15 %, item 4).
+- **Service wind drift (Appendix CC):** `cfg['wind_service'] = {"V": 76, "MRI": 10, "basis": "ASCE 7-22 Fig. CC.2-2"}`
+  makes Chapter 8 check the wind drift at the serviceability wind W_a (D + 0.5L + W_a, Eq. CC.2-3; the 10-year
+  map is Fig. CC.2-2) against `cfg['wind_drift_limit']` (default 1/400, h/600-h/400 per CC.2.2); the
+  strength-level wind drifts are then shown for information only. Without it the report checks the design
+  (strength-level) MWFRS wind and says that this is conservative for a serviceability check.
+- **Floor vibration (AISC DG11):** for office (and other occupied) floors record
+  `calc_package['floor_vibration'] = {"method": "AISC DG11 2nd Ed. walking excitation", "fn_hz": .., "beta": ..,
+  "W_kip": .., "ap_over_g_pct": .., "limit_pct": 0.5, "governing_bay": "..", "ok": true}` (offices: a_p/g <= 0.5 %g).
+  Chapter 8 renders it; the consistency check flags an office floor with no DG11 record.
+- **Design credit:** record `calc_package['design_agent'] = {"model": "<your model name>", "provider": "<provider>",
+  "date": "YYYY-MM-DD"}`; the report prints "Design prepared with Steltic; design agent: <model> (<provider>),
+  <date>" under the title and nothing when the record is absent.
+- **Published report vs QA annex:** `report.html` is the publication document (no tool, file or RAG wording);
+  the grounding verification and the activity log are written to `qa_annex.html`, linked from Chapter 13
+  (`cfg['report_mode'] = 'internal'` keeps them inline). Write calc-package text as you would for a reviewer:
+  clauses, numbers and units -- never "from memory", "corpus", file paths or Python literals.
 - **Tall / performance-based (R18):** ASCE 7-22 §12.6 permits ELF at any height, but above ~240 ft run MRSA as well (higher modes govern; report both). For a code-alternative PBSD a Chapter 16 NONLINEAR response-history verification (MCE, >=11 scaled motions, acceptance criteria) is required. If the framework runs only linear analysis, deliver the MRSA design and explicitly SCOPE the Ch. 16 verification -- never claim MCE performance is verified from a linear run.
 
 
@@ -341,9 +365,10 @@ fills each):
     **YOU** design the base plate / anchorage slots (AISC 360 J8/J9, ACI 318 Ch. 17) or waive them with a
     justification that cites the clause (e.g. anchorage by the foundation engineer); foundation design delegated.
 12. **Drawings, specifications & documentation** — confirmed on the contract documents (out of scope here).
-13. **QA / professional acceptance** — *framework*: the equilibrium / modal / drift / θ scorecard **and
-    the grounding verification**, which checks your activity log for the RAG queries your systems
-    require and flags anything MISSING.
+13. **QA / professional acceptance** — *framework*: the equilibrium / modal / drift / θ scorecard, the
+    numerical self-consistency result (what it verified, item by item) **and the grounding
+    verification**, which checks your activity log for the RAG queries your systems require and flags
+    anything MISSING (published in the QA annex `qa_annex.html`, linked from Chapter 13).
 
 Determine whether wind or seismic governs each direction (Chapter 3) and carry the governing case
 through. At the end, call **`activity_summary`** and re-run **`report.build_report`** so the report
@@ -544,6 +569,31 @@ each unique connection **type**, you design the joint:
   to the capacity-design force and note that qualification testing is confirmed separately.
 - Choose real components (bolt size/grade & count, weld size/length, plate thickness) and show
   each limit-state D/C. Aim for efficient, constructible details.
+- **Single-plate (shear tab) connections -- AISC Manual Part 10.** State the configuration. *Conventional*
+  (one vertical bolt row, n = 2 to 12, a <= 3-1/2 in., standard or short-slotted holes): the bolt group is
+  designed for the eccentricity of Manual Table 10-9 (e = a/2 or e = a, by n and hole type) -- never as a
+  concentric group -- and the ductility requirement tp (or tw) <= db/2 + 1/16 in. is met by the plate or the
+  beam web. *Extended* (a > 3-1/2 in. or more than one row): e = a for the bolt group plus the Part 10
+  extended-configuration checks (plate flexure and buckling, the stabilised/unstabilised supporting member).
+  Check the supporting member too (column or girder web: shear yielding / rupture at the plate weld, local
+  limits). Write the basis into the check text ("bolt group, e = a/2 = 1.5 in., C = ...") -- the consistency
+  check flags a single plate whose bolt check shows no bolt-group eccentricity.
+- **R <= 3 braced frames ("not specifically detailed", AISC 341 does not apply):** design the brace connections
+  for the brace forces of the governing analysis combinations (AISC 360 Ch. J / Ch. K); the R_yF_yA_g
+  expected-strength forces of AISC 341 F1.6 / F2.6c do not apply (use them only as a stated, voluntary
+  conservatism). The same holds for the beams, columns and splices: analysis forces, no capacity design.
+- **Collectors / drag struts:** their end connections carry the drag axial force (`collector_axial_kip`, with
+  Omega_0 where §12.10.2.1 requires it) TOGETHER with the beam shear -- check the bolts (combined shear on the
+  resultant, or J3.7 interaction), the plate and welds for the combined force, and the load path into the
+  supporting member. A shear-only design of a collector connection is incomplete.
+- **Omega_0 only where ASCE 7-22 requires it:** collectors and their connections in SDC C-F (§12.10.2.1),
+  elements supporting discontinuous walls or frames (§12.3.3.4), SFRS columns where AISC 341 applies (D1.4a),
+  and anchorage where ACI 318-19 Ch. 17 calls for it. Do not apply Omega_0 to ordinary gravity members, and
+  for R <= 3 systems not to the columns (unless §12.3.3.4 applies) -- the pipeline's [col] cases follow the
+  same rule.
+- **Column bases:** design every `conn-base-*` slot for the per-base reaction envelope the pipeline records
+  (`demand_analysis.base_reactions`: P, net uplift, V, M with their combinations) -- never a hand-picked
+  smaller uplift; minimum 4 anchor rods (OSHA), AISC 360 J8/J9 and ACI 318-19 Ch. 17.
 
 ## Economy — design for the LIGHTEST sections/details that pass
 A safe design isn't the goal — an efficient one is. Deliver a sensibly proportioned passing design

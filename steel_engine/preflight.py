@@ -299,7 +299,8 @@ def mf_only_system(cfg):
 
 def _hn_ft(cfg):
     H = [float(h) for h in (cfg.get("heights") or []) if isinstance(h, (int, float))]
-    return sum(H) / 12.0, len(H)
+    hn = cfg.get("hn_ft")                    # declared structural height above the seismic base (hillside sites)
+    return (float(hn) if isinstance(hn, (int, float)) and hn > 0 else sum(H) / 12.0), len(H)
 
 
 def _num_or_none(v):

@@ -907,8 +907,10 @@ def _member_calc_block(m, a341=None):
                 pr.append(("L<sub>c</sub>/r" if inp.get("Lc_in") else "L/r", _fx(float(lc) / float(r_use), 1)))
         except (TypeError, ValueError):
             pass
-        if r_gov is None:
+        if r_gov is None and not str(sec).upper().startswith("BRB"):
             pr.append(("governing r", "not found in the AISC Shapes Database"))
+        elif r_gov is None:
+            pr.append(("brace type", "buckling-restrained brace (manufacturer core; qualified by testing, AISC 341-22 F4 / K3)"))
     if pr:
         try:
             _built_up = bool(sec) and (str(sec).upper() not in S._load_csv())
@@ -1593,7 +1595,7 @@ def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
          "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared (the look-ups verify the governing provisions against the text of the standards).</p>"]
+         "prepared; a look-up that returned no match was repeated with other search terms.</p>"]
     if not recs:
         h.append("<p class='cnote'>No activity log was recorded for this job.</p>")
         return "".join(h)
@@ -2546,7 +2548,7 @@ def _lfrs_table(cfg, sf=None, pkg=None):
     try:
         hn = E.zlevels(cfg)[-1] / 12.0
     except Exception:
-        hn = sum(float(h) for h in cfg.get("heights") or []) / 12.0
+        hn = float(cfg.get("hn_ft") or sum(float(h) for h in cfg.get("heights") or []) / 12.0)
     rows = []
     for d in ("X", "Y"):
         try:
@@ -2768,6 +2770,12 @@ def _irregularity_section(cfg, runs, sf=None):
         trig["12.3.3.5"].append("H1"); trig["12.7.3 (3D model)"].append("H1")
     else:
         tcls = "Not present: TIR X %.2f / Y %.2f &le; 1.2" % (tirs["X"], tirs["Y"])
+    if str(cfg.get("diaphragm", "")).lower().startswith("flex"):
+        tcls = ("Not applicable: flexible diaphragm &mdash; Table 12.3-1 Type 1 applies only where the diaphragms are rigid or "
+                "semirigid (&sect;12.3.2.1); the accidental torsion of &sect;12.8.4.2 is not required for flexible diaphragms "
+                "(it is kept in the design combinations, a conservative bound)")
+        for k_ in ("12.3.3.5", "12.7.3 (3D model)"):
+            trig[k_] = [x for x in trig.get(k_, []) if x != "H1"]
     # ---- H2 / H3 geometric plan screens
     try:
         pl = E.plan_irregularity_levels(cfg)
@@ -2806,7 +2814,9 @@ def _irregularity_section(cfg, runs, sf=None):
                   % (100 * g["open_ratio"], _glab(g, k),
                      "" if cfg.get("diaphragm_openings") else "; framed-bay openings only &mdash; other slab openings are not modelled"))
             h3 = ("Type 3 DIAPHRAGM DISCONTINUITY: YES &mdash; " + op if g["open_ratio"] > 0.25 else "Openings: " + op) + \
-                 ("; story-to-story change in effective diaphragm stiffness: " + NE + " (diaphragm modelled rigid)")
+                 ("; story-to-story change in effective diaphragm stiffness: " + NE +
+                  (" (flexible diaphragm idealization)" if str(cfg.get("diaphragm", "")).lower().startswith("flex")
+                   else " (diaphragm modelled rigid)"))
             if g["open_ratio"] > 0.25: trig["12.3.3.5"].append("H3")
     # ---- H4 / V3 discontinuous or offset vertical elements
     term, inpl = _discontinuities(cfg, sf) if sf.get("inv_ok") else (None, None)
@@ -2954,9 +2964,15 @@ def _irregularity_section(cfg, runs, sf=None):
                   "than the story above; Type 4b: less than 65%%; declared story strengths)" % (lo[0], lo[1], 100 * lo[2]))
         else:
             v4 = "Not present: every story at least as strong as the story above (declared story strengths)"
+    elif sdc in ("A", "B", "C"):
+        v4 = ("Not required in SDC %s: Table 12.3-2 Types 4a/4b carry requirements only in SDC D&ndash;F "
+              "(&sect;12.3.3.1, &sect;12.3.3.2)" % sdc)
     else:
         v4 = (NE + " &mdash; story lateral strengths are not computed by the analysis; the weak-story check "
               "(Table 12.3-2 Types 4a/4b) requires the story strengths")
+    if sdc in ("A", "B", "C") and "NOT EVALUATED" in v1:
+        v1 = ("Not required in SDC %s: Table 12.3-2 Types 1a/1b carry requirements only in SDC D&ndash;F (&sect;12.3.3.1); "
+              % sdc) + v1.replace(NE, "not evaluated")
     rows = [
         ["Horizontal 1 &mdash; Torsional (Table 12.3-1a tiers)", tcls],
         ["Horizontal 2 &mdash; Re-entrant corner (both projections &gt; 20%)", h2],
@@ -3266,7 +3282,17 @@ def _combo_table(cases):
         if ap:
             return ", ".join({"col": "columns", "beam": "beams", "brace": "braces"}.get(a, a) for a in sorted(ap)) + " only"
         return "columns only" if co else "all members"
-    rows = [[_combo_label(c[0]), "%.2f" % c[1], "%.2f" % c[2], "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
+    def lf(c):
+        f = c[2]; hi = getattr(f, "hi", None)
+        if hi is None or abs(float(hi) - float(f)) < 1e-9:
+            return "%.2f" % float(f)
+        l_ = str(c[0])
+        if "1.0L" in l_ and "0.5L" not in l_:
+            return "%.2f" % float(hi)
+        if "0.5L" in l_ and "1.0L" not in l_:
+            return "%.2f" % float(f)
+        return "%.2f / %.2f" % (float(f), float(hi))             # by level (2.3.6 Exception 1)
+    rows = [[_combo_label(c[0]), "%.2f" % c[1], lf(c), "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
     return _table(["Combination", "D", "L", "L<sub>r</sub> / S", "Lateral", "Applies to"], rows)
 
 
@@ -4722,7 +4748,9 @@ def _deflection_section(cfg, pkg=None):
     if sugg and rec:
         recorded = max(rec.values())
         worst = max(sugg, key=lambda t: t[4])
-        if recorded <= 1e-9 < worst[4]:                       # camber 'none' recorded vs a suggested camber
+        if recorded <= 1e-9 < worst[4] and isinstance(pkg, dict) and pkg.get("camber_basis"):
+            h.append("<p class='cnote'><b>Camber:</b> %s</p>" % _n(pkg.get("camber_basis")))
+        elif recorded <= 1e-9 < worst[4]:                     # camber 'none' recorded vs a suggested camber
             h.append("<p class='note'><b>Reconcile camber:</b> the analysis gives a dead-load deflection of %s in. for the "
                      "%s %s beams (span %s), i.e. a camber of about %s in.; the calc package records %s in. camber%s.</p>"
                      % (_n(worst[3], nd=2), worst[0], _esc(worst[1]), _ftin(worst[2]), _n(worst[4], nd=2), _n(recorded),
@@ -4755,7 +4783,11 @@ def _grounding_check(cfg, name, pkg):
         return out
     _ct = " ".join(_cited(pkg or {}))
     cite_a360 = "360" in _ct; cite_a341 = "341" in _ct; cite_a358 = "358" in _ct
-    R = cfg["seis"].get("R", 3); detailed = R > 3
+    R = cfg["seis"].get("R", 3)
+    try:
+        detailed = any(bool(_PIPE_A341(cfg, d)) for d in ("X", "Y"))
+    except Exception:
+        detailed = R > 3
     try: _sf = _sfrs(cfg)
     except Exception: _sf = None
     # HUB-09: AISC 358 prequalified connections apply to SMF and IMF (AISC 341 E3.6c / E2.6c), including
@@ -4766,7 +4798,7 @@ def _grounding_check(cfg, name, pkg):
     has_conn = bool((pkg or {}).get("connections")); has_cap = bool((pkg or {}).get("capacity_design"))
     rows = []
     def row(item, required, ok, ev):
-        rows.append([item, "required" if required else "n/a (R&le;3)" if not detailed else "n/a (no SMF/IMF)",
+        rows.append([item, "required" if required else "n/a (AISC 341 does not apply)" if not detailed else "n/a (no SMF/IMF)",
                      ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
     row("AISC 360-22 &mdash; member limit states", True, n("engineering_standards_A360") > 0 or cite_a360,
         f"{n('engineering_standards_A360')} queries" + (" + cited in calc_package" if cite_a360 else ""))
@@ -4905,7 +4937,11 @@ def _design_basis(cfg):
     rows = [
       ["Lateral system", _n(cfg.get("system") or cfg.get("arch", ""))],
       ["Plan grid", "%s (%s &times; %s overall)" % (bays, _ftin(Lx), _ftin(Ly))],
-      ["Stories", "%d: %s (h<sub>n</sub> = %s)" % (len(H), _heights_txt(H), _ftin(sum(float(h) for h in H)))],
+      ["Stories", "%d: %s (h<sub>n</sub> = %s)" % (len(H), _heights_txt(H), _ftin(sum(float(h) for h in H)))
+                  if not cfg.get("hn_ft") else
+                  "%d: %s (model height %s; h<sub>n</sub> = %s ft above the seismic base%s)" % (
+                      len(H), _heights_txt(H), _ftin(sum(float(h) for h in H)), _n(float(cfg["hn_ft"])),
+                      (", " + _esc(str(cfg.get("hn_basis")))) if cfg.get("hn_basis") else "")],
       ["Gravity loads", (("floor D %s / L %s psf; " % (_n(cfg.get("D_floor")), _n(cfg.get("L_floor"))))
                          if len(H) > 1 or cfg.get("top_is_floor") else "")      # one-story: roof only
                         + "roof D %s psf, L<sub>r</sub> %s psf%s"
@@ -4944,7 +4980,8 @@ def _cvn_rows(cfg, pkg, secs):
         except Exception:
             p = None
         tf = (p or {}).get("tf")
-        if tf and tf >= 1.5 - 1e-6:
+        rolled = str(s).upper() in S._load_csv()            # built-up boxes / plate girders are plates (A3.3 second item)
+        if rolled and tf and tf >= 1.5 - 1e-6:
             heavy.append(s)
             if tf > 2.0 + 1e-6:
                 thick.append(s)
@@ -4962,8 +4999,8 @@ def _cvn_rows(cfg, pkg, secs):
         rows.append(["Notch toughness, heavy sections in the SFRS (AISC 341-22 A3.3)",
                      "rolled shapes with flanges &ge; 1-1/2 in.%s: CVN &ge; 20 ft-lbf at 70&deg;F, alternate core location "
                      "(ASTM A6 Supplementary Requirement S30)%s"
-                     % ((" (" + ", ".join(_esc(x) for x in heavy[:8]) + ")") if heavy else "",
-                        ("; plates &ge; 2 in. in built-up members (" + ", ".join(_esc(x) for x in plates[:6]) +
+                     % ((" (" + ", ".join(_esc(x) for x in heavy) + ")") if heavy else "",
+                        ("; plates &ge; 2 in. in built-up members (" + ", ".join(_esc(x) for x in plates) +
                          "): CVN &ge; 20 ft-lbf at 70&deg;F (ASTM A673, Frequency P)") if plates else "")])
     if thick or plates:
         rows.append(["Notch toughness, heavy shapes and plates in tension (AISC 360-22 A3.1c, A3.1d)",

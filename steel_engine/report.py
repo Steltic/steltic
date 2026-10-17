@@ -2418,7 +2418,18 @@ def _lfrs_table(cfg, sf=None, pkg=None):
                 dual_key = _ps["rows"][0]
         except Exception:
             dual_key = None
-        if dual_key:
+        _hlo = cfg.get("height_limit") if isinstance(cfg.get("height_limit"), dict) else None
+        if _hlo and _hlo.get("limit_ft") is not None:
+            # declared limit, e.g. ASCE 7-22 Table 15.4-1 for a nonbuilding structure similar to a building
+            _lim = _hlo.get("limit_ft")
+            if str(_lim).upper() in ("NL", "NONE", "NOT LIMITED"):
+                hl = "not limited (%s); h<sub>n</sub> = %s ft &mdash; OK" % (_esc(_hlo.get("basis", "declared")), _n(hn))
+            else:
+                _ok = hn <= float(_lim) + 0.05
+                hl = "%s ft (%s); h<sub>n</sub> = %s ft &mdash; %s" % (
+                    _n(float(_lim)), _esc(_hlo.get("basis", "declared")), _n(hn),
+                    "OK" if _ok else "<b class='ng'>exceeds the limit</b>")
+        elif dual_key:
             hl = "dual system, %s: %s" % (_esc(PF.SYSTEMS[dual_key]["name"].replace("dual: ", "")),
                                           _height_limit(None, sdc, hn, cfg, pkg, key=dual_key))
         else:
@@ -4121,7 +4132,9 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
                      "PASS" if wd[0] <= wd[1] else ("JUSTIFIED" if _wv else "FAIL")])
     bd = _QA.get("beam_deflection")
     if bd:
-        rows.append(["Beam deflection (L/360 live, L/240 total)", bd[1], "PASS" if bd[0] else "FAIL"])
+        _bj = len(bd) > 2 and bd[2]
+        rows.append(["Beam deflection (IBC Table 1604.3 limits)", bd[1] + ("; addressed by engineering justification "
+                     "(listed below)" if _bj else ""), "PASS" if bd[0] else ("JUSTIFIED" if _bj else "FAIL")])
     hl = _QA.get("height_limit")
     if hl:
         rows.append(["Structural height limit (Table 12.2-1)", hl[1], "PASS" if hl[0] else "FAIL"])
@@ -4353,13 +4366,21 @@ def _deflection_section(cfg, pkg=None):
                 "applied; their deflection is part of the joist / truss design.</p>")
     h = ["<h3>Beam deflection and camber (analysis model check)</h3>",
          "<p>Deflection of every beam span / group (section &times; span &times; floor/roof) from %s; live (floor L, roof "
-         "S if any, else L<sub>r</sub>) against L/360 and total D + L against L/240. Camber suggestion &asymp; 80%% of the "
-         "dead-load deflection (to the nearest 1/4 in.) where that deflection exceeds 3/4 in.</p>"
-         % _n(det.get("basis") or "the tributary loads of each beam")]
+         "S if any, else L<sub>r</sub>) and total D + L against IBC 2024 Table 1604.3: floor members L/360 and L/240%s. "
+         "Camber suggestion &asymp; 80%% of the dead-load deflection (to the nearest 1/4 in.) where that deflection "
+         "exceeds 3/4 in.</p>"
+         % (_n(det.get("basis") or "the tributary loads of each beam"),
+            "; roof members %s: L/%d and L/%d" % (
+                {"plaster": "supporting a plaster or stucco ceiling", "nonplaster": "supporting a nonplaster ceiling",
+                 "none": "not supporting a ceiling"}.get(str(cfg.get("roof_deflection") or "plaster").lower(),
+                                                         "supporting a plaster or stucco ceiling"),
+                *E.defl_limits(cfg, True)) if hasattr(E, "defl_limits") else "")]
     if det.get("error"):
         h.append(f"<p class='note'><b>Check FAILS &mdash; NOT EVALUATED:</b> {_n(det['error'])}</p>")
     grp = det.get("groups") or []
     rows = []; sugg = []
+    _gw0 = (pkg or {}).get("gate_waivers") if isinstance(pkg, dict) else None
+    _just0 = isinstance(_gw0, dict) and "beam_deflection" in _gw0
     def pick(roof):
         g = [x for x in grp if x["roof"] == roof]
         return sorted(g, key=lambda x: -max(x["rLL"], x["rTL"]))
@@ -4375,8 +4396,9 @@ def _deflection_section(cfg, pkg=None):
             r = [_esc(x["sec"]), _ftin(L),
                  (_ftin(x['trib']) if x.get("trib") is not None else "solved model"),
                  "%s in. (L/%s)" % (_n(x['dLL'], nd=2), ("%.0f" % (L / x['dLL'])) if x['dLL'] > 1e-6 else "&infin;"),
-                 _n(x["rLL"], nd=2), "%s in." % _n(x['dTL'], nd=2), _n(x["rTL"], nd=2),
-                 "OK" if max(x["rLL"], x["rTL"]) < 1.0 else "<b class='ng'>NG</b>",
+                 "%s (L/%d)" % (_n(x["rLL"], nd=2), int(x.get("limL", 360))), "%s in." % _n(x['dTL'], nd=2),
+                 "%s (L/%d)" % (_n(x["rTL"], nd=2), int(x.get("limT", 240))),
+                 "OK" if max(x["rLL"], x["rTL"]) < 1.0 else ("see justification" if _just0 else "<b class='ng'>NG</b>"),
                  ("%s in." % _n(camber, nd=2)) if camber > 0 else "none"]
             if r in uniq:
                 cnt[uniq.index(r)] += 1
@@ -4385,16 +4407,19 @@ def _deflection_section(cfg, pkg=None):
         for r, c in list(zip(uniq, cnt))[:8]:
             rows.append([lbl + ((" (%d identical groups)" % c) if c > 1 else "")] + r)
     if rows:
-        h.append(_table(["Beam", "Section", "Span", "Trib. width", "Live &delta;", "Live/(L/360)", "Total &delta;",
-                         "Total/(L/240)", "Check", "Camber"], rows))
+        h.append(_table(["Beam", "Section", "Span", "Trib. width", "Live &delta;", "Live / limit", "Total &delta;",
+                         "Total / limit", "Check", "Camber"], rows))
     for key, why in (det.get("skipped") or [])[:10]:
         h.append(f"<p class='note'>Group {_esc(key)} NOT EVALUATED: {_n(why)} &mdash; the check fails until resolved.</p>")
     gate_ok = det["LL"] < 1.0 and det["TL"] < 1.0
+    _gw = (pkg or {}).get("gate_waivers") if isinstance(pkg, dict) else None
+    _just = (not gate_ok) and isinstance(_gw, dict) and "beam_deflection" in _gw
     _QA["beam_deflection"] = (gate_ok, "worst live %s, total %s" % (
         "%.2f" % det["LL"] if math.isfinite(det["LL"]) else "not evaluated",
-        "%.2f" % det["TL"] if math.isfinite(det["TL"]) else "not evaluated"))
+        "%.2f" % det["TL"] if math.isfinite(det["TL"]) else "not evaluated"), _just)
     h.append("<p><b>Beam deflection check: %s</b> (worst live ratio %s, worst total ratio %s).</p>"
-             % ("PASS" if gate_ok else "FAIL",
+             % ("PASS" if gate_ok else ("analysis-model ratio above 1.0 &mdash; addressed by the engineering "
+                                        "justification in Chapter 13" if _just else "FAIL"),
                 "%.2f" % det["LL"] if math.isfinite(det["LL"]) else "not evaluated",
                 "%.2f" % det["TL"] if math.isfinite(det["TL"]) else "not evaluated"))
     ag = [m for m in ((pkg or {}).get("members") or []) if isinstance(m, dict) and isinstance(m.get("serviceability"), dict)]

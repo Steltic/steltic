@@ -81,7 +81,14 @@ def aisc341_applies(cfg, d, SF=None):
     """True when AISC 341 governs the seismic force-resisting system in direction d: R > 3 (the Table
     12.2-1 steel systems detailed to AISC 341) or a cantilever-column system (rows G, R <= 2.5 but
     detailed to AISC 341). An R = 3 'steel system not specifically detailed for seismic resistance'
-    (row H) is designed to AISC 360 alone (ASCE 7-22 14.1.2.2.1; AISC 341-22 A1 User Note)."""
+    (row H) is designed to AISC 360 alone (ASCE 7-22 14.1.2.2.1; AISC 341-22 A1 User Note).
+    cfg['aisc341_applies'] = True / False (or {'X': .., 'Y': ..}) overrides, e.g. for an ASCE 7-22 Table 15.4-1
+    nonbuilding structure similar to a building whose row requires AISC 341 detailing with R <= 3."""
+    ov = cfg.get("aisc341_applies")
+    if isinstance(ov, dict):
+        ov = ov.get(d)
+    if ov is not None:              # declared, e.g. a Table 15.4-1 nonbuilding row (R <= 3) that requires AISC 341
+        return bool(ov)
     sd = (SF or {}).get(d) or E.seis_dir(cfg, d)
     R = float(sd.get("R") or 0)
     sysn = str(sd.get("system") or cfg.get("system") or "").lower()

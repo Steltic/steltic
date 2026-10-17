@@ -131,9 +131,9 @@ def test_irregularity_section_prints_numbers_or_not_evaluated():
     runs = R._lateral_runs(cfg, Fx)
     html = R._irregularity_section(cfg, runs, R._sfrs(cfg))
     assert "Type 2 RE-ENTRANT: YES" in html and "50%" in html
-    assert "NOT EVALUATED" in html and "story_strength" in html             # weak story needs strengths
+    assert "NOT EVALUATED" in html and "story strengths" in html            # weak story needs strengths
     assert "Horizontal 4 &mdash; Out-of-plane offset | None" not in html
-    assert "None: every SFRS plane is continuous" in html
+    assert "Not present: every SFRS plane is continuous" in html
     # weak story evaluated when strengths are given (7-22 Table 12.3-2 Type 4a/4b)
     cfg2 = _b05(story_strength={"X": [500, 900, 800, 600], "Y": [900, 900, 800, 600]})
     html2 = R._irregularity_section(cfg2, runs, R._sfrs(cfg2))
@@ -193,7 +193,7 @@ def test_report_deflection_table_is_the_gate():
     cfg = _rect(); det = E.beam_serviceability_detail(cfg)
     html = R._deflection_section(cfg, {})
     gate = "PASS" if det["LL"] < 1 and det["TL"] < 1 else "FAIL"
-    assert ("beam_deflection gate: %s" % gate) in html
+    assert ("Beam deflection check: %s" % gate) in html
     pkg = {"members": [{"id": "b", "serviceability": {"ok": gate == "FAIL"}}]}
     assert "Reconcile" in R._deflection_section(cfg, pkg)
 

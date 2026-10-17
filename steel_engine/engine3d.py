@@ -2249,7 +2249,8 @@ def theta_rows(cfg, d, dxe=None, V=None, Cd=None, Ie=None):
       Delta_xe the elastic story drift at the 12.8.6.5 location (seismic_drift()[d]['elastic']: CM, or
                the edges incl. accidental torsion x Ax for Type 1 in SDC C-F; incl. the AISC 358 RBS
                factor), unless the caller passes dxe (ratios per story);
-      V_x      story shear of that direction's ELF forces (or V);
+      V_x      story shear of that direction's ELF forces (or V); where the design drift is the MRSA drift, the
+               MRSA story shear at the same scale (the pair comes from one analysis);
       theta / (1 + theta) because the drifts come from a P-Delta analysis (12.8.7);
       theta_max = 0.5/(beta*Cd_d) <= 0.25, beta = cfg['theta_beta'] (default 1.0, never < 1.25/Omega0_d),
                not less than 0.10 (Eq. 12.8-19). Declared drift-exempt stories are marked.
@@ -2261,11 +2262,25 @@ def theta_rows(cfg, d, dxe=None, V=None, Cd=None, Ie=None):
     Om0 = float(sd.get("Om0", 3.0) or 3.0)
     beta = max(float(cfg.get("theta_beta", 1.0) or 1.0), 1.25 / Om0)
     tmax = max(min(0.5 / (beta * Cd), 0.25), 0.10)
+    own_drift = dxe is None
     if dxe is None:
         dxe = [abs(v) for v in seismic_drift(cfg)[d]["elastic"]]
     if V is None:
-        F = seismic_design_forces(cfg)[d]["F_elf"]
+        SFd = seismic_design_forces(cfg)
+        F = SFd[d]["F_elf"]
         V = [sum(F[k] for k in range(s_, NF + 1)) for s_ in range(1, NF + 1)]
+        # 12.8.7: Delta and V_x from the SAME analysis -- where the design drift is the MRSA drift (basis 'MRSA',
+        # or the stories where it governs the 'envelope'), pair it with the MRSA story shear at the same scale
+        # (unscaled modal shear x the 12.9.1.4.2 drift scale), not with the ELF story shear
+        rs = SFd[d].get("rs") if own_drift else None
+        if rs is not None and SFd.get("basis") in ("MRSA", "envelope"):
+            Vm = [abs(v) / (rs.get("force_scale") or 1.0) * (rs.get("drift_scale") or 1.0) for v in rs["shear"]]
+            if SFd["basis"] == "MRSA":
+                V = Vm
+            else:
+                sdr = seismic_drift(cfg)[d]
+                if sdr.get("mrsa"):
+                    V = [Vm[i] if sdr["mrsa"][i] > sdr["elf"][i] else V[i] for i in range(NF)]
     dex = set(int(k) for k in (cfg.get("drift_exempt_stories") or {}))
     P = theta_px(cfg); rows = []
     for s_ in range(1, NF + 1):

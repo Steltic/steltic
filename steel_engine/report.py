@@ -1152,9 +1152,15 @@ def _gravity_loads_table(cfg, pkg=None):
             ["Floor live load, L<sub>o</sub>", lrow]]
     if len(cfg.get("heights") or []) <= 1 and not cfg.get("top_is_floor"):      # one-story: no floor loads
         rows = [r for r in rows if not r[0].startswith("Floor")]
+    if cfg.get("D_by_level"):
+        rows.append(["Dead load by level (psf; overrides the floor / roof value at those levels)", _levels_txt(cfg.get("D_by_level"))
+                     or _n(cfg.get("D_by_level"))])
     if cfg.get("L_by_level"):
         rows.append(["Floor live load by level", _n(cfg.get("L_by_level"))])
     rows.append(["Roof live load, L<sub>r</sub>", _psf(cfg.get("Lr", 20.0))])
+    if cfg.get("Lr_by_level"):
+        rows.append(["Roof live load by level (psf; partial roofs and setbacks)", _levels_txt(cfg.get("Lr_by_level"))
+                     or _n(cfg.get("Lr_by_level"))])
     snow = float(cfg.get("snow", 0) or 0)
     rain = cfg.get("rain")
     if snow > 0:
@@ -1175,6 +1181,12 @@ def _gravity_loads_table(cfg, pkg=None):
     smo = cfg.get("seismic_mass_only")
     if isinstance(smo, dict) and _levels_txt(smo):
         rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])
+    swk = cfg.get("seismic_weight_kip")
+    if isinstance(swk, dict) and swk:
+        rows.append(["Seismic weight only, lumped (kip by level: equipment, tanks, storage share per &sect;12.7.2)",
+                     ", ".join("level %s: %s kip" % (k, _n(float(v))) for k, v in sorted(swk.items(), key=lambda t: int(t[0]))
+                               if isinstance(v, (int, float)))
+                     + (" &mdash; %s" % _n(cfg.get("seismic_weight_basis")) if cfg.get("seismic_weight_basis") else "")])
     return _table(["Gravity load", "Value"], rows)
 
 
@@ -3091,6 +3103,8 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
     wtxt = ("dead load, cladding" + (" and the partition allowance (%s, &sect;12.7.2 item 2)" % _levels_txt(smo)
                                      if isinstance(smo, dict) and _levels_txt(smo) else "")
             + (", 25% of the storage live load" if cfg.get("storage") or cfg.get("storage_levels") else "")
+            + (", the lumped seismic weights listed with the gravity loads" if isinstance(cfg.get("seismic_weight_kip"), dict)
+               and cfg.get("seismic_weight_kip") else "")
             + (", 15% of the uniform design snow load (p<sub>f</sub> &gt; 45 psf, item 4)"
                if float(cfg.get("snow", 0) or 0) > 45.0 else ""))
     rs_on = SD.get("basis", "ELF") != "ELF"

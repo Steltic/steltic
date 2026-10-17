@@ -524,7 +524,10 @@ def _model_key(cfg):
     Hashing the actual element schedule (kind, section, end nodes) makes two cfgs share a cache entry
     iff they build the SAME model under the SAME loads."""
     try:
-        ele = tuple((e[1], e[2], e[3], e[4]) for e in build(cfg, "Linear").get("ele", []))
+        _inf = build(cfg, "Linear")
+        _rel = _inf.get("beam_rel") or {}
+        # end releases are part of the model: two cfgs differing only in a moment release must not share a cache
+        ele = tuple((e[1], e[2], e[3], e[4], tuple(_rel.get(e[0], ()))) for e in _inf.get("ele", []))
     except Exception:
         ele = ()
     sig = (ele, tuple(cfg.get("heights", [])), cfg.get("NX"), cfg.get("NY"), cfg.get("SX"),

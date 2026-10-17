@@ -1611,7 +1611,9 @@ def _log_result(tool, r):
     r = str(r or "")
     m = re.match(r"(\d+) hits?", r)
     if tool == "search_engineering_standards":
-        return ("%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")) if m else "no match"
+        if not m or m.group(1) == "0":
+            return "no match in the standards corpus"
+        return "%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")
     m = re.search(r"(\d+) issues?", r)
     if m:
         return "%s issues" % m.group(1)
@@ -1624,7 +1626,8 @@ def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
          "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared; a look-up that returned no match was repeated with other search terms.</p>"]
+         "prepared. A look-up with no match in the standards corpus is listed as such; the provisions the report "
+         "cites are the ones found.</p>"]
     if not recs:
         h.append("<p class='cnote'>No activity log was recorded for this job.</p>")
         return "".join(h)
@@ -4891,7 +4894,8 @@ def _grounding_check(cfg, name, pkg):
             + "</p>")
     tail = ("<p class='note'>Verification incomplete: the items marked MISSING were required for this building's "
             "systems but no look-up or calculation-package citation was found.</p>"
-            if nmiss else "<p>All required provisions were verified against the standards.</p>")
+            if nmiss else "<p>Every standard this building's systems require was consulted (look-ups or "
+            "calculation-package citations, above).</p>")
     rows = [[r[0], r[1], str(r[2]).replace("queries", "look-ups").replace("calc_package", "the calculation package"),
              str(r[3]).replace("grounded", "verified")] for r in rows]
     return head + _table(["Standard / scope", "Applies", "Evidence", "Status"], rows) + tail

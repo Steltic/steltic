@@ -4408,7 +4408,8 @@ _SANITY_NAMES = {"drift_X": "seismic drift X", "drift_Y": "seismic drift Y", "pe
                  "modalmass_X": "modal mass X", "modalmass_Y": "modal mass Y", "baseshear_X": "base shear X",
                  "baseshear_Y": "base shear Y", "model_declared": "model input complete", "model_consistent":
                  "built model matches the input", "stability_theta": "&theta; (&sect;12.8.7)", "beam_deflection": "beam deflection",
-                 "model_complete": "model completeness", "dual_25pct": "dual-system 25% check"}
+                 "model_complete": "model completeness", "dual_25pct": "dual-system 25% check",
+                 "rs_X": "MRSA scaling X (&sect;12.9.1.4)", "rs_Y": "MRSA scaling Y (&sect;12.9.1.4)"}
 
 
 def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
@@ -5107,8 +5108,8 @@ def _materials_table(cfg, pkg=None):
             rows.append(["Steel headed stud anchors", "ASTM A108, F<sub>u</sub> = 65 ksi (AWS D1.1 Type B)"])
     rows += _cvn_rows(cfg, pkg, secs)
     return (_table(["Element", "Specification"], rows)
-            + "<p class='cnote'>E = 29,000 ksi for all structural steel. Specifications inferred from the sections and "
-            "the connection records of this design; the project specification governs.</p>")
+            + "<p class='cnote'>E = 29,000 ksi for all structural steel. The specifications listed are those of the sections "
+            "and connection records of this design; the project specification governs.</p>")
 
 
 def _floor_vibration_section(cfg, pkg):

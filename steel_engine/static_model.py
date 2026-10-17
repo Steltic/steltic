@@ -1884,13 +1884,13 @@ def ecl_plan(cfg, model, desig):
                 struts.append(bm["etag"])
         struts = sorted(set(struts))
         if struts:
-            ne.append("Ecl AXIAL of %d braced-bay beam(s) / strut(s)%s (e.g. element %s) NOT EVALUATED (AISC 341-22 "
-                      "F2.3 / F3.3 / F4.3): their end nodes are slaved to the rigid diaphragm, which the capacity-"
+            ne.append("Ecl axial force in %d braced-bay beam(s) / strut(s)%s (e.g. element %s), AISC 341-22 "
+                      "F2.3 / F3.3 / F4.3: their end nodes are slaved to the rigid diaphragm, which the capacity-"
                       "limited analysis restrains, so the horizontal components of the expected brace%s forces enter "
-                      "the diaphragm at the work points and these beams show ~0 Ecl axial. The struts%s and the "
-                      "collectors delivering to the braced bays are therefore checked separately for those horizontal "
-                      "components along the actual diaphragm load path (their moments / shears and the unbalanced "
-                      "loads are evaluated in the analysis)"
+                      "the diaphragm at the work points and the analysis shows ~0 Ecl axial in these beams. The "
+                      "struts%s and the collectors delivering to the braced bays are checked separately for those "
+                      "horizontal components along the actual diaphragm load path (their moments / shears and the "
+                      "unbalanced loads come from the analysis)"
                       % (len(struts), " / beams outside links" if links else "",
                          ", ".join(str(t) for t in struts[:4]), " / link" if links else "",
                          " / beams outside links" if links else ""))

@@ -2770,10 +2770,14 @@ def _gravity_loads_note(cfg=None, pkg=None):
     smo = cfg.get("seismic_mass_only")
     wtxt = (" For the seismic weight W the partition weight (&sect;12.7.2 item 2) is included as listed above."
             if isinstance(smo, dict) and _levels_txt(smo) else "")
-    rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>%s; snow drift, unbalanced or sliding snow "
-            "and ponding, where they apply, are addressed in the member design records (Chapter 6) and are not part "
-            "of the analysis-model loading." % (" and the uniform roof snow load S" if snow > 0 else
-                                                  " (no snow load in the design criteria)"))
+    if snow > 0:
+        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub> and the uniform roof snow load S; snow "
+                "drift, unbalanced or sliding snow and ponding, where they apply, are addressed in the member design "
+                "records (Chapter 6) and are not part of the analysis-model loading.")
+    else:
+        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>. The design criteria contain no snow "
+                "load (snow basis in the load table above), so no snow drift, unbalanced or sliding snow is carried; "
+                "ponding is addressed under the rain basis.")
     return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
             "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
 
@@ -4531,15 +4535,15 @@ def _gate_waivers_section(pkg):
 
 
 def _design_credit(pkg):
-    """'Design prepared with Steltic; design agent: <model> (<provider>), <date>' -- only when recorded."""
+    """'Designed by <model> (<provider>) with Steltic, <date>' -- only when recorded."""
     da = (pkg or {}).get("design_agent") if isinstance(pkg, dict) else None
     if isinstance(da, str) and da.strip():
         da = {"model": da.strip()}
     if not isinstance(da, dict) or not da.get("model"):
         return ""
     harness = da.get("harness") or "Steltic"
-    return ("Design prepared with %s; design agent: %s%s%s" %
-            (_esc(harness), _esc(da.get("model")), (" (%s)" % _esc(da["provider"])) if da.get("provider") else "",
+    return ("Designed by %s%s with %s%s" %
+            (_esc(da.get("model")), (" (%s)" % _esc(da["provider"])) if da.get("provider") else "", _esc(harness),
              (", %s" % _esc(da["date"])) if da.get("date") else ""))
 
 

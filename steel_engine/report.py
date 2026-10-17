@@ -1135,10 +1135,8 @@ def _gravity_loads_table(cfg, pkg=None):
         rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     if rain not in (None, "", 0, {}):
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _psf(rain) if isinstance(rain, (int, float)) else _n(rain)])
-    elif snow <= 0:
-        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     else:
-        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", "not evaluated in this package (roof drainage design by others)"])
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     smo = cfg.get("seismic_mass_only")
     if isinstance(smo, dict) and _levels_txt(smo):
         rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])
@@ -2288,8 +2286,7 @@ def _design_basis_codes(cfg, s, root=None, pkg=None, ctx=None):
         if snow > 0 else _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     rain = cfg.get("rain")
     crows.append(["Rain load (ASCE 7-22 Ch. 8)", (_n(rain) if not isinstance(rain, (int, float)) else _psf(rain))
-                  if rain not in (None, "", 0, {}) else (_esc(cfg.get("rain_basis") or "no rain load in the design criteria") if snow <= 0 else
-                                                          "not evaluated in this package (roof drainage design by others)")])
+                  if rain not in (None, "", 0, {}) else _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     if str(RC).upper() in ("III", "IV"):
         crows.append(["Tornado loads (ASCE 7-22 Ch. 32)", _n(cfg.get("tornado")) if cfg.get("tornado") else
                       "<b>required for Risk Category %s &mdash; not evaluated in this package</b>" % _esc(RC)])
@@ -4125,9 +4122,15 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
     if isinstance(pr, dict) and isinstance(pr.get("checks"), dict):
         failed = [k for k, v in pr["checks"].items() if not v]
         names = ", ".join(_SANITY_NAMES.get(k, _esc(k)) for k in pr["checks"])
-        rows.append(["Analysis model checks of the demand analysis (%s)" % names,
-                     "all passed" if not failed else "failed: " + ", ".join(_SANITY_NAMES.get(k, _esc(k)) for k in failed),
-                     "PASS" if not failed else "FAIL"])
+        gw = (pkg or {}).get("gate_waivers") if isinstance(pkg, dict) else None
+        gw = gw if isinstance(gw, dict) else {}
+        waived = [k for k in failed if k in gw]; open_ = [k for k in failed if k not in gw]
+        _nm = lambda ks: ", ".join(_SANITY_NAMES.get(k, _esc(k)) for k in ks)
+        res = ("all passed" if not failed else "; ".join(x for x in (
+            ("failed: " + _nm(open_)) if open_ else "",
+            ("addressed by engineering justification (listed below): " + _nm(waived)) if waived else "") if x))
+        rows.append(["Analysis model checks of the demand analysis (%s)" % names, res,
+                     "PASS" if not failed else ("FAIL" if open_ else "JUSTIFIED")])
     if not rows:
         return ""
     return ("<h3>QA scorecard (computed checks)</h3>"

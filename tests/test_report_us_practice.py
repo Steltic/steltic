@@ -193,7 +193,7 @@ def test_hazard_table_snow_rain_and_tornado():
     c3 = _cfg(risk_category="III", seis=E.seis(1.0, 0.6, 0.6, 8, 0.028, 0.8, 1.4, Ie=1.25), snow=25.0)
     t3 = _text(R._design_basis_codes(c3, c3["seis"]))
     assert "Tornado loads (ASCE 7-22 Ch. 32)" in t3 and "design roof snow load S = 25 psf" in t3
-    assert "not evaluated in this package (roof drainage design by others)" in t3
+    assert "Rain load (ASCE 7-22 Ch. 8) no rain load in the design criteria" in t3
     tr = _text(R._design_basis_codes(_r3(), _r3()["seis"]))
     assert "seismic provisions: ductile detailing" not in tr and "AISC 358" not in tr
     assert "AISC 341-22 does not apply" in tr

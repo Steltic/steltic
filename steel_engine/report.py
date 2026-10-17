@@ -1173,11 +1173,13 @@ def _gravity_loads_table(cfg, pkg=None):
             v = sd.get(k, cfg.get(k) if k in ("pg",) else None)
             if v is not None:
                 extra.append("%s = %s" % (lab, _n(v)))
-        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _psf(snow) + ((" (" + ", ".join(extra) + ")") if extra else "")])
+        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _psf(snow) + ((" (" + ", ".join(extra) + ")") if extra else "")
+                     + (("; " + _esc(cfg["snow_basis"])) if cfg.get("snow_basis") else "")])
     else:
         rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     if rain not in (None, "", 0, {}):
-        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _psf(rain) if isinstance(rain, (int, float)) else _n(rain)])
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", (_psf(rain) if isinstance(rain, (int, float)) else _n(rain))
+                     + (("; " + _esc(cfg["rain_basis"])) if cfg.get("rain_basis") else "")])
     else:
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     smo = cfg.get("seismic_mass_only")
@@ -2427,11 +2429,13 @@ def _design_basis_codes(cfg, s, root=None, pkg=None, ctx=None):
         crows.append(["Basic wind speed V (Risk Category %s)" % _esc(RC), "%s mph, Exposure %s"
                       % (_n(w.get("V")), _esc(w.get("exposure") or "not stated"))])
     snow = float(cfg.get("snow", 0) or 0)
-    crows.append(["Snow load (ASCE 7-22 Ch. 7)", ("design roof snow load S = %s psf%s" % (
-        _n(snow), (", ground snow p<sub>g</sub> = %s psf" % _n(cfg.get("pg"))) if cfg.get("pg") else ""))
+    crows.append(["Snow load (ASCE 7-22 Ch. 7)", ("design roof snow load S = %s psf%s%s" % (
+        _n(snow), (", ground snow p<sub>g</sub> = %s psf" % _n(cfg.get("pg"))) if cfg.get("pg") else "",
+        " (basis in Chapter 3)" if cfg.get("snow_basis") else ""))
         if snow > 0 else _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     rain = cfg.get("rain")
-    crows.append(["Rain load (ASCE 7-22 Ch. 8)", (_n(rain) if not isinstance(rain, (int, float)) else _psf(rain))
+    crows.append(["Rain load (ASCE 7-22 Ch. 8)", ((_n(rain) if not isinstance(rain, (int, float)) else _psf(rain))
+                  + (" (basis in Chapter 3)" if cfg.get("rain_basis") else ""))
                   if rain not in (None, "", 0, {}) else _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     if str(RC).upper() in ("III", "IV"):
         crows.append(["Tornado loads (ASCE 7-22 Ch. 32)", _n(cfg.get("tornado")) if cfg.get("tornado") else

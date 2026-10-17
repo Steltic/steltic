@@ -2721,6 +2721,17 @@ def _irregularity_section(cfg, runs, sf=None):
             trig["12.3.3.4"].append("V3"); trig["12.3.3.5"].append("V3")
         else:
             v3 = "Not present: no SFRS plane is offset or interrupted below any story (checked in the analysis model)"
+    # engineer's evaluation where the automated plane screen misreads the model (e.g. a portal frame spanning two
+    # model levels with no beam at the lower one): cfg['irregularity_statements'] = {'H4': text, 'V3': text}
+    _ist = cfg.get("irregularity_statements") if isinstance(cfg.get("irregularity_statements"), dict) else {}
+    if _ist.get("H4") and term:
+        h4 = "Not present (engineer's evaluation): " + _esc(str(_ist["H4"]))
+        for k_ in ("12.3.3.4", "12.3.3.5", "12.7.3 (3D model)"):
+            trig[k_] = [x for x in trig.get(k_, []) if x != "H4"]
+    if _ist.get("V3") and (term or inpl):
+        v3 = "Not present (engineer's evaluation): " + _esc(str(_ist["V3"]))
+        for k_ in ("12.3.3.4", "12.3.3.5"):
+            trig[k_] = [x for x in trig.get(k_, []) if x != "V3"]
     # ---- H5 nonparallel
     npar = (_frame_inventory(cfg).get("nonparallel") or [])
     if npar or cfg.get("skew"):

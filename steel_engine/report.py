@@ -415,7 +415,8 @@ def _pub(s):
     s = re.sub(r"\bsteel[_ ]design[_ ]examples\b", "the AISC Design Examples", s)
     s = re.sub(r"\bcfg\s+([a-z][a-z0-9_]*)", lambda m: "the declared %s input" % m.group(1).replace("_", " "), s)
     s = re.sub(r"\(brief\)", "(project criteria)", s)
-    s = re.sub(r"\b(?:per )?the brief\b", "the project criteria", s)
+    s = re.sub(r"\bper the brief\b", "per the project criteria", s)
+    s = re.sub(r"\bthe brief\b", "the project brief", s)
     s = re.sub(r"([;,(]\s*)brief\b", r"\1project criteria", s)
     s = _drop_agent_notes(s)
     s = s.replace("<=", "\u2264").replace(">=", "\u2265").replace("&lt;=", "&le;").replace("&gt;=", "&ge;")
@@ -1710,11 +1711,13 @@ _FAM_RX = [
     ("OCBF", r"\b(?:MT-)?OCBF\b|ordinary\s+concentric"),
     ("BRBF", r"\bBRBF\b|buckling[- ]+restrained"),
     ("EBF",  r"\bEBF\b|eccentric(?:ally)?\s+braced"),
-    ("C-PSW", r"\bC-?PSW\b|composite\s+plate\s+shear"),
+    ("CC-PSW", r"\bCC-?PSW\b|coupled\s+composite\s+plate\s+shear"),
+    ("C-PSW", r"\bC-?PSW\b|(?<!coupled\s)composite\s+plate\s+shear"),
     ("SPSW", r"\bSPSW\b|(?<!composite )plate\s+shear\s+wall"),
 ]
 MF_FAMS = ("SMF", "IMF", "OMF", "STMF")
 BR_FAMS = ("SCBF", "OCBF", "BRBF", "EBF", "SPSW", "C-PSW")   # plate-shear-wall strips are modelled as brace elements
+WALL_FAMS = ("CC-PSW",)   # coupled composite walls: wall piers (wide columns) + fixed-ended coupling beams
 FAM_NAME = {"SMF": "special moment frame (SMF)", "IMF": "intermediate moment frame (IMF)",
             "OMF": "ordinary moment frame (OMF)", "STMF": "special truss moment frame (STMF)",
             "SCBF": "special concentrically braced frame (SCBF)",
@@ -1722,10 +1725,11 @@ FAM_NAME = {"SMF": "special moment frame (SMF)", "IMF": "intermediate moment fra
             "BRBF": "buckling-restrained braced frame (BRBF)",
             "EBF": "eccentrically braced frame (EBF)", "SPSW": "special plate shear wall (SPSW)",
             "C-PSW": "steel and concrete composite plate shear wall (C-PSW)",
+            "CC-PSW": "steel and concrete coupled composite plate shear wall (CC-PSW/CF)",
             "NSD": "steel system not specifically detailed for seismic resistance (AISC 360)",
             "MF?": "steel moment frame (SFRS not declared)", "BF?": "steel braced frame (SFRS not declared)"}
 FAM_341 = {"SMF": "E3", "IMF": "E2", "OMF": "E1", "STMF": "E4", "SCBF": "F2", "OCBF": "F1",
-           "BRBF": "F4", "EBF": "F3", "SPSW": "F5", "C-PSW": "H7"}
+           "BRBF": "F4", "EBF": "F3", "SPSW": "F5", "C-PSW": "H7", "CC-PSW": "H8"}
 
 
 def _families(text):
@@ -1864,11 +1868,13 @@ def _sfrs(cfg, inv=None):
     have = {d: {"mf": bool(inv[d]["mf"]) if inv.get("ok") else None,
                 "br": bool(inv[d]["brace"]) if inv.get("ok") else None} for d in ("X", "Y")}
     dirs = {}; kinds = {}
+    wall_dirs = {str(x).upper() for x in (cfg.get("wall_dirs") or ())}
     for d in ("X", "Y"):
         cand = per[d] if per[d] else glob
         if cand:
             if inv.get("ok"):
                 got = [f for f in cand if (f in MF_FAMS and have[d]["mf"]) or (f in BR_FAMS and have[d]["br"])
+                       or (f in WALL_FAMS and (have[d]["mf"] or have[d]["br"] or d in wall_dirs))
                        or (f == "NSD" and (have[d]["mf"] or have[d]["br"]))]
                 if not got:
                     warnings.append("%s direction: the declared %s has no matching lateral elements in the built "
@@ -1890,6 +1896,10 @@ def _sfrs(cfg, inv=None):
         for f in got:
             if f in MF_FAMS or f == "MF?": kd.add("mf")
             if f in BR_FAMS or f == "BF?": kd.add("br")
+            if f in WALL_FAMS:                          # wall planes are found through their coupling beams
+                kd.add("wall")
+                if have[d]["mf"]: kd.add("mf")
+                if have[d]["br"]: kd.add("br")
             if f == "NSD":
                 if have[d]["br"] or (have[d]["br"] is None and E.is_braced(cfg)): kd.add("br")
                 if have[d]["mf"]: kd.add("mf")
@@ -1934,7 +1944,7 @@ def _sys_label(sf, d):
             nm = "steel system not specifically detailed for seismic resistance%s" % ((" &mdash; " + frm) if frm else "")
         names.append(nm)
     names = " + ".join(names)
-    if sf["dual"] and any(f in MF_FAMS for f in fams) and any(f in BR_FAMS for f in fams):
+    if sf["dual"] and any(f in MF_FAMS for f in fams) and any(f in BR_FAMS + WALL_FAMS for f in fams):
         names = "dual system: " + names
     return names
 
@@ -2402,7 +2412,7 @@ def _system_loadpath(cfg, sf=None, pkg=None):
 
 
 _PF_KEY = {"SMF": "smf", "IMF": "imf", "OMF": "omf", "STMF": "stmf", "SCBF": "scbf", "OCBF": "ocbf",
-           "BRBF": "brbf", "EBF": "ebf", "SPSW": "spsw", "C-PSW": "c-psw", "NSD": "nsd"}
+           "BRBF": "brbf", "EBF": "ebf", "SPSW": "spsw", "C-PSW": "c-psw", "CC-PSW": "cc-psw", "NSD": "nsd"}
 
 
 def _sdc_safe(cfg):
@@ -4015,6 +4025,10 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
     the shear; brace connections cite AISC 341 only where it applies."""
     rows = []; ms = [m for m in ((pkg or {}).get("members") or []) if isinstance(m, dict)]
     sf = sf or _sfrs(cfg); ctx = ctx or {}
+    # connection type of each member group from the connection schedule (set from the analysis-model end
+    # releases): 'conn-<member id>' -- a moment-connected floor/roof beam is an SMF/IMF/OMF beam
+    ctype_of = {str(c.get("id", "")).lower(): str(c.get("type") or "").lower()
+                for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)}
     a341 = ctx.get("a341")
     if a341 is None:
         a341 = any(f in FAM_341 for f in sf.get("families", []))
@@ -4040,8 +4054,13 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
             _tag = (str(inp.get("role", "")) + " " + str(m.get("id", ""))).lower()
             _role = str(inp.get("role", "")).lower()
             _joints = str(((cfg.get("model") or {}).get("joints")) or "").lower()
+            _ct = ctype_of.get("conn-" + str(m.get("id", "")).lower(), "")
             if any(t in _tag for t in ("smf", "imf", "omf", "stmf", "moment", "mf_", "mf-")):
                 mf = sf["has_mf"]
+            elif _ct and "moment" in _ct and "if moment-connected" not in _ct:
+                mf = True                          # the schedule says moment connection (unreleased beam ends)
+            elif _ct and "shear" in _ct and "moment" not in _ct:
+                mf = False
             elif _role in ("roof", "floor") or "grav" in _tag or "collector" in _tag or "infill" in _tag:
                 mf = False                         # gravity / collector beams: shear connections unless tagged otherwise
             else:

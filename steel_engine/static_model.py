@@ -1887,9 +1887,10 @@ def ecl_plan(cfg, model, desig):
             ne.append("Ecl AXIAL of %d braced-bay beam(s) / strut(s)%s (e.g. element %s) NOT EVALUATED (AISC 341-22 "
                       "F2.3 / F3.3 / F4.3): their end nodes are slaved to the rigid diaphragm, which the capacity-"
                       "limited analysis restrains, so the horizontal components of the expected brace%s forces enter "
-                      "the diaphragm at the work points and these beams show ~0 Ecl axial. Design the struts%s and the "
-                      "collectors delivering to the braced bays by hand for those horizontal components along the "
-                      "actual diaphragm load path (their moments / shears and the unbalanced loads ARE evaluated)"
+                      "the diaphragm at the work points and these beams show ~0 Ecl axial. The struts%s and the "
+                      "collectors delivering to the braced bays are therefore checked separately for those horizontal "
+                      "components along the actual diaphragm load path (their moments / shears and the unbalanced "
+                      "loads are evaluated in the analysis)"
                       % (len(struts), " / beams outside links" if links else "",
                          ", ".join(str(t) for t in struts[:4]), " / link" if links else "",
                          " / beams outside links" if links else ""))
@@ -1903,7 +1904,8 @@ def ecl_plan(cfg, model, desig):
         notes.append("SPSW F5.3(b) PARTIAL: web tension field at RyFy applied as the panel resultant on the "
                      "tension diagonal(s) (0.5*Ry*Fy*tw*L*sin2a horizontal) and HBE 1.1*Ry*Mp hinge SHEARS "
                      "2(1.1RyMp)/L on the VBEs; the distributed tension-field flexure of VBE/HBE "
-                     "(RyFy*tw*sin^2a, cos^2a) and the HBE hinge MOMENTS are NOT EVALUATED -- add them by hand")
+                     "(RyFy*tw*sin^2a, cos^2a) and the HBE hinge MOMENTS are not part of the analysis -- they are "
+                     "checked separately with the VBE / HBE design")
     return dict(drop=drop, braces=braces, links=links, spsw=spsw, ocbf=ocbf, notes=notes,
                 not_evaluated=ne, desig=desig)
 

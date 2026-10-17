@@ -56,3 +56,28 @@ def test_h3_open_area_over_25pct_stays_yes():
     cfg["irregularity_statements"] = {"H3": "uniform slab"}
     row = _h3_row(R._irregularity_section(cfg, _runs(), R._sfrs(cfg)))
     assert "Type 3 DIAPHRAGM DISCONTINUITY: YES" in row and "uniform slab" in row
+
+
+def _v4_row(html):
+    i = html.find("Vertical 4a/4b")
+    assert i >= 0
+    return html[i:html.find("</tr>", i)]
+
+
+def test_weak_story_sdc_b_needs_strengths_above_two_stories():
+    cfg = _rect(); R._INV_CACHE.clear()
+    runs = _runs(); runs["sdc"] = "B"
+    row = _v4_row(R._irregularity_section(cfg, runs, R._sfrs(cfg)))
+    assert "NOT EVALUATED" in row and "12.3.3.3" in row          # 4-story SDC B: Type 4b must be excluded
+    cfg["story_strength"] = {"X": [900, 1000, 1000, 1000], "Y": [1000] * 4}
+    row = _v4_row(R._irregularity_section(cfg, runs, R._sfrs(cfg)))
+    assert "Type 4a WEAK STORY: YES" in row and "no consequence in SDC B" in row
+    runs["sdc"] = "A"; cfg.pop("story_strength")
+    assert "Not required in SDC A" in _v4_row(R._irregularity_section(cfg, runs, R._sfrs(cfg)))
+
+
+def test_weak_story_statement_and_one_story():
+    cfg = _rect(); R._INV_CACHE.clear()
+    cfg["irregularity_statements"] = {"V4": "the runway level is not a story; the roof frame is one story"}
+    row = _v4_row(R._irregularity_section(cfg, _runs(), R._sfrs(cfg)))
+    assert "Not present (engineer" in row and "runway level" in row

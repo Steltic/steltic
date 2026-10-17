@@ -2947,7 +2947,14 @@ def _irregularity_section(cfg, runs, sf=None):
         v2 = NE
     # ---- V4 weak story (needs the story lateral strengths)
     ss = cfg.get("story_strength")
-    if isinstance(ss, dict) and ss.get("X") and ss.get("Y"):
+    _p4v, _t4v = _declared("V4")          # engineer's statement, e.g. a runway level that is not a story
+    _hn_in = float(cfg.get("hn_ft") or 0) * 12.0 or sum(hgt)
+    if _p4v is not None:
+        v4 = (("Type 4 WEAK STORY: YES (engineer's evaluation) &mdash; " if _p4v else "Not present (engineer's evaluation): ")
+              + _esc(_t4v))
+    elif NF == 1:
+        v4 = "Not applicable: one-story building (no story above to compare)"
+    elif isinstance(ss, dict) and ss.get("X") and ss.get("Y"):
         rr = []; allr = []
         for d in ("X", "Y"):
             v = [float(x) for x in ss[d]]
@@ -2980,9 +2987,14 @@ def _irregularity_section(cfg, runs, sf=None):
                   "than the story above; Type 4b: less than 65%%; declared story strengths)" % (lo[0], lo[1], 100 * lo[2]))
         else:
             v4 = "Not present: every story at least as strong as the story above (declared story strengths)"
-    elif sdc in ("A", "B", "C"):
-        v4 = ("Not required in SDC %s: Table 12.3-2 Types 4a/4b carry requirements only in SDC D&ndash;F "
-              "(&sect;12.3.3.1, &sect;12.3.3.2)" % sdc)
+    elif sdc == "A" or (sdc in ("B", "C") and NF <= 2 and _hn_in <= 360.0 + 0.5):
+        v4 = ("Not required in SDC %s: Types 4a/4b carry requirements only in SDC D&ndash;F (&sect;12.3.3.1, "
+              "&sect;12.3.3.2)%s" % (sdc, "" if sdc == "A" else ", and the SDC B/C limit on a Type 4b story (&sect;12.3.3.3: "
+                                     "not more than two stories or 30 ft) is met by this building"))
+    elif sdc in ("B", "C"):
+        v4 = (NE + " &mdash; story lateral strengths are needed to exclude a Type 4b extreme weak story, which "
+              "&sect;12.3.3.3 limits in SDC B and C to buildings of two stories or 30 ft (Type 4a carries no SDC B/C "
+              "requirement)")
     else:
         v4 = (NE + " &mdash; story lateral strengths are not computed by the analysis; the weak-story check "
               "(Table 12.3-2 Types 4a/4b) requires the story strengths")

@@ -795,8 +795,10 @@ def _q_unit(q):
     return {"P": "kip", "T": "kip", "Mx": "kip-ft", "My": "kip-ft", "V": "kip"}.get(q, "")
 
 
-def _dc_status(dc, issues=None):
-    """OK / NG / NG -- reconcile for a D/C value and its consistency findings."""
+def _dc_status(dc, issues=None, waived=None):
+    """OK / NG / NG -- reconcile for a D/C value and its consistency findings. An EXISTING member whose
+    exceedance is carried as a retrofit-scope item (entry 'waived' text, e.g. an IEBC alteration evaluation)
+    reads 'retrofit required' instead of NG."""
     try:
         v = float(dc)
     except (TypeError, ValueError):
@@ -805,6 +807,8 @@ def _dc_status(dc, issues=None):
         return "<b class='ng'>NG / reconcile</b>"
     if v is None:
         return "&mdash;"
+    if v > 1.0 + 1e-9 and waived:
+        return "<b class='ng'>retrofit required</b>"
     return "<b class='ng'>NG</b>" if v > 1.0 + 1e-9 else "OK"
 
 
@@ -823,7 +827,7 @@ def _term_txt(terms, which):
     return "; ".join(out) if out else "&mdash;"
 
 
-def _checks_table(chks, C=None, member=True):
+def _checks_table(chks, C=None, member=True, waived=None):
     """The entry's own limit-state checks: limit state | reference | demand | capacity | D/C | printed
     demand / printed capacity | status. The recomputed ratio is shown wherever the check prints its demand
     and capacity (H1-1 recomputed from its terms where the check cites H1-1)."""
@@ -844,7 +848,7 @@ def _checks_table(chks, C=None, member=True):
         bad = False
         if rec is not None and dc is not None and C is not None:
             bad = not C._close(rec, dc)
-        st = ("<b class='ng'>NG / reconcile</b>" if bad else _dc_status(dc))
+        st = ("<b class='ng'>NG / reconcile</b>" if bad else _dc_status(dc, waived=waived))
         rows.append([_n(k.get("limit_state", k.get("name", ""))), _n(k.get("cited", "")),
                      _term_txt(terms, "dem"), _term_txt(terms, "cap"),
                      (_n(dc, dc=True) if dc is not None else _n(k.get("DC"))),
@@ -953,13 +957,15 @@ def _member_calc_block(m, a341=None):
         h.append(_calc("Printed demand &divide; printed available strength", rr))
     if chks:
         h.append("<p class='cnote'>Limit-state checks:</p>")
-        h.append(_checks_table(chks, C))
+        h.append(_checks_table(chks, C, waived=m.get("waived")))
     issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
     dcv = C._dc_num(dc) if C else (dc if isinstance(dc, (int, float)) else None)
     if dcv is not None or dc is not None or ls:
         h.append("<p><b>Governing D/C = %s &mdash; %s</b>%s%s</p>"
-                 % ((_n(dcv, dc=True) if dcv is not None else _n(dc)), _dc_status(dcv, issues),
+                 % ((_n(dcv, dc=True) if dcv is not None else _n(dc)), _dc_status(dcv, issues, m.get("waived")),
                     (" &nbsp;(%s)" % _n(ls)) if ls else "", ("<br><span class='cnote'>%s</span>" % _n(cited)) if cited else ""))
+        if m.get("waived") and dcv is not None and dcv > 1.0 + 1e-9:
+            h.append("<p class='cnote'>Existing member over capacity: %s.</p>" % _n(m.get("waived")))
     if issues:
         h.append("<p class='note'>Reconcile before issue: %s</p>"
                  % "; ".join(_pub_issue_html(re.sub(r"^\[member [^\]]*\]\s*", "", i)) for i in issues))
@@ -985,13 +991,13 @@ def _connection_block(c, cid=None):
          + "</table>"]
     chks = c.get("checks")
     if isinstance(chks, list) and chks:
-        h.append(_checks_table(chks, C, member=False))
+        h.append(_checks_table(chks, C, member=False, waived=c.get("waived")))
     issues = C._entry_issues("connection", c) if C else []
     top = C._dc_num(c.get("DC")) if C else None
     dcs = [x for x in ([top] + [C._dc_num(k.get("DC")) for k in (chks or []) if isinstance(k, dict)]
                        if C else []) if x is not None]
     if dcs:
-        h.append("<p><b>Governing D/C = %s &mdash; %s</b></p>" % (_n(max(dcs), dc=True), _dc_status(max(dcs), issues)))
+        h.append("<p><b>Governing D/C = %s &mdash; %s</b></p>" % (_n(max(dcs), dc=True), _dc_status(max(dcs), issues, c.get("waived"))))
     elif not chks:
         h.append("<p class='note'>Limit-state checks and D/C: not recorded in the calc package for this connection.</p>")
     if issues:
@@ -1341,7 +1347,7 @@ def _member_rows(members):
                      _esc(inp.get("section", "")), _envelope_txt(inp), _combo_label(inp.get("governing_combo")),
                      _n(m.get("limit_state")) if m.get("limit_state") else "&mdash;",
                      _n(dcv, dc=True) if dcv is not None else "&mdash;",
-                     _dc_status(dcv, issues) if (dcv is not None or issues) else "not recorded"])
+                     _dc_status(dcv, issues, m.get("waived")) if (dcv is not None or issues) else "not recorded"])
     return rows
 
 
@@ -4026,7 +4032,7 @@ def _connection_summary(pkg):
                      _fmt(c.get("demand")) if isinstance(c.get("demand"), dict) else _n(c.get("demand")),
                      (_n(ls) + (" (+%d more checks)" % (len(chks) - 1) if len(chks) > 1 else "")) if ls else "&mdash;",
                      _n(dc, dc=True) if dc is not None else "&mdash;",
-                     _dc_status(dc, issues) if (dc is not None or issues) else "not recorded"])
+                     _dc_status(dc, issues, c.get("waived")) if (dc is not None or issues) else "not recorded"])
     return ("<h3>Designed connections</h3><p>Each connection type is designed in this package; its components and every "
             "limit-state check are in Appendix A.</p>"
             + _table(["Connection", "Type", "Design demand", "Governing limit state", "D/C", "Status"], rows))
@@ -4143,18 +4149,27 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
         ents = [m for m in ((pkg or {}).get(key) or []) if isinstance(m, dict)] if isinstance(pkg, dict) else []
         if not ents or C is None:
             continue
-        dcs = []
+        dcs = []; exist = []
         for m in ents:
             vals = [C._dc_num(m.get("DC"))] + [C._dc_num(k.get("DC")) for k in (m.get("checks") or []) if isinstance(k, dict)]
             vals = [v for v in vals if v is not None]
-            dcs.append((max(vals) if vals else None, m.get("id")))
+            dv = max(vals) if vals else None
+            if dv is not None and dv > 1.0 + 1e-9 and m.get("waived"):
+                exist.append((dv, m.get("id")))        # existing member carried as a retrofit-scope item
+                continue
+            dcs.append((dv, m.get("id")))
         have = [t for t in dcs if t[0] is not None]
         if have:
             dmax, idm = max(have, key=lambda t: t[0])
             miss = len(dcs) - len(have)
-            rows.append(["%s D/C &le; 1.0 (%d of %d %ss with a D/C)" % (what, len(have), len(dcs), what.lower()),
-                         "max %s (%s)" % (_n(dmax, dc=True), _esc(idm)),
-                         "PASS" if dmax <= 1.0 + 1e-9 and not miss else ("FAIL" if dmax > 1.0 + 1e-9 else "INCOMPLETE")])
+            ex_txt = ("; existing %ss over capacity carried as retrofit scope: %s" % (
+                what.lower(), ", ".join("%s %s" % (_esc(i), _n(v, dc=True)) for v, i in sorted(exist, reverse=True)[:6]))
+                if exist else "")
+            rows.append(["%s D/C &le; 1.0 (%d of %d %ss with a D/C%s)" % (what, len(have), len(dcs), what.lower(),
+                                                                         ", new / altered" if exist else ""),
+                         "max %s (%s)%s" % (_n(dmax, dc=True), _esc(idm), ex_txt),
+                         ("PASS" if dmax <= 1.0 + 1e-9 and not miss else ("FAIL" if dmax > 1.0 + 1e-9 else "INCOMPLETE"))
+                         + ("; existing: retrofit scope" if exist else "")])
         else:
             rows.append(["%s D/C &le; 1.0" % what, "no D/C recorded", "INCOMPLETE"])
     try:

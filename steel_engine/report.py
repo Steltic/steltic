@@ -2703,7 +2703,8 @@ def _irregularity_section(cfg, runs, sf=None):
             for s_ in range(1, min(len(v), NF)):
                 if v[s_] > 0:
                     allr.append((d, s_, v[s_ - 1] / v[s_]))
-                    if v[s_ - 1] / v[s_] < 0.80:          # Table 12.3-2 Type 4a: < 80 % of the story above
+                    if v[s_ - 1] / v[s_] < 1.0:           # ASCE 7-22 Table 12.3-2 Type 4a: LESS THAN the story above
+                                                          # (the 80 % trigger is ASCE 7-16 Type 5a)
                         rr.append((d, s_, v[s_ - 1] / v[s_]))
         if rr:
             dmin = min(rr, key=lambda t: t[2])
@@ -2717,8 +2718,8 @@ def _irregularity_section(cfg, runs, sf=None):
             elif sdc in ("E", "F"): trig["12.3.3.1"].append("V4a")
         elif allr:
             lo = min(allr, key=lambda t: t[2])
-            v4 = ("Not present: lowest story strength ratio %s story %d = %.0f%% of the story above (limit 80%%, "
-                  "declared story strengths)" % (lo[0], lo[1], 100 * lo[2]))
+            v4 = ("Not present: lowest story strength ratio %s story %d = %.0f%% of the story above (Type 4a: less "
+                  "than the story above; Type 4b: less than 65%%; declared story strengths)" % (lo[0], lo[1], 100 * lo[2]))
         else:
             v4 = "Not present: every story at least as strong as the story above (declared story strengths)"
     else:
@@ -2733,7 +2734,7 @@ def _irregularity_section(cfg, runs, sf=None):
         ["Vertical 1a/1b &mdash; Soft / extreme soft story (70/80%, 60/70%)", v1],
         ["Vertical 2 &mdash; Geometric (SFRS dimension &gt; 130%)", v2],
         ["Vertical 3 &mdash; In-plane discontinuity", v3],
-        ["Vertical 4a/4b &mdash; Weak / extreme weak story", v4]]
+        ["Vertical 4a/4b &mdash; Weak / extreme weak story (less than the story above / less than 65%)", v4]]
     intro = ("<p>Evaluated against ASCE 7-22 Tables 12.3-1, 12.3-1a and 12.3-2 (SDC %s). TIR (Eq. 12.3-2) uses the "
              "story drifts at the two diaphragm edges under the &plusmn;5%% accidental eccentricity with A<sub>x</sub> = 1; "
              "story stiffness is V<sub>x</sub>/&Delta;<sub>xe</sub> at the centre of mass; the re-entrant, opening, "

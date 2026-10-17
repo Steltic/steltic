@@ -2579,8 +2579,8 @@ def _height_limit(fam, sdc=None, hn_ft=None, cfg=None, pkg=None, key=None):
 def _lfrs_table(cfg, sf=None, pkg=None):
     sf = sf or _sfrs(cfg)
     sdc = _sdc_safe(cfg)
-    try:
-        hn = E.zlevels(cfg)[-1] / 12.0
+    try:                                 # h_n above a declared seismic base (cfg['hn_ft']) wins over the model height
+        hn = float(cfg["hn_ft"]) if cfg.get("hn_ft") else E.zlevels(cfg)[-1] / 12.0
     except Exception:
         hn = float(cfg.get("hn_ft") or sum(float(h) for h in cfg.get("heights") or []) / 12.0)
     rows = []
@@ -5366,7 +5366,8 @@ def build_report(name, root=None):
         ["Plan", "%s (X) &times; %s (Y)" % (_ftin(Lx), _ftin(Ly))],
         ["Bays", ("%d &times; %d @ %s (X) / %s (Y)" % (NX, NY, _ftin(SX), _ftin(SY))) if not (cfg.get("xcoords") or cfg.get("ycoords"))
          else "%d &times; %d (variable spacing)" % (NX, NY)],
-        ["Structural height h<sub>n</sub>", _ftin(Htot)],
+        ["Structural height h<sub>n</sub>", (("%s above the seismic base (model height %s)" % (_ftin(float(cfg["hn_ft"]) * 12.0),
+                                                _ftin(Htot))) if cfg.get("hn_ft") else _ftin(Htot))],
         ["Floor system", _n(cfg.get("floor_system")) if cfg.get("floor_system") else "&mdash;"],
         ["Column bases", _esc(md.get("bases") or cfg.get("base", "fixed"))],
         ["Beam-to-column joints", _esc(md.get("joints") or ("pinned" if cfg.get("releases") else "rigid"))],

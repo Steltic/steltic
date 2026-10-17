@@ -941,7 +941,8 @@ def _transfer_issues(cfg, name, pkg):
     out=[]
     try:
         import engine3d as _E
-        pir=_E.plan_irregularities(_E.CFG.get(name) or cfg)
+        # the job's own cfg (cfg.py) first, so `check` and the report's consistency run see the same building
+        pir=_E.plan_irregularities(cfg if isinstance(cfg,dict) and cfg.get("heights") else _E.CFG.get(name))
     except Exception:
         return out
     if pir.get("setback") and isinstance(pkg,dict):

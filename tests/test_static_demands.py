@@ -268,7 +268,7 @@ def test_scbf_expected_strengths_and_chevron_unbalanced_load():
     env, kinds = SM.demand_envelope(cfg, [case], nseg=4, info_out=info)
     # the only NOT EVALUATED item: the Ecl strut axial of the two Y beams (8, 9) whose single diagonals end
     # at diaphragm-slaved nodes (VERIFY: AISC 341-22 F2.3 'struts'); the chevron beams (free apex) are evaluated
-    assert len(info["not_evaluated"]) == 1 and "Ecl AXIAL of 2 braced-bay beam(s)" in info["not_evaluated"][0]
+    assert len(info["not_evaluated"]) == 1 and "Ecl axial force in 2 braced-bay beam(s)" in info["not_evaluated"][0]
     assert "element 8, 9" in info["not_evaluated"][0]
     sin = 156.0 / L
     Pu = (T - 0.3 * C) * sin
@@ -425,12 +425,13 @@ def test_ecl_strut_axial_on_a_slaved_braced_bay_beam_is_reported_not_evaluated()
         e = env[frozenset((b["A"], b["B"]))]
         assert max(e["comp"], e["tens"]) < 0.01 * T * 300.0 / math.hypot(300.0, 156.0)   # ... yet ~0 axial here
     ne = " ".join(info["not_evaluated"])
-    assert "NOT EVALUATED" in ne and "element 8, 9" in ne and "F2.3" in ne
+    # listed under not_evaluated (the report prints it as "Not evaluated by the analysis"), never silent
+    assert info["not_evaluated"] and "~0 Ecl axial" in ne and "element 8, 9" in ne and "F2.3" in ne
     # no braces of an identified capacity-limited system -> no strut note
     cfg2 = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="OCBF", D_roof=0.0, Lr=0.0)
     info2 = {}
     SM.demand_envelope(cfg2, [case], nseg=4, info_out=info2)
-    assert not any("Ecl AXIAL" in x for x in info2["not_evaluated"])
+    assert not any("Ecl axial force" in x for x in info2["not_evaluated"])
 
 
 def test_scbf_expected_compression_length_never_exceeds_the_work_point_length_rules():

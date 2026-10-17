@@ -534,8 +534,15 @@ def _run_case(cfg, direction, Fx, accidental=False):
     for k in range(1, NF+1):
         drift.append((disp[k]-prev)/cfg["heights"][k-1]); prev = disp[k]
     ops.reactions()
-    react = [(i, j, [ops.nodeReaction(E.ntag(i, j, 0), d) for d in (1, 2, 3, 4, 5, 6)])
-             for (i, j) in info["present"][0]]
+    try:                       # every node restrained horizontally (supports at any elevation; masters excluded)
+        sup = [t for t in ops.getFixedNodes() if {1, 2} & set(ops.getFixedDOFs(t))]
+    except Exception:
+        sup = []
+    if sup:
+        react = [((t % 100000) // 100, t % 100, [ops.nodeReaction(t, d) for d in (1, 2, 3, 4, 5, 6)]) for t in sup]
+    else:
+        react = [(i, j, [ops.nodeReaction(E.ntag(i, j, 0), d) for d in (1, 2, 3, 4, 5, 6)])
+                 for (i, j) in info["present"][0]]
     return info, disp, drift, react
 
 # ============================================================ figures
@@ -1474,23 +1481,70 @@ def _load_activity(name):
     merged.sort(key=lambda r: (r.get("ts") or "", r.get("step") or 0))
     return merged, src
 
+_COLL_NAME = {"engineering_standards_A360": "AISC 360-22", "engineering_standards_A341": "AISC 341-22",
+              "engineering_standards_A358": "AISC 358-22", "engineering_standards_A342": "AISC 342-22",
+              "engineering_standards_ASCE7": "ASCE/SEI 7-22", "engineering_standards_ASCE41": "ASCE/SEI 41-23",
+              "engineering_standards_S100": "AISI S100-16 (2020)", "engineering_standards_S240": "AISI S240-20",
+              "engineering_standards_S400": "AISI S400-20", "engineering_standards_S230": "AISI S230-19",
+              "steel_design_examples": "AISC design examples"}
+_TOOL_NAME = {"search_engineering_standards": "code provision look-up", "run_python": "analysis / check run",
+              "new_activity_log": "design log started"}
+
+
+def _log_detail(tool, d):
+    """Design-log entry in engineering terms (no tool syntax, file names or paths)."""
+    d = str(d or "")
+    if tool == "search_engineering_standards":
+        m = re.match(r"\[([^\]]+)\]\s*(?:exact_section|exact_equation|exact_table|eq|table|fts|keyword)?\s*(.*)$", d)
+        if m:
+            std = _COLL_NAME.get(m.group(1), m.group(1).replace("engineering_standards_", ""))
+            rest = re.sub(r"^\u00ab|\u00bb", "", m.group(2)).replace("\u00ab", "\u201c").replace("\u00bb", "\u201d")
+            return "%s %s" % (std, rest)
+        return d
+    if tool == "run_python":
+        for pat, txt in ((r"design_and_report|run_job.*design", "analysis model, demand envelope and report"),
+                         (r"consistency\.check", "self-consistency check of the calculation package"),
+                         (r"build_report", "report rendering"), (r"fill", "member and connection design")):
+            if re.search(pat, d):
+                return txt
+        return "analysis run"
+    if tool == "new_activity_log":
+        return "design started"
+    return _PATH_RX.sub(lambda mm: os.path.basename(mm.group(0)), d)
+
+
+def _log_result(tool, r):
+    r = str(r or "")
+    m = re.match(r"(\d+) hits?", r)
+    if tool == "search_engineering_standards":
+        return ("%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")) if m else "no match"
+    m = re.search(r"(\d+) issues?", r)
+    if m:
+        return "%s issues" % m.group(1)
+    return "completed" if ("rc=0" in r or r in ("started", "")) else ("returned an error" if "rc=" in r else "")
+
+
 def _activity_section(name):
-    """QA-annex record of the tool calls that produced the design (never part of the published report body)."""
+    """QA-annex design log: the analysis runs and code-provision look-ups recorded during the design (never part
+    of the published report body), in engineering terms."""
     recs, src = _load_activity(name)
-    h = ["<h2>Activity log</h2>",
-         "<p>Tool calls made during the design, as recorded by the design harness.</p>"]
+    h = ["<h2>Design log</h2>",
+         "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
+         "prepared (the look-ups verify the governing provisions against the text of the standards).</p>"]
     if not recs:
         h.append("<p class='cnote'>No activity log was recorded for this job.</p>")
         return "".join(h)
     counts = {}
-    for r in recs: counts[r.get("tool", "other")] = counts.get(r.get("tool", "other"), 0) + 1
-    _sd = os.path.basename(src) if src else "session log"
-    h.append(f"<p>Source: {_esc(_sd)} &mdash; {len(recs)} tool calls.</p>")
-    h.append(_table(["Tool", "Calls"], [[_esc(k), counts[k]] for k in sorted(counts)]))
-    rows = [[i + 1, _esc(r.get("ts", "").split("T")[-1]), _esc(r.get("tool", "")),
-             _esc(_PATH_RX.sub(lambda mm: os.path.basename(mm.group(0)), str(r.get("detail", ""))))[:600],
-             _esc(str(r.get("result", "")))[:300]] for i, r in enumerate(recs)]
-    h.append("<h3>Chronological tool calls</h3>" + _table(["#", "time", "tool", "detail", "result"], rows))
+    for r in recs:
+        k = _TOOL_NAME.get(r.get("tool", "other"), str(r.get("tool", "other")).replace("_", " "))
+        counts[k] = counts.get(k, 0) + 1
+    h.append(f"<p>{len(recs)} entries.</p>")
+    h.append(_table(["Entry type", "Count"], [[_esc(k), counts[k]] for k in sorted(counts)]))
+    rows = [[i + 1, _esc(r.get("ts", "").split("T")[-1]),
+             _esc(_TOOL_NAME.get(r.get("tool", ""), str(r.get("tool", "")).replace("_", " "))),
+             _esc(_log_detail(r.get("tool", ""), r.get("detail", "")))[:600],
+             _esc(_log_result(r.get("tool", ""), r.get("result", "")))[:300]] for i, r in enumerate(recs)]
+    h.append("<h3>Chronological record</h3>" + _table(["#", "time", "entry", "detail", "result"], rows))
     return "".join(h)
 
 
@@ -2491,9 +2545,18 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
     n_wind = sum(1 for k in range(1, NF + 1) if wind and
                  max(float(wind[0].get(k, 0) or 0), float(wind[1].get(k, 0) or 0)) > fpx[k])
     wind_gov = n_wind > 0
+    _hi = [t for t in (_QA.get("horiz_irreg") or []) if t in ("2", "3", "4", "5")]
+    _rig = ("constraint (ASCE 7-22 &sect;12.3.1.2: concrete-filled metal deck, span-to-depth ratio of 3 or less, no Type 2&ndash;5 "
+            "horizontal irregularity)" if not _hi else
+            "constraint. Because the structure has horizontal irregularity Type %s (Table 12.3-1), the rigid condition of "
+            "&sect;12.3.1.2 does not apply directly and &sect;12.3.1 calls for the diaphragm stiffness to be considered; "
+            "the rigid idealization is the conventional approximation for a concrete-filled deck with span-to-depth ratio "
+            "of 3 or less, the collectors, chords and diaphragm connections at the irregularity are designed for the "
+            "&sect;12.10.2.1 overstrength forces (with the &sect;12.3.3.5 increase where it applies), and a semirigid "
+            "diaphragm analysis confirming the distribution is an item for the engineer of record" % ", ".join(_hi))
     just = ("<p>The floor and roof are taken as <b>rigid diaphragms</b> (concrete-filled metal deck) that distribute "
             "the story forces to the lateral frames in proportion to their stiffness, modelled with a rigid in-plane "
-            "constraint (ASCE 7-22 &sect;12.3.1.2). Collectors/drag struts deliver the diaphragm shear to the frames; chord "
+            + _rig + ". Collectors/drag struts deliver the diaphragm shear to the frames; chord "
             "forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. The diaphragm, its collectors and chords "
             "are designed for the seismic force F<sub>px</sub> below (&sect;12.10.1.1)"
             + (" and for the MWFRS wind story forces of Chapter 3, which exceed F<sub>px</sub> at %d of the %d levels of "
@@ -2651,6 +2714,7 @@ def _irregularity_section(cfg, runs, sf=None):
         trig["12.5 (orthogonal)"].append("H5"); trig["12.7.3 (3D model)"].append("H5")
     else:
         h5 = "Not present: all lateral elements parallel to X or Y (checked in the analysis model)" if sf.get("inv_ok") else NE
+    _QA["horiz_irreg"] = [t for t, hh in (("2", h2), ("3", h3), ("4", h4), ("5", h5)) if "YES" in str(hh)]
     # ---- V1 soft story (Table 12.3-2 1a/1b, with the 12.3.2.2 exceptions)
     def _soft(d):
         k = runs[d]["k"]; dr = runs[d]["drift_cm"]
@@ -3898,7 +3962,8 @@ def _grid_txt(node, r=None):
         return "(%s, %s)" % (g[0], g[1])
     try:
         n = int(node)
-        return "(%d, %d)" % ((n % 100000) // 100, n % 100)
+        k = n // 100000
+        return "(%d, %d)" % ((n % 100000) // 100, n % 100) + ((" at level %d" % k) if 0 < k < 100 else "")
     except Exception:
         return _esc(node)
 
@@ -4506,25 +4571,28 @@ def _grounding_check(cfg, name, pkg):
                      ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
     row("AISC 360-22 &mdash; member limit states", True, n("engineering_standards_A360") > 0 or cite_a360,
         f"{n('engineering_standards_A360')} queries" + (" + cited in calc_package" if cite_a360 else ""))
-    row("AISC 360 Ch. J &mdash; connection design grounded", True, has_conn,
-        "connections block present" if has_conn else "no connections block written")
+    row("AISC 360-22 Ch. J &mdash; connection design", True, has_conn,
+        "connection designs recorded" if has_conn else "no connection designs recorded")
     row("AISC 341-22 &mdash; seismic detailing / capacity design", detailed,
         n("engineering_standards_A341") > 0 or has_cap or cite_a341,
-        f"{n('engineering_standards_A341')} queries" + (" + capacity_design block" if has_cap else "")
+        f"{n('engineering_standards_A341')} queries" + (" + capacity-design record" if has_cap else "")
         + (" + cited in calc_package" if cite_a341 else ""))
     row("AISC 358 &mdash; prequalified moment connections (SMF/IMF, incl. dual/mixed)", need358,
         n("engineering_standards_A358") > 0 or cite_a358,
         f"{n('engineering_standards_A358')} queries" + (" + cited in calc_package" if cite_a358 else ""))
     nmiss = sum(1 for r in rows if "MISSING" in r[3])
-    head = ("<h3>Grounding verification</h3>"
-            f"<p>Whether the design queried the RAG collections its systems require. R = {R} "
+    head = ("<h3>Code-provision verification</h3>"
+            f"<p>Whether the governing provisions of the standards this building's systems require were verified "
+            f"against the text of the standards. R = {R} "
             + ("(&gt; 3 &mdash; AISC 341 ductile detailing applies)." if detailed
                else "(&le; 3 &mdash; system not detailed for seismic; AISC 341/358 do not apply, design per AISC 360).")
             + "</p>")
-    tail = ("<p class='note'>Grounding incomplete: the items marked MISSING were required for this building's "
-            "systems but no RAG query / calc-package evidence was found. Re-run those checks against the RAG.</p>"
-            if nmiss else "<p>All required RAG grounding is present.</p>")
-    return head + _table(["Grounding requirement", "Applies", "Evidence", "Status"], rows) + tail
+    tail = ("<p class='note'>Verification incomplete: the items marked MISSING were required for this building's "
+            "systems but no look-up or calculation-package citation was found.</p>"
+            if nmiss else "<p>All required provisions were verified against the standards.</p>")
+    rows = [[r[0], r[1], str(r[2]).replace("queries", "look-ups").replace("calc_package", "the calculation package"),
+             str(r[3]).replace("grounded", "verified")] for r in rows]
+    return head + _table(["Standard / scope", "Applies", "Evidence", "Status"], rows) + tail
 
 def _appendix_case_figs(cases, cfg):
     """Which load-case indices get a per-combo N/V/M figure in Appendix B. Default: a fast
@@ -4665,6 +4733,50 @@ def _all_sections(cfg, pkg):
     return secs
 
 
+def _cvn_rows(cfg, pkg, secs):
+    """Notch-toughness rows for heavy sections: AISC 341-22 A3.3 (SFRS: rolled shapes with flanges >= 1-1/2 in and
+    plates >= 2 in in built-up members / inelastic connection plates / BRB cores: CVN 20 ft-lbf at 70 F) and
+    AISC 360-22 A3.1c-d (rolled shapes with flanges > 2 in and built-up plates > 2 in in tension with CJP splices)."""
+    heavy, thick, plates = [], [], []
+    for s in sorted(secs):
+        try:
+            p = S.props(s, SEC=E.SEC)
+        except Exception:
+            p = None
+        tf = (p or {}).get("tf")
+        if tf and tf >= 1.5 - 1e-6:
+            heavy.append(s)
+            if tf > 2.0 + 1e-6:
+                thick.append(s)
+        m = re.match(r"BOX\d+(?:\.\d+)?X\d+(?:\.\d+)?X(\d+(?:\.\d+)?)$", s) or re.match(r"BOX\d+X(\d+(?:\.\d+)?)$", s)
+        if m and float(m.group(1)) >= 2.0:
+            plates.append(s)
+    if not (heavy or plates):
+        return []
+    try:
+        a341 = any(bool(_PIPE_A341(cfg, d)) for d in ("X", "Y"))
+    except Exception:
+        a341 = float((cfg.get("seis") or {}).get("R") or 0) > 3.0
+    rows = []
+    if a341:
+        rows.append(["Notch toughness, heavy sections in the SFRS (AISC 341-22 A3.3)",
+                     "rolled shapes with flanges &ge; 1-1/2 in.%s: CVN &ge; 20 ft-lbf at 70&deg;F, alternate core location "
+                     "(ASTM A6 Supplementary Requirement S30)%s"
+                     % ((" (" + ", ".join(_esc(x) for x in heavy[:8]) + ")") if heavy else "",
+                        ("; plates &ge; 2 in. in built-up members (" + ", ".join(_esc(x) for x in plates[:6]) +
+                         "): CVN &ge; 20 ft-lbf at 70&deg;F (ASTM A673, Frequency P)") if plates else "")])
+    if thick or plates:
+        rows.append(["Notch toughness, heavy shapes and plates in tension (AISC 360-22 A3.1c, A3.1d)",
+                     "shapes with flanges over 2 in. and built-up plates over 2 in. thick used as tension members or "
+                     "with CJP-welded tension splices: CVN &ge; 20 ft-lbf at 70&deg;F"])
+    return rows
+
+
+def _PIPE_A341(cfg, d):
+    import design_pipeline as _DP
+    return _DP.aisc341_applies(cfg, d)
+
+
 def _materials_table(cfg, pkg=None):
     """Material specifications: cfg['materials'] when declared, else inferred from the sections used and from the
     connection / composite records (W: A992; HSS: A500 Gr. C; plates A572 Gr. 50 (A36 where recorded); bolts ASTM
@@ -4681,6 +4793,7 @@ def _materials_table(cfg, pkg=None):
                 rows.append([_n(x.get("item", x.get("element", ""))), _n(x.get("spec", x.get("value", "")))
                              + ((" &mdash; " + _n(x.get("props"))) if x.get("props") else "")])
     if rows:
+        rows += _cvn_rows(cfg, pkg, _all_sections(cfg, pkg))
         return _table(["Element", "Specification"], rows) + "<p class='cnote'>E = 29,000 ksi for all structural steel.</p>"
     secs = _all_sections(cfg, pkg)
     blob = ""
@@ -4727,6 +4840,7 @@ def _materials_table(cfg, pkg=None):
         rows.append(["Floor slab", spec])
         if re.search(r"\bstud", blob_l):
             rows.append(["Steel headed stud anchors", "ASTM A108, F<sub>u</sub> = 65 ksi (AWS D1.1 Type B)"])
+    rows += _cvn_rows(cfg, pkg, secs)
     return (_table(["Element", "Specification"], rows)
             + "<p class='cnote'>E = 29,000 ksi for all structural steel. Specifications inferred from the sections and "
             "the connection records of this design; the project specification governs.</p>")
@@ -4845,9 +4959,9 @@ def _qa_annex(name, cfg, pkg, path):
     try:
         parts.append(_activity_section(name))
     except Exception as ex:
-        parts.append("<p class='note'>[activity log unavailable: %s]</p>" % _esc(ex))
+        parts.append("<p class='note'>[design log unavailable: %s]</p>" % _esc(ex))
     html = ("<!doctype html><html><head><meta charset='utf-8'><title>%s QA annex</title><style>%s%s</style></head>"
-            "<body>%s</body></html>" % (_esc(name), CSS, CHK_CSS, "".join(parts)))
+            "<body>%s</body></html>" % (_esc(cfg.get("project") or name), CSS, CHK_CSS, "".join(parts)))
     open(path, "w", encoding="utf-8").write(html)
     return path
 
@@ -4974,15 +5088,15 @@ def build_report(name, root=None):
         parts.append("<h3>Horizontal force distribution to the lateral frames</h3>")
         try: parts.append(_horizontal_distribution(cfg, Fx, VwX, VwY, sf, runs))
         except Exception as ex: parts.append(f"<p class='note'>[distribution failed: {_esc(ex)}]</p>")
+        irr_html = None                     # the screen runs first so the diaphragm text knows Types 2-5
+        if runs is not None:
+            try: irr_html = _irregularity_section(cfg, runs, sf)
+            except Exception as ex: irr_html = f"<p class='note'>[irregularity screen failed: {_esc(ex)}] &mdash; irregularities NOT EVALUATED</p>"
         parts.append("<h3>Diaphragm classification and design force (ASCE 7-22 &sect;12.10)</h3>")
         try: parts.append(_diaphragm_section(cfg, _fx_by_dir(Fx)[0], (FwX, FwY) if FwX else None, pkg))
         except Exception as ex: parts.append(f"<p class='note'>[diaphragm section failed: {_esc(ex)}]</p>")
         parts.append("<h3>Plan and vertical irregularity screening</h3>")
-        if runs is not None:
-            try: parts.append(_irregularity_section(cfg, runs, sf))
-            except Exception as ex: parts.append(f"<p class='note'>[irregularity screen failed: {_esc(ex)}] &mdash; irregularities NOT EVALUATED</p>")
-        else:
-            parts.append("<p class='note'>Irregularity screen NOT EVALUATED (the drift/torsion runs failed).</p>")
+        parts.append(irr_html or "<p class='note'>Irregularity screen NOT EVALUATED (the drift/torsion runs failed).</p>")
     else:
         parts.append("<p class='cnote'>Diaphragm design force and irregularity screening need the seismic "
                      "analysis (Chapter 3).</p>")
@@ -5289,8 +5403,8 @@ def build_report(name, root=None):
     annex = os.path.join(root, "qa_annex.html")
     try:
         _qa_annex(name, cfg, pkg, annex)
-        parts.append("<p class='cnote'>Design-process records (reference-grounding verification and the activity log of "
-                     "the design) are in the <a href='qa_annex.html'>QA annex</a>.</p>")
+        parts.append("<p class='cnote'>Design-process records (verification of the governing provisions against the "
+                     "standards, and the design log) are in the <a href='qa_annex.html'>QA annex</a>.</p>")
     except Exception as ex:
         print(f"[report] QA annex not written: {ex}")
     parts.append("<p class='cnote'><b>Professional responsibility:</b> the independent check, software validation, "

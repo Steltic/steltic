@@ -471,7 +471,8 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
     for t, fx in fixed.items():
         if t in mset or t not in coord:
             continue
-        if abs(coord[t][2] - zl[0]) <= _TOL and len(fx) >= 3 and fx[2] == 1:
+        # every vertical support (hillside / stepped foundations included), not only the lowest level
+        if len(fx) >= 3 and fx[2] == 1 and (fx[0] == 1 or fx[1] == 1):
             base_nodes.append(t)
             i, j, k = _dec(t)
             if k == 0 and 0 <= i <= NX and 0 <= j <= NY and len(fx) >= 4:

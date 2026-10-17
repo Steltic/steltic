@@ -138,6 +138,13 @@ def test_irregularity_section_prints_numbers_or_not_evaluated():
     cfg2 = _b05(story_strength={"X": [500, 900, 800, 600], "Y": [900, 900, 800, 600]})
     html2 = R._irregularity_section(cfg2, runs, R._sfrs(cfg2))
     assert "Type 4b EXTREME WEAK STORY: YES" in html2
+    # ASCE 7-22 Type 4a triggers below 100 % of the story above (7-16 Type 5a used 80 %)
+    cfg3 = _b05(story_strength={"X": [900, 1000, 1000, 1000], "Y": [1000, 1000, 1000, 1000]})
+    html3 = R._irregularity_section(cfg3, runs, R._sfrs(cfg3))
+    assert "Type 4a WEAK STORY: YES" in html3 and "90%" in html3
+    cfg4 = _b05(story_strength={"X": [1000, 1000, 900, 800], "Y": [1000, 1000, 1000, 1000]})
+    html4 = R._irregularity_section(cfg4, runs, R._sfrs(cfg4))
+    assert "WEAK STORY: YES" not in html4 and "Not present: lowest story strength ratio" in html4
 
 
 def test_soft_story_ratio_uses_story_stiffness():

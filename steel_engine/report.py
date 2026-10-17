@@ -2354,14 +2354,15 @@ def _sdc_safe(cfg):
         except Exception: return "D"
 
 
-def _height_limit(fam, sdc=None, hn_ft=None, cfg=None, pkg=None):
-    """ASCE 7-22 Table 12.2-1 structural height limit for system family `fam` in the building's SDC, evaluated
-    against h_n (with the 12.2.5.4 increase / single-story exceptions as preflight evaluates them)."""
+def _height_limit(fam, sdc=None, hn_ft=None, cfg=None, pkg=None, key=None):
+    """ASCE 7-22 Table 12.2-1 structural height limit for system family `fam` (or the preflight SYSTEMS row
+    `key`, e.g. a dual-system row) in the building's SDC, evaluated against h_n (with the 12.2.5.4 increase /
+    single-story exceptions as preflight evaluates them)."""
     try:
         import preflight as PF
     except Exception:
         PF = None
-    key = _PF_KEY.get(fam)
+    key = key or _PF_KEY.get(fam)
     if PF is None or key is None or key not in PF.SYSTEMS:
         return "SFRS not identified &mdash; limit not evaluated" if fam in ("MF?", "BF?") else "per Table 12.2-1"
     sdc = sdc or "D"
@@ -2408,8 +2409,21 @@ def _lfrs_table(cfg, sf=None, pkg=None):
             sd = E.seis_dir(cfg, d)
         except Exception:
             sd = _seis_d(cfg, d)
-        hl = "; ".join(("%s: %s" % (f if f not in ("MF?", "BF?") else "SFRS", _height_limit(f, sdc, hn, cfg, pkg)))
-                       if len(sf["dirs"][d]) > 1 else _height_limit(f, sdc, hn, cfg, pkg) for f in sf["dirs"][d])
+        dual_key = None
+        try:                                   # a dual system (12.2.5.1) takes the limits of its dual row, not its parts
+            import preflight as PF
+            _sd_txt = E.system_dir(cfg, d) if hasattr(E, "system_dir") else (cfg.get("system") or "")
+            _ps = PF.parse_system(_sd_txt or cfg)
+            if _ps.get("kind") == "dual" and _ps.get("rows") and _ps["rows"][0] in PF.SYSTEMS:
+                dual_key = _ps["rows"][0]
+        except Exception:
+            dual_key = None
+        if dual_key:
+            hl = "dual system, %s: %s" % (_esc(PF.SYSTEMS[dual_key]["name"].replace("dual: ", "")),
+                                          _height_limit(None, sdc, hn, cfg, pkg, key=dual_key))
+        else:
+            hl = "; ".join(("%s: %s" % (f if f not in ("MF?", "BF?") else "SFRS", _height_limit(f, sdc, hn, cfg, pkg)))
+                           if len(sf["dirs"][d]) > 1 else _height_limit(f, sdc, hn, cfg, pkg) for f in sf["dirs"][d])
         rows.append([f"{d} direction", _sys_label(sf, d), _fac(sd.get("R")), _fac(sd.get("Cd")), _fac(sd.get("Om0")),
                      _fac(sd.get("rho")), hl])
     tbl = _table(["Direction", "Seismic force-resisting system", "R", "C<sub>d</sub>", "&Omega;<sub>0</sub>",

@@ -694,13 +694,15 @@ def design(name, outdir=None):
         SFq = E.seismic_design_forces(cfg)          # per-direction forces + factors (HR-01/02/23)
         wlev = {k: E.floor_w(cfg, k) for k in range(1, NFq + 1)}
         SDSq = float(cfg["seis"].get("SDS", 1.0)); Ieq = float(cfg["seis"].get("Ie", 1.0))
-        Fpx_d = {}
+        Fpx_d = {}; Fpx_raw_d = {}
         for dq in ("X", "Y"):
-            Fxq = SFq[dq]["Fx"]; Fpx_d[dq] = {}
+            Fxq = SFq[dq]["Fx"]; Fpx_d[dq] = {}; Fpx_raw_d[dq] = {}
             for k in range(1, NFq + 1):
                 num = sum(Fxq[i] for i in range(k, NFq + 1)); den = sum(wlev[i] for i in range(k, NFq + 1))
+                Fpx_raw_d[dq][k] = num / den * wlev[k]                       # Eq. 12.10-1 as written
                 Fpx_d[dq][k] = min(max(num / den * wlev[k], 0.2 * SDSq * Ieq * wlev[k]), 0.4 * SDSq * Ieq * wlev[k])
         Fpx = {k: max(Fpx_d["X"][k], Fpx_d["Y"][k]) for k in range(1, NFq + 1)}
+        Fpx_raw = {k: max(Fpx_raw_d["X"][k], Fpx_raw_d["Y"][k]) for k in range(1, NFq + 1)}
         Fp_max = max(Fpx.values())
         # story-stiffness soft-story screen (each direction with ITS OWN ELF forces) + the ONE torsion
         # result (engine3d.torsion_summary: TIR with accidental torsion at the actual edges, Ax from
@@ -748,15 +750,17 @@ def design(name, outdir=None):
             Fpx_min = 0.2 * SDSq * Ieq * wlev[kmax]
             inc = 1.25 if (sdcq in ("D", "E", "F") and (pir.get("reentrant") or pir.get("setback") or tors_trig)) else 1.0
             if sdcq in ("C", "D", "E", "F"):
-                Pb, Pc = Om0q * Fp_max, inc * Fpx_min
-                Pgov = max(Pb, Pc); rule = ("12.10.2.1(b) Om0 x Fpx" if Pb >= Pc else
+                # 12.10.2.1 (b): Om0 x the force from Eq. 12.10-1 itself (not the 12.10-2 minimum / 12.10-3 cap);
+                # (c): Eq. 12.10-2 with the 2.3.6 combinations (x 1.25 where 12.3.3.5 applies)
+                Pb, Pc = Om0q * Fpx_raw[kmax], inc * Fpx_min
+                Pgov = max(Pb, Pc); rule = ("12.10.2.1(b) Om0 x Fpx (Eq. 12.10-1)" if Pb >= Pc else
                                             "12.10.2.1(c) Eq. 12.10-2 x %.2f (12.3.3.5)" % inc)
             else:
                 Pb, Pc, Pgov, rule = None, None, Fp_max, "SDC %s: Fpx (12.10.1.1), no overstrength" % sdcq
             share = 0.5
             pkg["connections"].append({
                 "id": "collector-irregularity-lines", "type": "collector / drag strut (SEEDED - REQUIRED)",
-                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Om0": Om0q, "SDC": sdcq,
+                "demand": {"Fpx_max_kip": round(Fp_max, 0), "Fpx_eq_12_10_1_kip": round(Fpx_raw[kmax], 0), "Om0": Om0q, "SDC": sdcq,
                            "P_12_10_2_1_b_kip": None if Pb is None else round(Pb, 0),
                            "P_12_10_2_1_c_kip": None if Pc is None else round(Pc, 0),
                            "increase_12_3_3_5": inc,
@@ -866,8 +870,9 @@ def design(name, outdir=None):
         # base reactions: envelope over ALL combinations (gravity, wind incl. roof uplift, rho E, Omega0,
         # Ecl) from the static demand model -- not one gravity combination (HR-17)
         for n in sorted(reac_env):
-            r = reac_env[n]; i, j = (n % 100000) // 100, n % 100
-            w.writerow(["column base @ grid(%s,%s)" % (i, j), n, "base plate/anchorage",
+            r = reac_env[n]; i, j = (n % 100000) // 100, n % 100; kk = n // 100000
+            w.writerow(["column base @ grid(%s,%s)%s" % (i, j, (" level %d" % kk) if 0 < kk < 100 else ""), n,
+                        "base plate/anchorage",
                         "P=%.1f kip [%s]; uplift=%.1f kip [%s]; V=%.1f (Vx=%.1f, Vy=%.1f) kip [%s]; M=%.1f kip-ft [%s]"
                         % (r["P"], r["P_combo"], r["uplift"], r["uplift_combo"], r["V"], r["Vx"], r["Vy"],
                            r["V_combo"], r["M"] / 12, r["M_combo"]),

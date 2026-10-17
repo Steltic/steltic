@@ -98,28 +98,95 @@ def _norm_key(k):
     return s
 
 
-def _demand_capacity_pairs(d):
-    """[(qty, demand, capacity)] recoverable from a check dict by key semantics (see above)."""
+def _key_unit(k, unit_field=""):
+    """(printed unit, scale to that unit) from a key suffix or a check's 'unit' field. Moments given in
+    kip-in are converted to kip-ft so a demand in kip-in and a capacity in kip-ft compare correctly."""
+    low = re.sub(r"[^a-z0-9]", "", str(k).lower())
+    for sfx, u, sc in (("kipft", "kip-ft", 1.0), ("kft", "kip-ft", 1.0), ("kipin", "kip-ft", 1.0 / 12.0),
+                       ("kin", "kip-ft", 1.0 / 12.0), ("kips", "kip", 1.0), ("kip", "kip", 1.0),
+                       ("ksi", "ksi", 1.0), ("in", "in.", 1.0)):
+        if low.endswith(sfx) and len(low) > len(sfx) + 1:
+            return u, sc
+    uf = re.sub(r"\s+", "", str(unit_field or "").lower())
+    if uf in ("kip-in", "kipin", "k-in", "kin", "in-kip", "in-kips"):
+        return "kip-ft", 1.0 / 12.0
+    if uf in ("kip-ft", "kipft", "k-ft", "kft", "ft-kip", "ft-kips"):
+        return "kip-ft", 1.0
+    if uf in ("kip", "kips", "k"):
+        return "kip", 1.0
+    return (str(unit_field) if unit_field and uf not in ("-", "") else ""), 1.0
+
+
+def check_terms(d):
+    """Demand / capacity terms of one limit-state check, by KEY SEMANTICS (HR-33 schema), unit-aware:
+    [{'qty': 'Mx'|'My'|'P'|'T'|'V'|'R'|'*'|'ratio', 'dem': float, 'cap': float, 'dem_key', 'cap_key',
+      'unit'}] -- moments in kip-ft. The single source for consistency's recompute and the report's
+    printed 'demand / capacity' column."""
     if not isinstance(d, dict):
         return []
+    uf = d.get("unit", d.get("units", ""))
     dem, cap = {}, {}
     for k, v in d.items():
         n = _num(v) if not isinstance(v, (dict, list)) else None
         if n is None:
             continue
         nk = _norm_key(k)
+        u, sc = _key_unit(k, uf if nk in ("demand", "capacity", "required", "available", "requiredstrength",
+                                          "availablestrength", "designstrength") else "")
         if nk in _DEM_KEYS:
-            dem.setdefault(_DEM_KEYS[nk], n)
+            dem.setdefault(_DEM_KEYS[nk], (k, n * sc, u))
         elif nk in _CAP_KEYS:
-            cap.setdefault(_CAP_KEYS[nk], n)
+            cap.setdefault(_CAP_KEYS[nk], (k, n * sc, u))
+    def term(q, a, b):
+        return {"qty": q, "dem": a[1], "cap": b[1], "dem_key": a[0], "cap_key": b[0], "unit": a[2] or b[2]}
     if "ratio" in dem and "ratio" in cap:                         # explicit demand_ratio / capacity_limit
-        return [("ratio", dem["ratio"], cap["ratio"])]
-    pairs = [(q, dem[q], cap[q]) for q in sorted(dem) if q in cap and q not in ("*", "ratio")]
+        return [term("ratio", dem["ratio"], cap["ratio"])]
+    out = [term(q, dem[q], cap[q]) for q in sorted(dem) if q in cap and q not in ("*", "ratio")]
     if "*" in dem and "*" in cap:
-        pairs.append(("*", dem["*"], cap["*"]))
-    elif not pairs and len(dem) == 1 and len(cap) == 1 and "ratio" not in dem and "ratio" not in cap:
-        pairs.append(("*", list(dem.values())[0], list(cap.values())[0]))   # e.g. Ru with 'capacity'
-    return pairs
+        out.append(term("*", dem["*"], cap["*"]))
+    elif not out and len(dem) == 1 and len(cap) == 1 and "ratio" not in dem and "ratio" not in cap:
+        out.append(term("*", list(dem.values())[0], list(cap.values())[0]))   # e.g. Ru with 'capacity'
+    return out
+
+
+def _demand_capacity_pairs(d):
+    """[(qty, demand, capacity)] recoverable from a check dict by key semantics (see check_terms)."""
+    return [(t["qty"], t["dem"], t["cap"]) for t in check_terms(d)]
+
+
+def _h1_form(text, pr):
+    """'b' for AISC 360-22 Eq. H1-1b (Pr/Pc < 0.2: Pr/(2Pc) + Mrx/Mcx + Mry/Mcy), 'a' for H1-1a (Pr/Pc + 8/9 sum M).
+    An explicit 'H1-1a' / 'H1-1b' in the check text wins; otherwise Pr/Pc decides."""
+    t = str(text or "").lower()
+    if re.search(r"h1-1\s*\(?a\)?\s*(/|or|and)\s*\(?b\b", t):
+        return "b" if pr < 0.2 else "a"
+    has_a = bool(re.search(r"h1-1\s*\(?a\b", t)); has_b = bool(re.search(r"h1-1\s*\(?b\b", t))
+    if has_b and not has_a:
+        return "b"
+    if has_a and not has_b:
+        return "a"
+    return "b" if pr < 0.2 else "a"
+
+
+def _h1_parts(terms):
+    """(Pr/Pc, sum of Mr/Mc) from a check's printed terms, or None without an axial and a moment term."""
+    q = {t["qty"]: t for t in terms if t.get("cap")}
+    ax = q.get("P") or q.get("T")
+    if ax is None or not ({"Mx", "My"} & set(q)):
+        return None
+    return ax["dem"] / ax["cap"], sum(q[a]["dem"] / q[a]["cap"] for a in ("Mx", "My") if a in q)
+
+
+def _h1_value(pr, m, form):
+    return pr / 2.0 + m if form == "b" else pr + 8.0 / 9.0 * m
+
+
+def h1_recompute(terms, text=""):
+    """AISC 360-22 Eq. H1-1a / H1-1b from a check's own printed terms (axial P or T with Mx and/or My), else None."""
+    pm = _h1_parts(terms)
+    if pm is None:
+        return None
+    return _h1_value(pm[0], pm[1], _h1_form(text, pm[0]))
 
 
 def _find(d, *subs):
@@ -251,14 +318,51 @@ def _entry_issues(kind, entry):
                            f"{dem:.3g}/{cap:.3g} = {rec:.3f} -- reconcile")
             elif cdc is None:
                 cdc = rec
-        elif pairs:                               # interaction (e.g. Pu/phiPn + Mu/phiMn): D/C >= each term
-            worst = max(pairs, key=lambda t: t[1] / t[2])
-            rec = worst[1] / worst[2]
-            if cdc is not None and cdc < rec and not _close(rec, cdc):
-                out.append(f"[{kind} {cid}] check '{cls}': D/C {cdc:.3f} < its own {worst[0]} term "
-                           f"{worst[1]:.3g}/{worst[2]:.3g} = {rec:.3f} -- reconcile")
-            elif cdc is None:
-                cdc = rec
+        elif pairs:                               # interaction (e.g. Pu/phiPn + Mu/phiMn)
+            terms = check_terms(c)
+            txt = str(cls) + " " + str(c.get("cited", ""))
+            ax = next((t for t in terms if t["qty"] in ("P", "T") and t["cap"]), None)
+            ms = [t for t in terms if t["qty"] in ("Mx", "My") and t["cap"]]
+            form = _h1_form(txt, ax["dem"] / ax["cap"]) if ax else "a"
+            named = bool(re.search(r"h1-1|h1\.[12]", txt, re.I))
+            if ax is not None and ms and named:
+                # an AISC 360-22 H1-1a / H1-1b check with its own printed terms must reproduce its D/C
+                rec = h1_recompute(terms, txt)
+                if cdc is not None and not _close(rec, cdc):
+                    out.append(f"[{kind} {cid}] check '{cls}': D/C {cdc:.3f} != Eq. H1-1{form} from its own printed "
+                               f"terms = {rec:.3f} -- reconcile")
+                elif cdc is None:
+                    cdc = rec
+                pr_, m_ = _h1_parts(terms)
+                app = "b" if pr_ < 0.2 else "a"           # H1.1: H1-1b only for Pr/Pc < 0.2
+                if form != app:
+                    rec_app = _h1_value(pr_, m_, app)
+                    if rec_app > rec + max(ABS_TOL, 0.02 * rec):   # only the unconservative choice is flagged
+                        out.append(f"[{kind} {cid}] check '{cls}': Eq. H1-1{form} used with Pr/Pc = {pr_:.3f}; AISC "
+                                   f"360-22 H1.1 requires Eq. H1-1{app} for Pr/Pc {'<' if app == 'b' else '>='} 0.2, "
+                                   f"which gives {rec_app:.3f} > {rec:.3f} -- use Eq. H1-1{app}")
+            else:
+                # lower bound: D/C >= each of its own terms, with the H1-1b axial term Pr/(2Pc) (Pr/Pc < 0.2 or
+                # labelled H1-1b) and the H1-1a moment term 8/9 Mr/Mc
+                def lb(t):
+                    r = t["dem"] / t["cap"] if t["cap"] else 0.0
+                    if t["qty"] in ("P", "T"):
+                        return r / 2.0 if form == "b" else r
+                    if t["qty"] in ("Mx", "My"):
+                        return r if form == "b" else 8.0 / 9.0 * r
+                    return r
+                worst = max(terms, key=lb) if terms else None
+                rec = lb(worst) if worst else 0.0
+                if worst is not None and cdc is not None and cdc < rec and not _close(rec, cdc):
+                    term_txt = ("%s/(2 x %s)" % ("%.3g" % worst["dem"], "%.3g" % worst["cap"])
+                                if worst["qty"] in ("P", "T") and form == "b" else
+                                "8/9 x %.3g/%.3g" % (worst["dem"], worst["cap"])
+                                if worst["qty"] in ("Mx", "My") and form == "a" else
+                                "%.3g/%.3g" % (worst["dem"], worst["cap"]))
+                    out.append(f"[{kind} {cid}] check '{cls}': D/C {cdc:.3f} < its own {worst['qty']} term "
+                               f"{term_txt} = {rec:.3f} -- reconcile")
+                elif cdc is None:
+                    cdc = rec
         if cdc is not None:
             check_dcs.append((cls, cdc))
 
@@ -299,6 +403,168 @@ def _entry_issues(kind, entry):
 
     out += _one_value_issues(kind, cid, entry)
     return out
+
+
+# ---- printed analysis envelope vs printed capacity / check demands (US-practice audit item 1) --------
+# The member block prints the pipeline's envelope (inputs), the capacity dict and the headline D/C side by
+# side; a reviewer re-derives D/C from THOSE numbers. Two rules:
+#   (1) printed envelope / printed capacity (and H1-1 from the printed P and M) must not exceed the
+#       headline D/C;
+#   (2) a limit-state check of a given quantity must not use a demand below 0.98 x the printed envelope of
+#       that quantity, unless the check states its basis ('subgroup', 'envelope of ...', 'concurrent ...').
+# Checks of another load stage or a non-force quantity (construction / wet concrete, deflection, vibration,
+# slenderness, width-thickness) are not compared.
+ENV_QTY = (("P", "P_comp_kip", 1.0), ("T", "P_tens_kip", 1.0), ("Mx", "Mz_kipin", 1.0 / 12.0),
+           ("My", "My_kipin", 1.0 / 12.0), ("V", "V_kip", 1.0))
+QTY_NAME = {"P": "axial compression", "T": "axial tension", "Mx": "major-axis moment Mx",
+            "My": "minor-axis moment My", "V": "shear", "R": "resultant", "*": "demand", "ratio": "ratio"}
+_OTHER_STAGE = re.compile(r"construct|wet[- ]?(concrete|stage)|pre-?composite|erection|unshored|deflect|"
+                          r"servic|vibrat|walking|footfall|fatigue|ponding|camber|drift|slender|b/t|h/tw|"
+                          r"width[- ]to[- ]thick|ductil|lc/r|kl/r|stud|composite ratio|partial composite", re.I)
+_BASIS_OK = re.compile(r"sub-?group|envelope of|concurrent", re.I)
+
+
+def printed_envelope(entry):
+    """{qty: value} of the member's printed analysis envelope (kip, kip-ft); quantities absent / zero omitted."""
+    inp = entry.get("inputs") if isinstance(entry.get("inputs"), dict) else {}
+    out = {}
+    for q, k, f in ENV_QTY:
+        n = _num(inp.get(k)) if not isinstance(inp.get(k), (dict, list)) else None
+        if n is not None and abs(n) > 1e-9:
+            out[q] = abs(n) * f
+    return out
+
+
+def printed_capacity(entry):
+    """{qty: value} from the member's top-level capacity dict (kip, kip-ft), by key semantics."""
+    cap = entry.get("capacity") if isinstance(entry.get("capacity"), dict) else {}
+    out = {}
+    for k, v in cap.items():
+        if isinstance(v, (dict, list, bool)):
+            continue
+        q = _CAP_KEYS.get(_norm_key(k)); c = _num(v)
+        if q in ("P", "T", "Mx", "My", "V") and c:
+            u, sc = _key_unit(k)
+            out.setdefault(q, abs(c) * sc)
+    return out
+
+
+def envelope_ratios(entry):
+    """[(qty, demand, capacity, ratio)] of printed envelope / printed capacity, plus ('H1', ...) when the
+    capacity dict carries both an axial and a flexural strength (H1-1a/b on the printed numbers)."""
+    dem, cap = printed_envelope(entry), printed_capacity(entry)
+    rows = [(q, dem[q], cap[q], dem[q] / cap[q]) for q, _k, _f in ENV_QTY if q in dem and q in cap]
+    if "P" in cap and ("Mx" in cap or "My" in cap) and ("Mx" in dem or "My" in dem) and "P" in dem:
+        pr = dem["P"] / cap["P"]
+        m = sum(dem[a] / cap[a] for a in ("Mx", "My") if a in cap and a in dem)
+        rows.append(("H1", None, None, pr + 8.0 / 9.0 * m if pr >= 0.2 else pr / 2.0 + m))
+    return rows
+
+
+def _check_text(c):
+    return " ".join(str(v) for k, v in c.items() if isinstance(v, str))
+
+
+def check_quantity(c, t):
+    """The force quantity a check term measures: the key semantics (Mu -> Mx, Vu -> V, ...) refined by the
+    limit-state text for a generic demand/capacity pair or an axial key used for tension."""
+    q = t["qty"]
+    txt = str(c.get("limit_state", c.get("name", ""))).lower()
+    if q in ("*", "R"):
+        u = t.get("unit") or ""
+        if u == "kip-ft":
+            return "My" if re.search(r"minor|weak|y-axis|\bmy\b|f6", txt) else "Mx"
+        if u == "kip":
+            if re.search(r"shear|\bg[2-6]", txt):
+                return "V"
+            if re.search(r"tension|tensile|\bd[23]\b", txt):
+                return "T"
+            if re.search(r"compress|buckl|\be[3-7]\b|strut", txt):
+                return "P"
+        return None
+    if q == "P" and re.search(r"tension|tensile|\bd[23]\b", txt) and not re.search(r"compress|buckl", txt):
+        return "T"
+    return q if q in ("P", "T", "Mx", "My", "V") else None
+
+
+def _envelope_issues(kind, entry):
+    out = []
+    if kind != "member" or not isinstance(entry, dict):
+        return out
+    cid = entry.get("id", "?")
+    dem = printed_envelope(entry)
+    if not dem:
+        return out
+    top = _dc_num(entry.get("DC"))
+    rows = envelope_ratios(entry)
+    if rows and top is not None:
+        q, d_, c_, r = max(rows, key=lambda t: t[3])
+        if r > 1.0 + 1e-9:
+            out.append("[%s %s] printed demand/capacity (%s) = %.3f > 1.0 (NG -- the printed analysis envelope "
+                       "exceeds the printed available strength; headline D/C %.3f)"
+                       % (kind, cid, "H1-1 from the printed P and M" if q == "H1" else
+                          "%s %.4g / %.4g" % (QTY_NAME.get(q, q), d_, c_), r, top))
+        elif r > top + max(0.02 * top, ABS_TOL):
+            out.append("[%s %s] printed demand/capacity (%s) = %.3f > headline D/C %.3f -- the D/C must cover "
+                       "the printed envelope, or the envelope / capacity printed is not the one designed for"
+                       % (kind, cid, "H1-1 from the printed P and M" if q == "H1" else
+                          "%s %.4g / %.4g" % (QTY_NAME.get(q, q), d_, c_), r, top))
+    for c in entry.get("checks") or []:
+        if not isinstance(c, dict):
+            continue
+        txt = _check_text(c)
+        if _OTHER_STAGE.search(txt) or _BASIS_OK.search(txt):
+            continue
+        for t in check_terms(c):
+            q = check_quantity(c, t)
+            if q not in dem or t["dem"] is None:
+                continue
+            if abs(t["dem"]) < 0.98 * dem[q]:
+                out.append("[%s %s] check '%s' uses %s = %.4g < the printed analysis envelope %.4g (%s) -- use the "
+                           "envelope, or state the basis in the check (subgroup / envelope of ... / concurrent with ...)"
+                           % (kind, cid, str(c.get("limit_state", ""))[:70], t["dem_key"], abs(t["dem"]), dem[q],
+                              QTY_NAME.get(q, q)))
+    return out
+
+
+def _combo_key(label):
+    return re.sub(r"\s+", "", re.sub(r"\s*\+\s*Ni\b.*$", "", str(label or "")))
+
+
+def stale_combo_issue(kind, entry, combo_labels):
+    """A member whose governing combination is an overstrength / capacity-limited case that the CURRENT
+    combination set no longer contains (e.g. Omega0 [col] cases of an earlier run of an R = 3 building): its
+    printed demands are from another analysis -- re-run the demands."""
+    if combo_labels is None or not isinstance(entry, dict):
+        return []
+    g = (entry.get("inputs") or {}).get("governing_combo") if isinstance(entry.get("inputs"), dict) else None
+    if not g or not re.search(r"Om0|Ecl\[|\[col\]", str(g)):
+        return []
+    keys = {_combo_key(c) for c in combo_labels}
+    if _combo_key(g) in keys:
+        return []
+    return ["[%s %s] governing combination '%s' is not in the current combination set (%s cases are no longer "
+            "generated for this building) -- the printed demands are from an earlier analysis: re-run the demand "
+            "analysis and re-check this member" % (kind, entry.get("id", "?"), re.sub(r"\s*\+Ni.*$", "", str(g)),
+                                                   "overstrength" if "Om0" in str(g) else "capacity-limited")]
+
+
+def entry_findings(kind, entry, combo_labels=None):
+    """All findings for one member / connection entry (what the report's per-entry status uses)."""
+    if not isinstance(entry, dict):
+        return []
+    return _entry_issues(kind, entry) + _envelope_issues(kind, entry) + stale_combo_issue(kind, entry, combo_labels)
+
+
+def current_combo_labels(cfg):
+    """Labels of the CURRENT ASCE 7-22 combination set for cfg (design_pipeline.combos), or None."""
+    if not isinstance(cfg, dict):
+        return None
+    try:
+        import design_pipeline as _DP
+        return [str(c[0]) for c in _DP.combos(cfg)]
+    except Exception:
+        return None
 
 
 def _completeness_issues(pkg):
@@ -810,6 +1076,210 @@ def _rbs_declaration_issues(cfg, pkg):
         return []
 
 
+def module_verdicts(pkg):
+    """[(block, verdict, [failing items])] for supplementary analysis modules recorded in the package
+    (e.g. ddm_analysis = the Direct Design Method / AISC 360-22 App. 1 system check)."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    for k, v in pkg.items():
+        if not isinstance(v, dict) or "verdict" not in v:
+            continue
+        verdict = str(v.get("verdict") or "").strip().upper()
+        fails = []
+        for c in v.get("combinations") or []:
+            if isinstance(c, dict) and "FAIL" in str(c.get("check", c.get("verdict", ""))).upper():
+                fails.append("%s: %s" % (c.get("label", "?"), c.get("check", c.get("verdict", ""))))
+        out.append((k, verdict, fails))
+    return out
+
+
+def _module_verdict_issues(pkg):
+    out = []
+    for k, verdict, fails in module_verdicts(pkg):
+        if verdict in ("FAIL", "NG", "FAILED"):
+            what = "Direct Design Method (AISC 360-22 App. 1 system check)" if k == "ddm_analysis" else k
+            out.append("[%s] %s verdict FAIL%s -- resolve (redesign or document why the supplementary check does "
+                       "not govern) before the report is final" % (k, what, (": " + "; ".join(fails[:4])) if fails else ""))
+    return out
+
+
+_SINGLE_PLATE = re.compile(r"single[- ]?plate|shear tab|fin plate|shear plate", re.I)
+_ECCENTRIC = re.compile(r"eccentric|\be\s*=\s*\d|bolt[- ]group|table 10-(9|10)|manual part 10|part 10", re.I)
+
+
+def _shear_tab_issues(pkg):
+    """AISC Manual Part 10: a single-plate (shear tab) connection is designed for the bolt-group eccentricity
+    (conventional configuration e = a/2 within the Table 10-9 limits, extended configuration e = a) -- a check
+    list that never mentions it is incomplete."""
+    out = []
+    for c in (pkg.get("connections") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(c, dict) or not c.get("checks"):
+            continue
+        txt = " ".join(str(c.get(k, "")) for k in ("id", "type", "components", "notes"))
+        if not _SINGLE_PLATE.search(txt) or re.search(r"\bmoment\b(?! released)", str(c.get("type", "")), re.I):
+            continue
+        blob = " ".join(_check_text(k) for k in c.get("checks") if isinstance(k, dict)) + " " + str(c.get("cited", ""))
+        if not _ECCENTRIC.search(blob):
+            out.append("[connection %s] single-plate shear connection without the AISC Manual Part 10 bolt-group "
+                       "eccentricity (conventional: e = a/2 within the Table 10-9 limits; extended: e = a with plate "
+                       "flexure / buckling and the supporting member) -- add it to the bolt check" % c.get("id", "?"))
+    return out
+
+
+def _mrsa_claim_issues(cfg, pkg):
+    """The package cites a modal response spectrum analysis that the engine did not run."""
+    if not isinstance(cfg, dict) or not isinstance(pkg, dict):
+        return []
+    rs = "RS" in [str(a).upper() for a in (cfg.get("analyses") or [])]
+    if rs:
+        return []
+    blob = _agent_blob({k: v for k, v in pkg.items() if k not in ("ddm_analysis",)})
+    if re.search(r"\bmrsa\b(?!\s*(not|is not|was not|n/?a))|modal response spectrum analysis|response[- ]spectrum "
+                 r"analysis|12\.9\.1\.4", blob) and not re.search(r"no mrsa|mrsa (is )?not (run|required|used)|"
+                                                                 r"elf only|elf (procedure )?(is )?permitted", blob):
+        return ["calc_package cites a modal response spectrum analysis (MRSA / 12.9.1.4 scaling) but the analysis "
+                "ran ELF only (no 'RS' in the declared analyses) -- remove the claim or run the MRSA"]
+    return []
+
+
+def _base_uplift_issues(pkg):
+    """Column-base design reactions vs the all-combination base-reaction envelope of the pipeline."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    da = pkg.get("demand_analysis") if isinstance(pkg.get("demand_analysis"), dict) else {}
+    br = da.get("base_reactions") if isinstance(da.get("base_reactions"), dict) else None
+    used, txt = 0.0, ""
+    for c in pkg.get("connections") or []:
+        if not isinstance(c, dict) or not str(c.get("id", "")).lower().startswith("conn-base"):
+            continue
+        dm = c.get("demand") if isinstance(c.get("demand"), dict) else {}
+        for k, v in dm.items():
+            if "uplift" in str(k).lower() or str(k).lower() in ("tu_kip", "t_kip", "tension_kip"):
+                n = _num(v) if not isinstance(v, (dict, list)) else None
+                if n is not None:
+                    used = max(used, abs(n))
+        txt += " " + _check_text(dm) + " " + str(c.get("design_basis", "")) + " " + str(c.get("components", ""))
+    if br is None:
+        if used > 0:
+            out.append("[connection conn-base] column-base uplift of %.0f kip is designed but the calc package has no "
+                       "per-base reaction envelope (demand_analysis.base_reactions) -- re-run the demand analysis so the "
+                       "foundation reactions come from the all-combination envelope" % used)
+        return out
+    env_up = max([abs(_num(r.get("uplift")) or 0.0) for r in br.values() if isinstance(r, dict)] or [0.0])
+    if env_up > 0.5 and used < 0.98 * env_up and not _BASIS_OK.search(txt):
+        out.append("[connection conn-base] largest designed column-base uplift %.0f kip < the base-reaction envelope "
+                   "%.0f kip (demand_analysis.base_reactions) -- design the bases for the envelope or state the basis"
+                   % (used, env_up))
+    return out
+
+
+def _vibration_issues(cfg, pkg):
+    """AISC Design Guide 11 walking vibration: expected at design stage for office floors (a_p/g <= 0.5 %)."""
+    if not isinstance(cfg, dict) or not isinstance(pkg, dict):
+        return []
+    arch = (str(cfg.get("arch", "")) + " " + str(cfg.get("occupancy", "")) + " " + str(cfg.get("notes", ""))).lower()
+    if not re.search(r"\boffice", arch) or len(cfg.get("heights") or []) < 2:
+        return []
+    if pkg.get("floor_vibration") or "vibration" in _agent_blob(pkg) or re.search(r"\bdg ?11\b", _agent_blob(pkg)):
+        return []
+    return ["office floors and NO floor-vibration check in calc_package -- record calc_package['floor_vibration'] "
+            "(AISC Design Guide 11 walking excitation: fn, effective weight W, a_p/g vs the 0.5 % office limit) for "
+            "the typical floor bay"]
+
+
+def _omega0_discontinuity_issues(cfg, pkg, name=None):
+    """ASCE 7-22 12.3.3.4: members supporting discontinuous frames (Table 12.3-1 Type 4 / Table 12.3-2 Type 3)
+    need the overstrength load effect. Flag when the screen finds the discontinuity and the combination set
+    has no Omega0 cases (the narrowed rule only generates them where AISC 341 applies or when declared)."""
+    if not isinstance(cfg, dict):
+        return []
+    try:
+        import design_pipeline as _DP
+        if _DP.omega0_column_dirs(cfg):
+            return []
+        import report as _R
+        _R._INV_CACHE.pop(id(cfg), None)
+        sf = _R._sfrs(cfg)
+        if not sf.get("inv_ok"):
+            return []
+        term, inpl = _R._discontinuities(cfg, sf)
+    except Exception:
+        return []
+    if not (term or inpl):
+        return []
+    blob = _agent_blob(pkg) if isinstance(pkg, dict) else ""
+    if re.search(r"12\.3\.3\.4", blob) and re.search(r"omega|overstrength|ω", blob):
+        return []
+    return ["discontinuous SFRS plane (Table 12.3-1 Type 4 / Table 12.3-2 Type 3) and no Omega0 combination -- "
+            "ASCE 7-22 12.3.3.4 requires the supporting members and their connections to be designed for the "
+            "overstrength load effect: declare the Omega0 column cases for the model or record the 12.3.3.4 check"]
+
+
+def _brace_r_issues(pkg):
+    """A brace whose recorded r exceeds the governing (least) radius of gyration of its section, min(rx, ry)
+    from the AISC Shapes Database (e.g. rx used for a rectangular HSS): its Lc/r and E3 strength are
+    unconservative."""
+    try:
+        import sections as _S
+    except Exception:
+        return []
+    out = []
+    for m in (pkg.get("members") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(m, dict):
+            continue
+        inp = m.get("inputs") or {}
+        if str(inp.get("kind", "")).lower() != "brace" or not inp.get("section"):
+            continue
+        r = _num(inp.get("r"))
+        if r is None:
+            continue
+        try:
+            rg = _S.brace_r(inp["section"])
+        except Exception:
+            continue
+        if r > 1.02 * rg:
+            out.append("[member %s] brace r = %.3g in. exceeds the governing radius of gyration of %s, min(rx, ry) = "
+                       "%.3g in. (AISC Shapes Database) -- recompute Lc/r and the E3 strength with r = %.3g in."
+                       % (m.get("id", "?"), r, inp["section"], rg, rg))
+    return out
+
+
+# ASCE 7-16 equation numbers that moved in ASCE 7-22 (Section 12.8 gained Eq. 12.8-2, the multi-period Sa form):
+# (formula regex, number a 7-16-style record cites, the ASCE 7-22 number, what it is)
+_EQ_722 = (
+    (r"S_?DS\s*/\s*\(?\s*R\s*/\s*I_?e", "12.8-2", "12.8-3", "Cs = SDS/(R/Ie)"),
+    (r"S_?D1\s*/\s*\(?\s*T\b", "12.8-3", "12.8-4", "Cs = SD1/(T R/Ie)"),
+    (r"0\.044\s*\*?\s*S_?DS", "12.8-5", "12.8-6", "the minimum Cs = 0.044SDSIe >= 0.01"),
+    (r"0\.5\s*\*?\s*S_?1\b", "12.8-6", "12.8-7", "the minimum Cs = 0.5S1/(R/Ie)"),
+    (r"T_?a\s*=\s*C_?t", "12.8-7", "12.8-8", "Ta = Ct hn^x"),
+    (r"F_?x\s*=\s*C_?vx", "12.8-11", "12.8-12", "Fx = Cvx V"),
+    (r"C_?vx\s*=\s*w", "12.8-12", "12.8-13", "Cvx = wx hx^k / sum wi hi^k"),
+)
+
+
+def _asce722_eq_issues(pkg):
+    """Records that cite the ASCE 7-16 number of a Section 12.8 equation (e.g. 'Eq. 12.8-2 SDS/(R/Ie)'):
+    under ASCE 7-22 the reviewer would look up a different equation."""
+    if not isinstance(pkg, dict):
+        return []
+    out = []; seen = set()
+    for t in _agent_texts({k: v for k, v in pkg.items() if k not in ("grounding", "activity_log", "_activity_log")}):
+        if "12.8-" not in t:
+            continue
+        for frx, old, new, what in _EQ_722:
+            num = r"(?:Eq(?:uation)?\.?\s*\(?)?" + re.escape(old) + r"(?!\d)\)?"
+            m = (re.search(num + r"\s*[:=]?\s*(?:\(?C_?s\s*=\s*)?(?:min(?:imum)?\s*)?(?:C_?s\s*=\s*)?" + frx, t, re.I)
+                 or re.search(frx + r"[^;,]{0,30}?" + num, t, re.I))
+            if m and (old, new) not in seen:
+                seen.add((old, new))
+                out.append("ASCE 7-22 equation number: a record cites Eq. %s for %s ('%s') -- in ASCE 7-22 that is "
+                           "Eq. %s (Eq. %s is the ASCE 7-16 number); correct the reference"
+                           % (old, what, t[max(0, m.start() - 10): m.end() + 10].strip(), new, old))
+    return out
+
+
 def check(name, root=None, pkg=None, verbose=True):
     """Run the self-consistency check. Returns a list of issue strings ([] == consistent).
     The verdict is also written to design/consistency_result.json (with the hashes of the package
@@ -840,12 +1310,17 @@ def check(name, root=None, pkg=None, verbose=True):
     if not isinstance(conns, list) or len(conns) == 0:
         issues.append("connections list is empty -- connections are a REQUIRED deliverable "
                       "(design them in place; demands-and-basis alone is incomplete)")
+    _dcfg0 = _load_cfg(root if root else os.path.join(os.environ.get("STEEL_BUILDER_JOBS") or _here_repo(), name), name)
+    _labels = current_combo_labels(_dcfg0)
     for m in members:
         if isinstance(m, dict):
-            issues += _entry_issues("member", m)
+            issues += entry_findings("member", m, _labels)  # incl. printed envelope vs capacity / check demand
     for c in conns:
         if isinstance(c, dict):
             issues += _entry_issues("connection", c)
+    issues += _module_verdict_issues(pkg)                   # e.g. ddm_analysis verdict FAIL
+    issues += _shear_tab_issues(pkg)                        # AISC Manual Part 10 bolt-group eccentricity
+    issues += _base_uplift_issues(pkg)                      # base design uplift vs the reaction envelope
 
     _root = root if root else os.path.join(os.environ.get("STEEL_BUILDER_JOBS") or _here_repo(), name)
     if not os.path.exists(os.path.join(_root, "cfg.py")):
@@ -862,6 +1337,11 @@ def check(name, root=None, pkg=None, verbose=True):
     issues += _system_checks_issues(_dcfg, pkg)             # R9 per-system required checks
     issues += _completeness_issues(pkg)
     issues += _rbs_declaration_issues(_dcfg, pkg)            # HR-22 x HR-09: one drift for gate/report/package
+    issues += _mrsa_claim_issues(_dcfg, pkg)                 # MRSA cited but only ELF run
+    issues += _vibration_issues(_dcfg, pkg)                  # DG11 walking vibration for office floors
+    issues += _omega0_discontinuity_issues(_dcfg, pkg, name)  # 12.3.3.4 with the narrowed Omega0 rule
+    issues += _asce722_eq_issues(pkg)                       # ASCE 7-16 equation numbers cited
+    issues += _brace_r_issues(pkg)                          # brace r above min(rx, ry)
     _same = _from_disk
     if not _same:
         try:

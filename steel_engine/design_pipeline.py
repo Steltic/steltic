@@ -521,7 +521,12 @@ def design(name, outdir=None):
         inp = {"kind": kind, "role": role, "section": sec, "length_in": round(L, 1)}
         p = P(sec)
         if kind == "brace":
-            inp.update(A=(E.HSS.get(sec) if hasattr(E, "HSS") else None), r=S.brace_r(sec))
+            try:
+                _r = S.brace_r(sec)
+            except Exception as _ex:                 # BRB cores, SPSW strips, single angles: no tabulated r
+                _r = None
+                inp["r_note"] = "least radius of gyration not tabulated for %s -- give r with the brace design" % sec
+            inp.update(A=(E.HSS.get(sec) if hasattr(E, "HSS") else None), r=_r)
             # buckling length seed (the same rule as the expected-strength cases): half the work-point
             # length for X-brace diagonals connected at the crossing, else the work-point length; the
             # longest brace of the group governs
@@ -782,6 +787,7 @@ def design(name, outdir=None):
         "live_load_reduction": dinfo.get("llr") or {"applied": False,
                                                     "basis": "unreduced floor live load (conservative)"},
         "omega0_columns": _om0_txt, "aisc341_applies": _a341,
+        "combinations": [c[0] for c in cases],
         "base_reactions": {str(n): dict({k: (round(v, 1) if isinstance(v, float) else v) for k, v in r.items()},
                                         grid=[(n % 100000) // 100, n % 100])
                            for n, r in sorted(reac_env.items())},

@@ -15,7 +15,7 @@ props(name) -> dict with keys: A, Ix, Iy, J, Zx, Zy, Sx, Sy, rx, ry, Aw, ho, Cw,
 d, tw, bf, tf  (units in, in^2, in^3, in^4, in^6).
 brace_r(key) -> radius of gyration (in) for an HSS brace key.
 """
-import os, csv, math
+import os, csv, math, re
 
 # tabulated extras for W-shapes used: Zx (in^3), d, tw, bf, tf (in)
 _GEOM = {
@@ -101,13 +101,31 @@ def props(name, SEC=None):
                 Aw=Aw,ho=ho,Cw=Cw,rts=rts,d=dd,tw=tw,bf=bf,tf=tf)
 
 def brace_r(key):
-    r = _HSS_R.get(key)
+    """Governing (least) radius of gyration, in., of a brace section for flexural buckling.
+
+    The AISC Shapes Database v16.0 (aisc_shapes.csv) is authoritative: r = min(rx, ry), so a rectangular
+    HSS governs on ry (HSS8X4X1/2 -> 1.56, not rx = 2.71); square / round HSS and pipes have rx = ry.
+    The engine's legacy brace keys (H4 ... H14) that are not shape labels use the tabulated r. A single
+    angle governs on rz, which the database file does not carry, and an unknown label has no r at all:
+    both raise instead of returning a guessed value (the old silent 2.5 in. fallback is gone)."""
+    k = str(key).strip()
+    ku = k.upper()
+    if re.match(r"^L\d", ku):
+        raise KeyError("brace_r: %r is a single angle -- its governing r is rz (AISC 360-22 E5), which "
+                       "aisc_shapes.csv does not carry; give the brace r explicitly" % (key,))
+    tab = _load_csv()
+    d = tab.get(ku) or tab.get(re.sub(r"X\.(\d)", r"X0.\1", ku)) or tab.get(re.sub(r"X0\.(\d)", r"X.\1", ku))
+    if d:                                   # round HSS: Manual 'HSS6.625X.280' = database 'HSS6.625X0.280'
+        rs = [x for x in (d.get("rx"), d.get("ry")) if x]
+        if rs:
+            return min(rs)
+        if d.get("A") and d.get("Ix") and d.get("Iy"):
+            return math.sqrt(min(d["Ix"], d["Iy"]) / d["A"])
+    r = _HSS_R.get(k, _HSS_R.get(ku))
     if r is not None:
         return r
-    d = _load_csv().get(str(key).upper())          # B6: any HSS resolves rx from the Shapes DB CSV
-    if d and d.get("rx"):
-        return d["rx"]
-    return 2.5
+    raise KeyError("brace_r: section %r is not in the AISC Shapes Database (aisc_shapes.csv) or the engine brace "
+                   "table -- use a valid AISC label (e.g. 'HSS6X6X3/8') or give the brace r explicitly" % (key,))
 
 def hss_b_over_t(name, spec="A1085"):
     """Flat-width / design-wall ratio b/t for a SQUARE/RECT HSS, used for AISC 341 Table D1.1 ductility.

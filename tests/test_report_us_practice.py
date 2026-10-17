@@ -188,8 +188,8 @@ def test_ddm_seismic_combinations_are_not_printed_as_pass():
 def test_hazard_table_snow_rain_and_tornado():
     c = _cfg()
     t = _text(R._design_basis_codes(c, c["seis"]))
-    assert "Snow load (ASCE 7-22 Ch. 7) not applicable at site" in t
-    assert "Rain load (ASCE 7-22 Ch. 8) not applicable at site" in t and "Tornado" not in t
+    assert "Snow load (ASCE 7-22 Ch. 7) no snow load in the design criteria" in t
+    assert "Rain load (ASCE 7-22 Ch. 8) no rain load in the design criteria" in t and "Tornado" not in t
     c3 = _cfg(risk_category="III", seis=E.seis(1.0, 0.6, 0.6, 8, 0.028, 0.8, 1.4, Ie=1.25), snow=25.0)
     t3 = _text(R._design_basis_codes(c3, c3["seis"]))
     assert "Tornado loads (ASCE 7-22 Ch. 32)" in t3 and "design roof snow load S = 25 psf" in t3

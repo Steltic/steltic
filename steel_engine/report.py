@@ -1132,11 +1132,11 @@ def _gravity_loads_table(cfg, pkg=None):
                 extra.append("%s = %s" % (lab, _n(v)))
         rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _psf(snow) + ((" (" + ", ".join(extra) + ")") if extra else "")])
     else:
-        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", "not applicable at site (no snow load)"])
+        rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     if rain not in (None, "", 0, {}):
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _psf(rain) if isinstance(rain, (int, float)) else _n(rain)])
     elif snow <= 0:
-        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", "not applicable at site (no rain load)"])
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     else:
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", "not evaluated in this package (roof drainage design by others)"])
     smo = cfg.get("seismic_mass_only")
@@ -2285,10 +2285,10 @@ def _design_basis_codes(cfg, s, root=None, pkg=None, ctx=None):
     snow = float(cfg.get("snow", 0) or 0)
     crows.append(["Snow load (ASCE 7-22 Ch. 7)", ("design roof snow load S = %s psf%s" % (
         _n(snow), (", ground snow p<sub>g</sub> = %s psf" % _n(cfg.get("pg"))) if cfg.get("pg") else ""))
-        if snow > 0 else "not applicable at site"])
+        if snow > 0 else _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
     rain = cfg.get("rain")
     crows.append(["Rain load (ASCE 7-22 Ch. 8)", (_n(rain) if not isinstance(rain, (int, float)) else _psf(rain))
-                  if rain not in (None, "", 0, {}) else ("not applicable at site" if snow <= 0 else
+                  if rain not in (None, "", 0, {}) else (_esc(cfg.get("rain_basis") or "no rain load in the design criteria") if snow <= 0 else
                                                           "not evaluated in this package (roof drainage design by others)")])
     if str(RC).upper() in ("III", "IV"):
         crows.append(["Tornado loads (ASCE 7-22 Ch. 32)", _n(cfg.get("tornado")) if cfg.get("tornado") else
@@ -2773,7 +2773,7 @@ def _gravity_loads_note(cfg=None, pkg=None):
     rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>%s; snow drift, unbalanced or sliding snow "
             "and ponding, where they apply, are addressed in the member design records (Chapter 6) and are not part "
             "of the analysis-model loading." % (" and the uniform roof snow load S" if snow > 0 else
-                                                  " (no snow load applies at the site)"))
+                                                  " (no snow load in the design criteria)"))
     return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
             "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
 

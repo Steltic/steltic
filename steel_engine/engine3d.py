@@ -1102,9 +1102,9 @@ def _elf_impl(cfg, T1, direction=None):
     W = sum(floor_w(cfg, k) for k in range(1, NF+1))
     Ta = s["Ct"]*(z[-1]/12)**s["x"]; Tu = min(T1, s["Cu"]*Ta)          # 12.8.2 / Eq. 12.8-8
     R, Ie = s["R"], s["Ie"]
-    Cs = s["SDS"]/(R/Ie)                                                 # Eq. 12.8-2
+    Cs = s["SDS"]/(R/Ie)                                                 # 12.8.1.1 Method 2, Eq. 12.8-3
     TL = s.get("TL", 8.0)
-    cap = s["SD1"]/(Tu*(R/Ie)) if Tu <= TL else s["SD1"]*TL/(Tu**2*(R/Ie))   # Eq. 12.8-3 / -4
+    cap = s["SD1"]/(Tu*(R/Ie)) if Tu <= TL else s["SD1"]*TL/(Tu**2*(R/Ie))   # Eq. 12.8-4 / -5
     Cs = min(Cs, cap); cmin = max(0.044*s["SDS"]*Ie, 0.01)                   # Eq. 12.8-6
     if s.get("S1", 0) >= 0.6: cmin = max(cmin, 0.5*s["S1"]/(R/Ie))          # Eq. 12.8-7
     Cs = max(Cs, cmin); V = Cs*W

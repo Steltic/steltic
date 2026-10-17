@@ -313,7 +313,7 @@ class _Rec:
         return getattr(ops, name)(*a)
 
 
-def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False):
+def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False, beam_I=None):
     """Distribute gravity over an AGENT-BUILT (custom_build) model. We RECORD every OpenSees call the
     custom_build makes, then REPLAY it with the beams sub-divided into `nseg` elements.
     Element kind and section come from the returned info['ele'] list looked up BY TAG (HR-29); an
@@ -390,6 +390,10 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
         if kind == "beam" and etype == "elasticBeamColumn" and len(a) >= 11:
             props = a[4:10]; ttag = a[10]; relz, rely = _parse_rel(a[11:])
             (x1, y1, z1) = coord[n1]; (x2, y2, z2) = coord[n2]
+            if beam_I is not None:                 # serviceability: composite lower-bound I (AISC Comm. I3.2)
+                Ieff = beam_I(sec, z1)
+                if Ieff:
+                    props = list(props); props[4] = float(Ieff)
             L = ((x2-x1)**2 + (y2-y1)**2 + (z2-z1)**2) ** 0.5
             bm = {"etag": tag, "A": n1, "B": n2, "L": L, "sec": sec, "relz": relz, "rely": rely,
                   "i": -1, "j": -1, "k": None, "dir": "X" if abs(x2-x1) >= abs(y2-y1) else "Y",
@@ -514,7 +518,7 @@ def _infer_kind(a, coord):
     return "col" if abs(z2 - z1) > max(abs(x2 - x1), abs(y2 - y1)) else "beam"
 
 
-def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False):
+def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=False, beam_I=None):
     """Build the static model. Beams are sub-divided into `nseg` sub-elements with real intermediate
     nodes; columns and braces stay single elements. Returns a dict describing the model so loads can
     be applied and per-member diagrams reassembled. Every beam carries its parent grid span
@@ -522,7 +526,7 @@ def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=
     the PARENT span's indices, so subdivided beams are located on their real grid line.
     stiff / drop / fix_masters: see _staticize_custom."""
     if cfg.get("custom_build"):
-        return _staticize_custom(cfg, transf, nseg, stiff, drop, fix_masters)
+        return _staticize_custom(cfg, transf, nseg, stiff, drop, fix_masters, beam_I)
     R = _Rec(); warnings = []
     ops.wipe(); R("model", "basic", "-ndm", 3, "-ndf", 6)
     NX, NY = cfg["NX"], cfg["NY"]
@@ -1244,6 +1248,81 @@ def _ss_mid_defl(plist, Lp):
     return sum((xs[q + 1] - xs[q]) * 0.5 * (M[q] * m[q] + M[q + 1] * m[q + 1]) for q in range(len(xs) - 1))
 
 
+def _span_deflections(cfg, model, modes, fD, fL, rf):
+    """{(k, dir, i, j): max |vertical displacement - chord|} for one gravity solve (see service_deflections)."""
+    _reset(); ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    g = apply_case_gravity(cfg, model, fD, fL, rf, modes=modes)
+    if _solve() != 0:
+        return None
+    pcs = g["pieces"]; out = {}
+    for par, bms in model["by_span"].items():
+        k, d, i, j = par
+        A, B, _xa, _ya, _xb, _yb, Lp = model["spans"][k][(d, i, j)]
+        zA = ops.nodeDisp(A, 3); zB = ops.nodeDisp(B, 3)
+        dmax = 0.0
+        for bm in bms:
+            n = len(bm["nodes"]) - 1
+            for q, nd in enumerate(bm["nodes"]):
+                sp = bm["sA"] + (bm["sB"] - bm["sA"]) * q / max(n, 1)
+                chord = zA + (zB - zA) * sp / Lp
+                dmax = max(dmax, abs(ops.nodeDisp(nd, 3) - chord))
+        lam = 1.0
+        sides = [(k, i, jj) for jj in (j - 1, j)] if d == "X" else [(k, ii, j) for ii in (i - 1, i)]
+        if any(modes.get(sd, ("",))[0] == "default" for sd in sides):
+            dg = _ss_mid_defl(_floor_plist(pcs, par), Lp)
+            da = _ss_mid_defl(pcs["span"].get(par, []), Lp)
+            if da > 1e-12 and dg > da:
+                lam = dg / da
+        out[par] = (Lp, dmax * lam, bms[0].get("sec"))
+    return out
+
+
+def _service_deflections_composite(cfg, comp, nseg=6):
+    """Unshored composite floors (AISC 360-22 I3.1b; Commentary I3.2 lower-bound I): the precomposite dead
+    load (wet concrete + deck, comp['precomposite_psf']) on the BARE steel beams, minus the specified camber;
+    the rest of the dead load (superimposed, cladding) and the live load on the composite beams with
+    comp['I_eff'][section] (in4). Roof beams stay bare unless comp['roof'] is True. Returns the same
+    {(k, dir, i, j): dict(L, LL, TL, sec, composite, camber, pre)} as service_deflections."""
+    NF = len(cfg["heights"])
+    Ieff = {str(k).upper(): float(v) for k, v in (comp.get("I_eff") or {}).items()}
+    camber = {str(k).upper(): float(v) for k, v in (comp.get("camber_in") or {}).items()}
+    pre = float(comp.get("precomposite_psf", 0.0) or 0.0)
+    roof_too = bool(comp.get("roof", False))
+    zl = zlevels(cfg)
+    ztop = zl[-1]
+    def beam_I(sec, z):
+        if sec is None:
+            return None
+        if (not roof_too) and abs(z - ztop) < 1.0:
+            return None
+        return Ieff.get(str(sec).upper())
+    tot = {}
+    for b in ("Lr", "S", "R"):
+        tot[b] = sum(roof_psf(cfg, k)[("Lr", "S", "R").index(b)] for k in range(1, NF + 1))
+    rb = max(tot, key=lambda b: tot[b])
+    rf = RoofFactors(**{rb: 1.0}); zero = _mk_roof(0.0, 0.0, 0.0, 0.0)
+    Dk = {k: dead_psf(cfg, k) for k in range(1, NF + 1)}
+    roofk = lambda k: (k == NF)
+    cpre = dict(cfg, D_by_level={k: (Dk[k] if (roofk(k) and not roof_too) else min(pre, Dk[k])) for k in Dk},
+                extra_mass_floors={}, clad=0.0)
+    cpost = dict(cfg, D_by_level={k: (0.0 if (roofk(k) and not roof_too) else max(Dk[k] - pre, 0.0)) for k in Dk},
+                 extra_mass_floors={})
+    bare = build_static(cfg, "Linear", nseg)
+    modes = bay_modes(cfg, bare)
+    dpre = _span_deflections(cpre, bare, modes, 1.0, 0.0, zero) or {}
+    compm = build_static(cfg, "Linear", nseg, beam_I=beam_I)
+    dpost = _span_deflections(cpost, compm, modes, 1.0, 1.0, rf) or {}
+    dll = _span_deflections(cfg, compm, modes, 0.0, 1.0, rf) or {}
+    out = {}
+    for par, (Lp, dl, sec) in dll.items():
+        k = par[0]
+        c = camber.get(str(sec).upper(), 0.0) if (not roofk(k) or roof_too) else 0.0
+        p_ = dpre.get(par, (Lp, 0.0, sec))[1]; q_ = dpost.get(par, (Lp, 0.0, sec))[1]
+        comp_on = bool(beam_I(sec, zl[k]))
+        out[par] = dict(L=Lp, LL=dl, TL=max(p_ - c, 0.0) + q_, sec=sec, composite=comp_on, camber=c, pre=p_)
+    return out
+
+
 def service_deflections(cfg, nseg=6):
     """Beam deflections for the serviceability gate from the SOLVED static model (HR-27): unfactored
     live (floor L + the governing roof branch Lr / S / R) and total (D + live) on a nominal-stiffness
@@ -1251,7 +1330,12 @@ def service_deflections(cfg, nseg=6):
     span: max |vertical displacement - chord between the span's end nodes|; where the deck span is
     undeclared the value is scaled by the simple-span deflection ratio (half-bay girder-rule load /
     analysed load) on that span (conservative for the non-girder direction; declare deck_span).
-    Returns {(k, dir, i, j): dict(L=Lp, LL=in, TL=in, sec=section)}."""
+    Returns {(k, dir, i, j): dict(L=Lp, LL=in, TL=in, sec=section)}.
+    cfg['composite_floor'] = {'I_eff': {section: in4}, 'precomposite_psf': psf, 'camber_in': {section: in},
+    'roof': bool} switches to the unshored composite basis (_service_deflections_composite)."""
+    comp = cfg.get("composite_floor")
+    if comp and comp.get("I_eff"):
+        return _service_deflections_composite(cfg, comp, nseg)
     model = build_static(cfg, "Linear", nseg)
     modes = bay_modes(cfg, model)
     NF = model["NF"]

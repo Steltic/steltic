@@ -88,3 +88,22 @@ def test_static_replay_keeps_pdelta_after_a_linear_build_in_between():
     m2 = SM.build_static(cfg, "Linear", 2)
     types2 = {a[0] for (n, a) in m2["sig"] if n == "geomTransf"}
     assert "PDelta" not in types2, types2
+
+
+def test_composite_floor_deflection_basis_unshored():
+    """cfg['composite_floor']: precomposite dead on the bare beam + the rest on the composite I; live on the
+    composite I. A doubled I_eff halves the live deflection and the post-composite part."""
+    from example_build import example_build
+    base = _cfg(R=3.0, braced=False, L_floor=50.0, D_floor=75.0, floor_system="one-way", deck_span="X")
+    base["custom_build"] = lambda c, t: example_build(c, t)
+    bare = SM.service_deflections(base)
+    Ix = E.Ipack("W24X76")[1]
+    comp = dict(base, composite_floor={"I_eff": {"W24X76": 2 * Ix}, "precomposite_psf": 45.0})
+    cd = SM.service_deflections(comp)
+    floor = [p for p in cd if p[0] == 1 and cd[p]["LL"] > 0]
+    assert floor
+    for p in floor:
+        assert cd[p]["LL"] == pytest.approx(0.5 * bare[p]["LL"], rel=0.02)
+        # bare TL = (75 + 50) psf on Ix ; composite TL = 45 on Ix + (30 + 50) on 2 Ix
+        assert cd[p]["TL"] == pytest.approx(bare[p]["TL"] * (45.0 + 80.0 / 2) / 125.0, rel=0.03)
+        assert cd[p]["composite"] is True

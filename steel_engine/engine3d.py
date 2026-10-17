@@ -1849,14 +1849,20 @@ def beam_serviceability_detail(cfg):
     except Exception as ex:
         sd={}; out["solved_model_error"]=str(ex)
     if sd:
-        out["basis"]="solved static model (static_model.service_deflections): live = L + governing roof branch, total = D + live"
+        _cf=cfg.get("composite_floor") or {}
+        out["basis"]=("solved static model, unshored composite floors: precomposite dead load (%.0f psf) on the bare "
+                      "steel less camber + superimposed dead and live load on the composite beams (lower-bound I, "
+                      "AISC 360-22 Commentary I3.2); live = L + governing roof branch" % float(_cf.get("precomposite_psf", 0) or 0)
+                      if _cf.get("I_eff") else
+                      "solved static model (static_model.service_deflections): live = L + governing roof branch, total = D + live")
         wLLr=wTLr=0.0
         for (k,dd,i,j),v in sorted(sd.items()):
             L=v["L"]
             if L<=0: continue
             rL=v["LL"]/(L/360.0); rT=v["TL"]/(L/240.0)
             out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=(k>=NF),dLL=v["LL"],dTL=v["TL"],
-                                      rLL=rL,rTL=rT,span=(k,dd,i,j)))
+                                      rLL=rL,rTL=rT,span=(k,dd,i,j),composite=v.get("composite"),
+                                      camber=v.get("camber"),pre=v.get("pre")))
             wLLr=max(wLLr,rL); wTLr=max(wTLr,rT)
         out["LL"],out["TL"]=wLLr,wTLr
         return out

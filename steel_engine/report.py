@@ -2554,7 +2554,22 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
             "of 3 or less, the collectors, chords and diaphragm connections at the irregularity are designed for the "
             "&sect;12.10.2.1 overstrength forces (with the &sect;12.3.3.5 increase where it applies), and a semirigid "
             "diaphragm analysis confirming the distribution is an item for the engineer of record" % ", ".join(_hi))
-    just = ("<p>The floor and roof are taken as <b>rigid diaphragms</b> (concrete-filled metal deck) that distribute "
+    _flex = str(cfg.get("diaphragm", "")).lower().startswith("flex")
+    if _flex:
+        _fb = cfg.get("diaphragm_basis")
+        _fb = _n(_fb) if isinstance(_fb, str) and _fb.strip() else "ASCE 7-22 &sect;12.3.1.1 / &sect;12.3.1.3"
+        just = ("<p>The roof diaphragm is idealized as <b>flexible</b> (%s). The analysis model ties each level with an "
+                "in-plane constraint for the global solution only; the design forces of the vertical elements are the "
+                "tributary-area line forces of the flexible diaphragm (line-force and collector records), and the "
+                "accidental-torsion and torsional-irregularity provisions written for rigid diaphragms do not apply "
+                "(&sect;12.8.4.2.1, &sect;12.3.2.1). Collectors/drag struts deliver the diaphragm shear to the frames; "
+                "chord forces (M<sub>diaph</sub>/depth) are resisted by the perimeter members. The diaphragm, its "
+                "collectors and chords are designed for the seismic force F<sub>px</sub> below (&sect;12.10.1.1)" % _fb
+                + (" and for the MWFRS wind story forces of Chapter 3, which exceed F<sub>px</sub> at %d of the %d levels "
+                   "of this building." % (n_wind, NF) if wind_gov else ".") + "</p>")
+    else:
+        just = None
+    just = just or ("<p>The floor and roof are taken as <b>rigid diaphragms</b> (concrete-filled metal deck) that distribute "
             "the story forces to the lateral frames in proportion to their stiffness, modelled with a rigid in-plane "
             + _rig + ". Collectors/drag struts deliver the diaphragm shear to the frames; chord "
             "forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. The diaphragm, its collectors and chords "
@@ -4209,6 +4224,19 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
         rows.append(["Wind drift &le; project limit (%s)" % wd[2], "%.3f%% &le; %.2f%%" % (wd[0] * 100, wd[1] * 100)
                      + ("; addressed by engineering justification (listed below)" if (wd[0] > wd[1] and _wv) else ""),
                      "PASS" if wd[0] <= wd[1] else ("JUSTIFIED" if _wv else "FAIL")])
+    fv = (pkg or {}).get("floor_vibration") if isinstance(pkg, dict) else None
+    if isinstance(fv, dict) and fv:
+        _C = _consistency_mod()
+        _fvd = (_C._dc_num(fv.get("DC")) if _C else None)
+        if _fvd is None:
+            try:
+                _fvd = float(fv.get("DC"))
+            except (TypeError, ValueError):
+                _fvd = None
+        if _fvd is not None:
+            rows.append(["Floor vibration (AISC Design Guide 11)", "D/C %s%s" % (
+                _n(_fvd, dc=True), (" (%s)" % _esc(str(fv.get("criterion", ""))[:90])) if fv.get("criterion") else ""),
+                "PASS" if _fvd <= 1.0 + 1e-9 else "FAIL"])
     bd = _QA.get("beam_deflection")
     if bd:
         _bj = len(bd) > 2 and bd[2]

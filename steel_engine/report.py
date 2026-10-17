@@ -876,6 +876,24 @@ def _checks_table(chks, C=None, member=True, waived=None):
                    "Demand &divide; strength", "Status"], rows, cls="chk-t")
 
 
+def _checks_Lb(m):
+    """Unbraced lengths (in.) the member's flexure checks state: a check key Lb_in, or 'Lb = <x> in/ft' in its text."""
+    vals = []
+    for k in (m.get("checks") or []):
+        if not isinstance(k, dict):
+            continue
+        try:
+            if k.get("Lb_in") not in (None, ""):
+                vals.append(float(k["Lb_in"])); continue
+        except (TypeError, ValueError):
+            pass
+        t = " ".join(str(k.get(x) or "") for x in ("limit_state", "note", "basis"))
+        for mm in re.finditer(r"\bL_?b\s*=\s*(\d+(?:\.\d+)?)\s*(ft\b|in\b|in\.|')?", t):
+            v = float(mm.group(1))
+            vals.append(v * 12.0 if (mm.group(2) or "") in ("ft", "'") else v)
+    return vals
+
+
 def _member_calc_block(m, a341=None):
     """One calc-package member: section properties and geometry (incl. L, L<sub>c</sub> and L<sub>c</sub>/r for
     braces), the analysis demand envelope (kip, kip-ft; M<sub>x</sub> major / M<sub>y</sub> minor axis), the available
@@ -893,6 +911,15 @@ def _member_calc_block(m, a341=None):
           ("length_in", "work-point length L (in.)" if kind == "brace" else "L (in.)"), ("Lb_in", "L<sub>b</sub> (in.)"),
           ("Lc_in", "L<sub>c</sub> (in.)"), ("K", "K"), ("Cb", "C<sub>b</sub>")]
     pr = [(lbl, inp[k]) for k, lbl in pk if inp.get(k) not in (None, "")]
+    # L_b: the engine's input value is a seed (the AISC 341 D1.2b spacing); the flexure checks state the L_b they
+    # use ("Lb = 0 (deck-braced)", "Lb = 120 in"), so the table shows that value
+    _lbs = _checks_Lb(m)
+    if _lbs:
+        _lbv = (_lbs[0] if max(_lbs) - min(_lbs) < 0.5 else
+                "per limit state (%s&ndash;%s)" % (_n(min(_lbs)), _n(max(_lbs))))
+        pr = [(l_, (_lbv if l_ == "L<sub>b</sub> (in.)" else v_)) for l_, v_ in pr]
+        if not any(l_ == "L<sub>b</sub> (in.)" for l_, _ in pr):
+            pr.append(("L<sub>b</sub> (in.)", _lbv))
     r_gov = None
     if kind == "brace" and sec:
         try:
@@ -3663,9 +3690,10 @@ _HARNESS_KEYS = {"corpus_defects", "gate_waivers", "pipeline_seed", "framework_s
 
 _COMPOSITE_SYN = {   # tolerant key synonyms seen across agent packages (candidates + gold)
     "pct":   ("partial_composite_ratio", "partial_composite_percent", "partial_composite_pct",
-              "degree_of_composite", "composite_ratio"),
-    "Qn":    ("stud_Qn_kip", "Qn_kip", "Qn"),
-    "studs": ("stud_count_total", "n_studs", "studs_total", "n_per_half_span", "stud_schedule", "studs"),
+              "degree_of_composite", "composite_ratio", "percent_composite", "composite_pct"),
+    "Qn":    ("stud_Qn_kip", "Qn_kip", "Qn", "Qn_per_stud_kip"),
+    "studs": ("stud_count_total", "n_studs", "n_studs_total", "studs_total", "studs_per_beam", "n_per_half_span",
+              "stud_schedule", "studs"),
     "camber":("camber_in", "camber"),
     "ILB":   ("I_LB_in4", "ILB_in4", "I_LB", "lower_bound_I_in4", "I_lb_in4"),
     "wet":   ("wet_stage_phiMn_kipft", "wet_stage_phiMn_kipin", "Mu_wet_kipin",
@@ -3786,13 +3814,16 @@ def _composite_section(pkg):
     cd = pkg.get("composite_design")
     rows = []
     for m in pkg.get("members", []) or []:
-        cap = m.get("capacity") if isinstance(m.get("capacity"), dict) else {}
+        srcs = [d for d in (m.get("capacity"), m.get("composite"), m.get("inputs")) if isinstance(d, dict)]
         found = {}
         for col, keys in _COMPOSITE_SYN.items():
             for kk in keys:
-                if kk in cap and cap[kk] not in (None, ""):
-                    found[col] = cap[kk]; break
-        if found:
+                v = next((d[kk] for d in srcs if kk in d and d[kk] not in (None, "")), None)
+                if v is not None:
+                    found[col] = v; break
+        # a row needs at least two of the composite values -- a lone I_LB or camber is left to the record below,
+        # so the table never prints a line of dashes next to a record that has the studs
+        if len(found) >= 2:
             rows.append([_esc(m.get("id", "")), _esc((m.get("inputs") or {}).get("section", ""))]
                         + [(_n(found[c]) if c in found else "&mdash;") for c in ("pct", "Qn", "studs", "camber", "ILB", "wet")])
     if not cd and not rows:

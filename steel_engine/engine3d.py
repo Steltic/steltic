@@ -1744,7 +1744,9 @@ def plan_irregularity_levels(cfg):
                    dimension in that direction (cutout extents vs bounding box); reentrant_any keeps the
                    old "any notch" flag for information;
       opening   -- Type 3 (part): interior open area > 25% of the gross enclosed diaphragm area
-                   (interior holes in the bay grid + cfg['diaphragm_openings'] = {level: ft2});
+                   (interior holes in the bay grid + cfg['diaphragm_openings'] = {level: ft2} -- openings
+                   INSIDE framed bays only: unframed interior bays are counted from the grid already, so an
+                   atrium left out of the framing must not be declared again);
       setback   -- vertical Type 2 proxy: an adjacent-level footprint dimension ratio > 1.30
                    (the report evaluates the 130% rule on the SFRS extent itself);
       nonparallel -- cfg['skew'] (the report also checks the lateral elements' orientation).

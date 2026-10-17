@@ -2148,9 +2148,9 @@ def _drift_relief_note(cfg):
             "&sect;12.12.1 limits therefore need not apply; the linear design target was reset to %s of story height "
             "(the Table 12.12-1 value would be %s). <b>This design is provisional until the Chapter 16 analysis is "
             "re-run on it and passes &sect;16.4.</b>%s</p>"
-            % (_esc(str(r.get("nlrha_job", "?"))),
+            % (_esc(str(r.get("nlrha_job") or "not recorded")),
                (" run " + _esc(str(r.get("nlrha_run")))) if r.get("nlrha_run") else "",
-               _f("nlrha_mean_drift"), _f("nlrha_limit"), _esc(str(r.get("nlrha_verdict", "n/a"))),
+               _f("nlrha_mean_drift"), _f("nlrha_limit"), _esc(str(r.get("nlrha_verdict") or "not recorded")),
                _f("linear_target"), "%.2f%%" % (100.0 * float(table_val)),
                (" " + _esc(str(r.get("note")))) if r.get("note") else ""))
 
@@ -4164,7 +4164,7 @@ def _static_case_table(cfg, combo, nseg=2, render_fig=True):
         if key not in best or score > best[key][0]:
             best[key] = (score, N, Mz, My, V, n1, n2)
     for b in mm["beams"]:
-        sec = b.get("sec") or cfg.get("beam", "?"); N = Mz = My = V = 0.0
+        sec = b.get("sec") or cfg.get("beam") or "&mdash;"; N = Mz = My = V = 0.0
         for tag in b["segs"]:
             lf = ops.eleResponse(tag, "localForces")
             N = max(N, abs(lf[0]), abs(lf[6])); Mz = max(Mz, abs(lf[4]), abs(lf[10]))
@@ -4173,7 +4173,7 @@ def _static_case_table(cfg, combo, nseg=2, render_fig=True):
         if N > abs(maxN[0]): maxN = (N, "beam", sec)
         if Mz > abs(maxM[0]): maxM = (Mz, "beam", sec)
     for c in mm["cols"]:
-        sec = c.get("sec") or cfg.get("col", "?"); lf = ops.eleResponse(c["tag"], "localForces")
+        sec = c.get("sec") or cfg.get("col") or "&mdash;"; lf = ops.eleResponse(c["tag"], "localForces")
         N = max(abs(lf[0]), abs(lf[6])); Mz = max(abs(lf[5]), abs(lf[11])); My = max(abs(lf[4]), abs(lf[10]))
         V = max(abs(lf[1]), abs(lf[2]), abs(lf[7]), abs(lf[8]))
         upd("col", sec, N, Mz, My, V, c["n1"], c["n2"], max(Mz, N))
@@ -5199,8 +5199,6 @@ def build_report(name, root=None):
 
     # ===================== Chapter 13 — QA / professional acceptance =====================
     parts.append(_chapter(13))
-    if credit:
-        parts.append(f"<p class='credit'>{credit}.</p>")
     parts.append(_qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg, root, reY))
     parts.append(_consistency_section(name, root, pkg))
     parts.append(_gate_waivers_section(pkg))

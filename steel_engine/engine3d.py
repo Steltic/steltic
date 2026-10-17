@@ -1114,7 +1114,10 @@ def elf_dir(cfg, direction):
 def _elf_impl(cfg, T1, direction=None):
     s = seis_dir(cfg, direction); NF = len(cfg["heights"]); z = zlevels(cfg)
     W = sum(floor_w(cfg, k) for k in range(1, NF+1))
-    Ta = s["Ct"]*(z[-1]/12)**s["x"]; Tu = min(T1, s["Cu"]*Ta)          # 12.8.2 / Eq. 12.8-8
+    # h_n: the model height, or cfg['hn_ft'] where the seismic base is not the model base (hillside: the
+    # structural height above the base level declared by the engineer, ASCE 7-22 11.2 / 12.8.2.1)
+    hn_ft = float(cfg.get("hn_ft") or z[-1]/12)
+    Ta = s["Ct"]*hn_ft**s["x"]; Tu = min(T1, s["Cu"]*Ta)                 # 12.8.2 / Eq. 12.8-8
     R, Ie = s["R"], s["Ie"]
     Cs = s["SDS"]/(R/Ie)                                                 # 12.8.1.1 Method 2, Eq. 12.8-3
     TL = s.get("TL", 8.0)

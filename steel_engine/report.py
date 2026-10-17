@@ -417,6 +417,9 @@ def _pub(s):
     s = re.sub(r"\(brief\)", "(project criteria)", s)
     s = re.sub(r"\bper the brief\b", "per the project criteria", s)
     s = re.sub(r"\bthe brief\b", "the project brief", s)
+    # capitals used for emphasis read as shouting in a calculation package (acronyms are untouched)
+    s = re.sub(r"\b(BOTH|TENSION|COMPRESSION|REQUIRED|NEVER|MUST|ALWAYS|EVERY|ALSO|MIRRORED|WITHOUT|OVERTURNING|"
+               r"ONLY|EACH)\b(?![-/]?[A-Z0-9])", lambda m: m.group(1).lower(), s)
     s = re.sub(r"([;,(]\s*)brief\b", r"\1project criteria", s)
     s = _drop_agent_notes(s)
     s = s.replace("<=", "\u2264").replace(">=", "\u2265").replace("&lt;=", "&le;").replace("&gt;=", "&ge;")

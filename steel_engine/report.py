@@ -4895,7 +4895,7 @@ def _consistency_section(name, root, pkg):
             "conditions this building has (single-plate eccentricity, base-reaction envelope, composite floor, floor "
             "vibration, discontinuities with overstrength).</li>"
             "<li><b>Supplementary analyses</b> &mdash; module verdicts recorded in the package (listed below).</li></ol>"
-            "<p class='cnote'>Not verified by automation: the choice of limit states and the code equations inside each "
+            "<p class='cnote'>Not covered by these checks (left to the checking engineer): the choice of limit states and the code equations inside each "
             "capacity (spot-check Appendix A), drawings and specifications (Chapter 12), and engineering judgement.</p>")
     mtxt = ""
     if mods:
@@ -5122,6 +5122,9 @@ def _floor_vibration_section(cfg, pkg):
         return ("<h3>Floor vibration (AISC Design Guide 11, walking excitation)</h3>"
                 + _table(["Member", "Check", "Response", "Criterion", "Ratio"], rows))
     arch = (str(cfg.get("arch", "")) + " " + str(cfg.get("occupancy", ""))).lower()
+    if len(cfg.get("heights") or []) == 1:
+        return ("<p class='cnote'><b>Floor vibration (AISC Design Guide 11):</b> not applicable &mdash; one-story "
+                "building, roof only (no occupied floor framing).</p>")
     return ("<p class='cnote'><b>Floor vibration (AISC Design Guide 11):</b> not evaluated in this package%s.</p>"
             % ("; for office floors the walking criterion a<sub>p</sub>/g &le; 0.5% applies" if "office" in arch else ""))
 
@@ -5617,9 +5620,14 @@ def build_report(name, root=None):
     parts.append(_floor_serviceability(pkg))
     parts.append(_deflection_section(cfg, pkg))
     parts.append(_floor_vibration_section(cfg, pkg))
-    if not re.search(r"seismic joint|pounding|separation", json.dumps(pkg)[:300000], re.I):
-        parts.append("<p class='cnote'><b>Building separation and pounding</b> (ASCE 7-22 &sect;12.12.2): not evaluated in "
-                     "this package; confirmed against the site and architectural drawings.</p>")
+    # 12.12.2 structural separation: cfg['separation_basis'] (text) states it; otherwise a note unless the package
+    # already records a seismic joint / separation / pounding evaluation
+    if cfg.get("separation_basis"):
+        parts.append("<p class='cnote'><b>Building separation and pounding</b> (ASCE 7-22 &sect;12.12.2): %s</p>"
+                     % _esc(str(cfg["separation_basis"])))
+    elif not re.search(r"seismic joint|pounding|separation", json.dumps(pkg), re.I):
+        parts.append("<p class='cnote'><b>Building separation and pounding</b> (ASCE 7-22 &sect;12.12.2): not part of "
+                     "this package; to be confirmed against the site plan and the architectural drawings.</p>")
 
     # ===================== Chapter 9 — Seismic / wind detailing ================
     parts.append(_chapter(9))

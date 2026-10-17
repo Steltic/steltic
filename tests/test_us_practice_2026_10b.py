@@ -72,3 +72,19 @@ def test_llr_reduces_interior_column_axial_by_hand_value():
 def test_story_stiffness_ratio_uses_story_drift_not_drift_ratio():
     src = open(os.path.join(ROOT, "steel_engine", "design_pipeline.py")).read()
     assert "dr[k - 1] * hs[k - 1]" in src
+
+
+def test_static_replay_keeps_pdelta_after_a_linear_build_in_between():
+    """A modal solve (E.build(cfg, 'Linear')) between the dynamic build and the static replay must not
+    turn the static model's column transforms Linear (the second-order demands would silently be
+    first-order)."""
+    from example_build import example_build
+    cfg = _cfg(R=3.0, braced=False)
+    cfg["custom_build"] = lambda c, t: example_build(c, t)
+    E.build(cfg, "Linear")
+    m = SM.build_static(cfg, "PDelta", 2)
+    types = {a[0] for (n, a) in m["sig"] if n == "geomTransf"}
+    assert "PDelta" in types, types
+    m2 = SM.build_static(cfg, "Linear", 2)
+    types2 = {a[0] for (n, a) in m2["sig"] if n == "geomTransf"}
+    assert "PDelta" not in types2, types2

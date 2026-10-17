@@ -142,7 +142,8 @@ class Case(tuple):
     `label, fD, fL, fLr, lat, co = case` unpacking still works -- plus optional attributes:
         kind     'gravity' | 'wind' | 'seismic' | 'omega0' | 'ecl' | 'ecl_ocbf'
         applies  None (all members present) or a set of member kinds the case may govern
-        uplift   None or (dirn, sgn): add the MWFRS roof suction of ASCE 7-22 Fig. 27.3-1
+        uplift   None or (dirn, sgn[, scale]): add the MWFRS roof suction of ASCE 7-22 Fig. 27.3-1
+                 (scale 0.75 / 0.563 for the Fig. 27.3-8 Cases 2-4)
         ecl      dict for capacity-limited cases (sx, sy, variant, patterns, Om0)
     col_only=True cases are skipped by legacy consumers (report per-case tables, frame diagrams)."""
     def __new__(cls, label, fD, fL, fLr, lat, col_only=False, **attrs):
@@ -328,10 +329,13 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
             rec[name].append(a); return real[name](*a)
         return f
     for k in rec: setattr(ops, k, mk(k))
-    try:
+    _bt = getattr(eng, "_BUILD_TRANSF", "PDelta")
+    eng._BUILD_TRANSF = "PDelta" if transf == "PDelta" else "Linear"   # the transf THIS replay needs: a modal
+    try:                                                                 # solve in between must not leave it Linear
         info = cfg["custom_build"](cfg, transf)
     finally:
         for k in rec: setattr(ops, k, real[k])
+        eng._BUILD_TRANSF = _bt
 
     R = _Rec(); warnings = []
     ops.wipe(); R("model", "basic", "-ndm", 3, "-ndf", 6)
@@ -891,13 +895,18 @@ def _case_pieces(cfg, model, fD, fL, fLr, uplift=None, modes=None):
     up = None
     if uplift:
         qh, h = _wind_qh(cfg)
-        dirn, sgn = uplift
+        dirn, sgn = uplift[0], uplift[1]
+        usc = float(uplift[2]) if len(uplift) > 2 else 1.0      # 0.75 / 0.563 for Fig. 27.3-8 Cases 2-4
         xs = [c[0] for t, c in model["coord"].items() if t < _SUB0]
         ys = [c[1] for t, c in model["coord"].items() if t < _SUB0]
         lo_, hi_ = (min(xs), max(xs)) if dirn == "X" else (min(ys), max(ys))
         GCpi = float((cfg.get("wind") or {}).get("GCpi", 0.18))
-        G = float((cfg.get("wind") or {}).get("G", 0.85))
-        up = (qh, h, dirn, sgn, lo_, hi_, GCpi, G)
+        # Gf of a flexible building (26.11.5), the same factor the MWFRS walls use -- resolved once per run
+        # in demand_envelope (cfg['_wind_G']) so no modal solve can rebuild the domain mid-analysis
+        G = (cfg.get("_wind_G") or {}).get(dirn)
+        if G is None:
+            G = float((cfg.get("wind") or {}).get("G", 0.85))
+        up = (qh * usc, h, dirn, sgn, lo_, hi_, GCpi, G)
     for (k, i, j), b in model["bays"].items():
         if b["roof"]:
             p = fD * dead_psf(cfg, k) + _roof_terms(fLr, cfg, k)
@@ -1458,6 +1467,9 @@ def brace_system(cfg, br):
     """AISC 341 system of a brace element: cfg['brace_system'] (str, {label: str} or callable(label,
     n1, n2)) wins; else label prefix BRB* -> BRBF, WEB*/STRIP* -> SPSW; else the single braced system
     named in cfg['system']; None when ambiguous."""
+    _Rb = _braced_R(cfg)
+    if 0.0 < _Rb <= 3.0 and not cfg.get("aisc341"):
+        return None          # R <= 3 'not specifically detailed' (ASCE 7-22 Table 12.2-1 row H): no AISC 341 system
     o = cfg.get("brace_system")
     s = None
     if callable(o):
@@ -2308,6 +2320,11 @@ def demand_envelope(cfg, cases, nseg=6, floor_system=None, determinate=True,
     backward compatibility and ignored."""
     floor_system = (floor_system or cfg.get("floor_system") or "one-way")
     cfgF = dict(cfg); cfgF["floor_system"] = floor_system
+    if cfg.get("wind") and "_wind_G" not in cfgF:
+        try:                                     # MWFRS gust factor per direction (Gf when flexible)
+            cfgF["_wind_G"] = {d: float(eng.wind_detail(cfg, d)["G"]) for d in ("X", "Y")}
+        except Exception:
+            pass
     dam = _dam_opts(cfg)
     stiff = dam["stiff"] if dam else 1.0
     info = {"warnings": [], "notes": [], "not_evaluated": [], "solves": 0}

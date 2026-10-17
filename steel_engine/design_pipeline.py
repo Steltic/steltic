@@ -228,7 +228,60 @@ def combos(cfg):
                 upl = (dirn, sgn) if (cfg["wind"].get("roof_uplift", True) is not False) else None
                 cases.append(C("0.9D+1.0W%s%s%s" % (dirn, sg, " (roof uplift)" if upl else ""), 0.9, 0.0,
                                _rf(cfg), latW, False, kind="wind", uplift=upl))   # 5a
+        cases += wind_torsional_cases(cfg, co)
     return cases
+
+
+def wind_torsional_cases(cfg, co=None):
+    """ASCE 7-22 Fig. 27.3-8 MWFRS wind load Cases 2-4 (27.3.5) in combinations 4a and 5a:
+      Case 2: 0.75 x the Case 1 story force along each principal axis with MT = 0.75 F e, e = +/-0.15 B;
+      Case 3: 0.75 x Case 1 in X and Y simultaneously;
+      Case 4: 0.563 x Case 1 in X and Y simultaneously with MT = 0.563 (FX eX + FY eY).
+    B = the building dimension normal to the wind (wind_detail B_ft); the torsion acts about the diaphragm
+    master. cfg['wind']['load_cases'] limits the set (e.g. (1, 3) or (1,) where Appendix D permits it)."""
+    w = cfg.get("wind") or {}
+    want = tuple(int(c) for c in (w.get("load_cases") or (1, 2, 3, 4)))
+    if not any(c in want for c in (2, 3, 4)):
+        return []
+    C = SM.Case
+    co = co or _roof_branches(cfg, _COMP)
+    LL = _live_label(cfg); Lf = SM.LiveFactor(0.5, 1.0)
+    WD = {d: E.wind_detail(cfg, d) for d in ("X", "Y")}
+    FW = {d: WD[d]["F"] for d in ("X", "Y")}
+    eB = {d: 0.15 * float(WD[d].get("B_ft") or 0.0) * 12.0 for d in ("X", "Y")}       # in
+    lev = sorted(set(FW["X"]) | set(FW["Y"]))
+    upl_on = w.get("roof_uplift", True) is not False
+    sg = lambda v: "+" if v > 0 else "-"
+    pats = []                                    # (tag, lateral, uplift)
+    if 2 in want:
+        for d in ("X", "Y"):
+            for s_ in (1, -1):
+                for es in (1, -1):
+                    lat = {k: ((0.75 * s_ * FW[d].get(k, 0.0), 0.0, es * 0.75 * FW[d].get(k, 0.0) * eB[d]) if d == "X"
+                               else (0.0, 0.75 * s_ * FW[d].get(k, 0.0), es * 0.75 * FW[d].get(k, 0.0) * eB[d]))
+                           for k in lev}
+                    pats.append(("W%s%s[C2 e%s]" % (d, sg(s_), sg(es)), lat, (d, s_, 0.75)))
+    if 3 in want:
+        for sx in (1, -1):
+            for sy in (1, -1):
+                lat = {k: (0.75 * sx * FW["X"].get(k, 0.0), 0.75 * sy * FW["Y"].get(k, 0.0), 0.0) for k in lev}
+                pats.append(("W[C3 X%sY%s]" % (sg(sx), sg(sy)), lat, ("X", sx, 0.75)))
+    if 4 in want:
+        for sx in (1, -1):
+            for sy in (1, -1):
+                for es in (1, -1):
+                    lat = {k: (0.563 * sx * FW["X"].get(k, 0.0), 0.563 * sy * FW["Y"].get(k, 0.0),
+                               es * 0.563 * (FW["X"].get(k, 0.0) * eB["X"] + FW["Y"].get(k, 0.0) * eB["Y"]))
+                           for k in lev}
+                    pats.append(("W[C4 X%sY%s e%s]" % (sg(sx), sg(sy), sg(es)), lat, ("X", sx, 0.563)))
+    out = []
+    for tag, lat, upl in pats:
+        for b, f in co:                                                    # 4a
+            out.append(C("1.2D+1.0%s+%s+%.1f%s" % (tag, LL, f, b), 1.2, Lf, _rf(cfg, b, f), lat, False,
+                         kind="wind", wind_case=int(tag.split("[C")[1][0])))
+        out.append(C("0.9D+1.0%s%s" % (tag, " (roof uplift)" if upl_on else ""), 0.9, 0.0, _rf(cfg), lat, False,
+                     kind="wind", uplift=(upl if upl_on else None), wind_case=int(tag.split("[C")[1][0])))   # 5a
+    return out
 
 
 def collector_extras(cfg, cases=None):

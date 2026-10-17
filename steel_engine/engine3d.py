@@ -1206,12 +1206,15 @@ def static_lateral(cfg, Fx, direction, accidental=False, Ax=None):
         davg = 0.5*(abs(u1) + abs(u2))
         dratio[k] = (max(abs(u1), abs(u2))/davg) if davg > 1e-12 else None
     ops.reactions()
-    # base shear from EVERY support node at the base elevation -- a custom_build may place column bases
-    # off the grid (skewed / chamfered columns) where info['present'][0] has no key
+    # base shear from EVERY node restrained in this direction (ops.fix with the DOF fixed) -- a custom_build
+    # may place column bases off the grid (skewed / chamfered columns) or at two elevations (hillside);
+    # diaphragm masters restrained only out of plane are excluded. Fallback: all nodes at the lowest level.
     try:
-        _tags = ops.getNodeTags()
-        _z0 = min(ops.nodeCoord(t)[2] for t in _tags)
-        Rs = sum(ops.nodeReaction(t, di+1) for t in _tags if abs(ops.nodeCoord(t)[2] - _z0) < 1e-6)
+        _sup = [t for t in ops.getFixedNodes() if (di+1) in ops.getFixedDOFs(t)]
+        if not _sup:
+            _tags = ops.getNodeTags(); _z0 = min(ops.nodeCoord(t)[2] for t in _tags)
+            _sup = [t for t in _tags if abs(ops.nodeCoord(t)[2] - _z0) < 1e-6]
+        Rs = sum(ops.nodeReaction(t, di+1) for t in _sup)
     except Exception:
         Rs = sum(ops.nodeReaction(ntag(i, j, 0), di+1) for (i, j) in info["present"][0])
     # Torsional Irregularity Ratio (ASCE 7-22 Eq. 12.3-2): story drift at the building's extreme edge /
@@ -2310,6 +2313,10 @@ def floor_beam_gaps(cfg, transf="Linear"):
                 if _on_segment(coord[v], a, b):
                     seen.add(v); stack.append(v)
         return False
+    try:                                           # supports above the lowest level (hillside / stepped base)
+        fixed = {t for t in ops.getFixedNodes() if {1, 2, 3} <= set(ops.getFixedDOFs(t))}
+    except Exception:
+        fixed = set()
     byz = defaultdict(list)
     for t in gridtags:
         c = coord[t]
@@ -2323,6 +2330,8 @@ def floor_beam_gaps(cfg, transf="Linear"):
         for (gi, gj), (x, y, t) in at.items():
             for (di, dj) in ((1, 0), (0, 1)):
                 nb = at.get((gi+di, gj+dj))
+                if nb and t in fixed and nb[2] in fixed:
+                    continue                       # two supports: ground, not a missing floor beam
                 if nb and not _joined(t, nb[2]):
                     gaps.append((z, (x, y), (nb[0], nb[1])))
     return gaps

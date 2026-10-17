@@ -569,18 +569,34 @@ def design(name, outdir=None):
     #      the agent designs each connection in place and fills limit_state/cited/capacity/DC) ----
     _any341 = any(_a341.values())
     _brel = info0.get("beam_rel") or {}
+    _ele_nodes = {e[0]: (e[3], e[4]) for e in (info0.get("ele") or [])}
+    _col_nodes = {n for e in (info0.get("ele") or []) if str(e[1]).lower() in ("col", "column") for n in (e[3], e[4])}
+
+    def _moment_col_ends(t):
+        """Beam ends that are moment-connected TO A COLUMN: an unreleased end at a column node. An unreleased
+        end at an off-grid work point (chevron apex, EBF link end, infill node) is a continuous beam, not a
+        connection."""
+        rel = _brel.get(t, ("none", "none"))[0]
+        n1, n2 = _ele_nodes.get(t, (None, None))
+        return [n for n, r in ((n1, ("I", "both")), (n2, ("J", "both"))) if rel not in r and n in _col_nodes]
     for key, tags in sorted(by.items()):
         kind, sec, role = key; e = genv[key]
         if kind == "beam":
             # end condition from the analysis model's releases (engine3d.add_beam): a beam whose major-axis
             # moment is released at both ends has a SIMPLE SHEAR connection -- its connection moment is
             # zero (the group's Mz is the span moment, not a connection demand)
-            fixed_t = [t for t in tags if _brel.get(t, ("none", "none"))[0] != "both"]
             known = all(t in _brel for t in tags)
+            if known and _col_nodes:
+                fixed_t = [t for t in tags if _moment_col_ends(t)]
+            else:
+                fixed_t = [t for t in tags if _brel.get(t, ("none", "none"))[0] != "both"]
             if known and not fixed_t:
-                ctype = "simple shear connection (major-axis moment released at both beam ends in the model)"
+                cont = any(_brel.get(t, ("none", "none"))[0] != "both" for t in tags)
+                ctype = ("simple shear connection at the column (beam continuous through the brace / link work point)"
+                         if cont else "simple shear connection (major-axis moment released at both beam ends in the model)")
                 dem = {"V_kip": round(e["V"], 1), "M_kipft": 0.0,
-                       "end_condition": "pinned both ends -- no connection moment"}
+                       "end_condition": ("pinned at the column, continuous at the work point -- no connection moment"
+                                         if cont else "pinned both ends -- no connection moment")}
                 basis = ("AISC 360-22 Ch. J (J3 bolts, J2 welds, J4 connecting elements, J4.3 block shear); "
                          "simple shear connection, AISC Manual Part 10")
             else:

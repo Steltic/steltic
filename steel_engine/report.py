@@ -406,6 +406,10 @@ def _pub(s):
     s = re.sub(r"\bphi_s\b", "\u03c6s", s)
     s = re.sub(r"\blambda_u\b", "\u03bbu", s)
     s = re.sub(r"\bddm_analysis\b", "DDM system check", s)
+    _GRK = {"delta": "\u03b4", "theta": "\u03b8", "rho": "\u03c1", "omega": "\u03c9", "alpha": "\u03b1",
+            "beta": "\u03b2", "gamma": "\u03b3", "lambda": "\u03bb", "psi": "\u03c8", "mu": "\u03bc"}
+    s = re.sub(r"\b(delta|theta|rho|omega|alpha|beta|gamma|lambda|psi|mu)_([a-z]{1,3})\b",
+               lambda m: _GRK[m.group(1)] + m.group(2), s)            # symbol names: delta_di -> \u03b4di
     s = re.sub(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?=\s*=)", lambda m: m.group(1).replace("_", " "), s)
     s = re.sub(r"(?<![-\w.])([a-z]{3,}(?:_[a-z]{2,})+)(?![-\w]|\.\w)", lambda m: m.group(1).replace("_", " "), s)
     s = re.sub(r"\b(beam deflection|drift|deflection|consistency|completion|analysis) gate\b", r"\1 check", s)
@@ -419,7 +423,7 @@ def _pub(s):
     s = re.sub(r"\bcfg\s+([a-z][a-z0-9_]*)", lambda m: "the declared %s input" % m.group(1).replace("_", " "), s)
     s = re.sub(r"\(brief\)", "(project criteria)", s)
     s = re.sub(r"\bper the brief\b", "per the project criteria", s)
-    s = re.sub(r"\bthe brief\b", "the project brief", s)
+    s = re.sub(r"\bthe brief\b", "the project criteria", s)
     # capitals used for emphasis read as shouting in a calculation package (acronyms are untouched)
     s = re.sub(r"\b(BOTH|TENSION|COMPRESSION|REQUIRED|NEVER|MUST|ALWAYS|EVERY|ALSO|MIRRORED|WITHOUT|OVERTURNING|"
                r"ONLY|EACH)\b(?![-/]?[A-Z0-9])", lambda m: m.group(1).lower(), s)
@@ -4027,10 +4031,11 @@ def _wind_drift_section(cfg):
     limtxt = "h<sub>sx</sub>/%d (%.2f%%)" % (int(round(1 / lim)), lim * 100)
     ex = _drift_exempt(cfg)                 # declared drift-exempt stories (split-level steps, phantom stories)
     _exr = lambda k: "exempt: " + _esc(str((cfg.get("drift_exempt_stories") or {}).get(k, ""))[:60])
-    def _wrow(k, a, b):
+    def _wrow(k, a, b):                       # interstory drift magnitudes (a reversed story drift is still a drift)
         if k in ex:
-            return [k, "%.3f" % (a * 100), "%.3f" % (b * 100), _exr(k)]
-        return [k, "%.3f" % (a * 100), "%.3f" % (b * 100), "OK" if max(abs(a), abs(b)) <= lim else "<b class='ng'>NG</b>"]
+            return [k, "%.3f" % (abs(a) * 100), "%.3f" % (abs(b) * 100), _exr(k)]
+        return [k, "%.3f" % (abs(a) * 100), "%.3f" % (abs(b) * 100),
+                "OK" if max(abs(a), abs(b)) <= lim else "<b class='ng'>NG</b>"]
     def _worst(a, b):
         return max([max(abs(a[k - 1]), abs(b[k - 1])) for k in range(1, NF + 1) if k not in ex] or [0.0])
     h = []
@@ -4062,7 +4067,7 @@ def _wind_drift_section(cfg):
         h.append("<p><b>Worst service wind drift %.3f%% &mdash; %s.</b></p>"
                  % (worst * 100, "OK" if worst <= lim else "<span class='ng'>exceeds the project limit</span>"))
         _QA["wind_drift"] = (worst, lim, "service wind, %d-year MRI" % mri)
-        irows = [[k, "%.3f" % (dX[k-1]*100), "%.3f" % (dY[k-1]*100)] for k in range(1, NF+1)]
+        irows = [[k, "%.3f" % (abs(dX[k-1])*100), "%.3f" % (abs(dY[k-1])*100)] for k in range(1, NF+1)]
         h.append("<h4>Drift under the design (strength-level) wind &mdash; information only</h4>"
                  + _table(["Story", "drift X %", "drift Y %"], irows))
         return "".join(h)

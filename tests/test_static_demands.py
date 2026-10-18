@@ -269,7 +269,7 @@ def test_scbf_expected_strengths_and_chevron_unbalanced_load():
     # the only NOT EVALUATED item: the Ecl strut axial of the two Y beams (8, 9) whose single diagonals end
     # at diaphragm-slaved nodes (VERIFY: AISC 341-22 F2.3 'struts'); the chevron beams (free apex) are evaluated
     assert len(info["not_evaluated"]) == 1 and "Ecl axial force in 2 braced-bay beam(s)" in info["not_evaluated"][0]
-    assert "element 8, 9" in info["not_evaluated"][0]
+    assert "element" not in info["not_evaluated"][0]          # no internal element ids in the published note
     sin = 156.0 / L
     Pu = (T - 0.3 * C) * sin
     beam = next(fs for fs, kv in kinds.items() if kv[0] == "beam" and 180000 in fs)
@@ -426,7 +426,7 @@ def test_ecl_strut_axial_on_a_slaved_braced_bay_beam_is_reported_not_evaluated()
         assert max(e["comp"], e["tens"]) < 0.01 * T * 300.0 / math.hypot(300.0, 156.0)   # ... yet ~0 axial here
     ne = " ".join(info["not_evaluated"])
     # listed under not_evaluated (the report prints it as "Not evaluated by the analysis"), never silent
-    assert info["not_evaluated"] and "~0 Ecl axial" in ne and "element 8, 9" in ne and "F2.3" in ne
+    assert info["not_evaluated"] and "~0 Ecl axial" in ne and "2 braced-bay beam(s)" in ne and "F2.3" in ne
     # no braces of an identified capacity-limited system -> no strut note
     cfg2 = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="OCBF", D_roof=0.0, Lr=0.0)
     info2 = {}

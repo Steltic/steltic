@@ -194,3 +194,15 @@ def test_extra_floor_mass_is_printed_with_its_basis():
     assert "Additional dead load by level" in html and "1.2 psf on levels" in html
     assert "6 in slab edge beyond the edge members" in html
     assert "Additional dead load by level" not in R._gravity_loads_table(cfg)
+
+
+def test_combination_table_prints_code_roof_factors():
+    import static_model as SM
+    cfg = {"Lr": 20.0, "rain": 24.8, "snow": 0.0}
+    cases = [("1.2D + 1.6R + 0.5L", 1.2, 0.5, SM.RoofFactors(R=1.6, cfg=cfg), None),
+             ("1.2D + 1.6Lr + 0.5L", 1.2, 0.5, SM.RoofFactors(Lr=1.6, cfg=cfg), None),
+             ("1.4D", 1.4, 0.0, SM.RoofFactors(cfg=cfg), None),
+             ("legacy", 1.2, 1.6, 0.5, None)]
+    html = R._combo_table(cases)
+    assert "1.60R" in html and "1.60L<sub>r</sub>" in html and "1.98" not in html
+    assert "0.50" in html                                      # a plain float factor still prints

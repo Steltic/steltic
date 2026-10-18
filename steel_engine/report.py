@@ -4430,8 +4430,13 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 typ = _esc(_crt.split(";")[0].strip())
                 basis = _esc(str(_crec.get("design_basis") or "AISC 360-22 Ch. J").split(";")[0].strip())
             else:
-                typ = "column splice"
-                basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
+                # a splice record names the splice ("SMF column splice, CJP groove welded, ..."): print its first clause
+                typ = re.split(r"[:;(]", _crt)[0].strip(" ,") if _crt else ""
+                typ = _esc(typ) if typ and len(typ) <= 90 else "column splice"
+                if any(t_ in _crt.lower() for t_ in ("cjp", "groove")):
+                    basis = "AISC 360-22 J2 (complete-joint-penetration groove welds)" + ("; AISC 341-22 D2.5" if a341 else "")
+                else:
+                    basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
         elif kind == "brace":
             typ = "brace-to-gusset"
             dem = "P = +%s / &minus;%s kip (tension / compression)" % (_n(Pt), _n(Pc))

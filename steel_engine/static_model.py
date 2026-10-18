@@ -1900,11 +1900,12 @@ def ecl_plan(cfg, model, desig):
                      "brace end-to-end distance, so C (and the case (a) column / strut demands) is UNDERESTIMATED "
                      "-- give the end-to-end lengths" % nwp)
     if spsw:
-        notes.append("SPSW F5.3(b) PARTIAL: web tension field at RyFy applied as the panel resultant on the "
-                     "tension diagonal(s) (0.5*Ry*Fy*tw*L*sin2a horizontal) and HBE 1.1*Ry*Mp hinge SHEARS "
-                     "2(1.1RyMp)/L on the VBEs; the distributed tension-field flexure of VBE/HBE "
-                     "(RyFy*tw*sin^2a, cos^2a) and the HBE hinge MOMENTS are not part of the analysis -- they are "
-                     "checked separately with the VBE / HBE design")
+        notes.append("Special plate shear walls, AISC 341-22 F5.3(b) capacity-design case: the analysis applies the "
+                     "web tension field at RyFy as its resultant on the tension diagonal of each panel (horizontal "
+                     "component 0.5 RyFy tw L sin 2α) and the HBE hinge shears 2(1.1 RyMp)/L on the VBEs. The "
+                     "distributed tension-field flexure of the VBEs and HBEs (RyFy tw sin²α and "
+                     "cos²α per unit length) and the HBE hinge moments are not part of this analysis; they "
+                     "are checked in the VBE and HBE design records")
     return dict(drop=drop, braces=braces, links=links, spsw=spsw, ocbf=ocbf, notes=notes,
                 not_evaluated=ne, desig=desig)
 

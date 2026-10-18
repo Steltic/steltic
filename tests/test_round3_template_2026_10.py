@@ -127,3 +127,31 @@ def test_report_passes_each_direction_elf_forces_to_the_diaphragm_table():
     fxd = tuple({int(k): float(v) for k, v in sdf[d]["F_elf"].items()} for d in ("X", "Y"))
     html = R._diaphragm_section(cfg, fxd)
     assert "Diaphragm" in html or "F<sub>px</sub>" in html
+
+
+def test_lb_range_prints_a_dash_not_an_escaped_entity():
+    m = {"id": "floor-W27X94", "inputs": {"section": "W27X94", "kind": "beam", "Lb_in": 120.0},
+         "checks": [{"limit_state": "flexure, deck-braced top flange", "Lb_in": 0.0},
+                    {"limit_state": "flexure, construction stage", "Lb_in": 370.0}]}
+    html = R._member_calc_block(m)
+    assert "per limit state (0–370)" in html
+    assert "&amp;ndash;" not in html
+
+
+def test_column_rows_follow_the_column_connection_record():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = R._sfrs(cfg)
+    def col(mid, sec):
+        return {"id": mid, "inputs": {"section": sec, "kind": "col", "P_comp_kip": 300.0, "V_kip": 10.0}}
+    pkg = {"members": [col("lateral_col-W24X117", "W24X117"), col("gravity_col-W14X90", "W14X90"),
+                       col("lateral_col-W14X176", "W14X176")],
+           "connections": [
+               {"id": "conn-lateral_col-W24X117", "type": "no column splice: one-piece 38-ft crane column; brackets"},
+               {"id": "conn-gravity_col-W14X90", "type": "column top: cap plate and girder seats (single-story column)",
+                "design_basis": "AISC 360-22 J10 and J4; AISC Manual Part 14"}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    assert "W24X117" not in html                                   # one-piece column: no splice row
+    row = html[html.find("W14X90"):]; row = row[:row.find("</tr>")]
+    assert "column top: cap plate and girder seats" in row and "J10" in row and "splice" not in row
+    row = html[html.find("W14X176"):]; row = row[:row.find("</tr>")]
+    assert "column splice" in row                                  # no record: the generic splice row stays

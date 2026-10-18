@@ -3405,10 +3405,11 @@ def _combo_table(cases):
             return "%.2f" % float(f)
         return "%.2f / %.2f" % (float(f), float(hi))             # by level (2.3.6 Exception 1)
     rows = [[_combo_label(c[0]), "%.2f" % c[1], lf(c), "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
-    return (_table(["Combination", "D", "L", "L<sub>r</sub> / S", "Lateral", "Applies to"], rows)
-            + "<p class='cnote'>The L<sub>r</sub> / S column gives the factor of the governing roof term of each "
-              "combination: S where snow governs the roof, otherwise L<sub>r</sub> (ASCE 7-22 &sect;2.3.1: 1.6L<sub>r</sub> or "
-              "1.0S principal, 0.5L<sub>r</sub> or 0.3S companion).</p>")
+    return (_table(["Combination", "D", "L", "L<sub>r</sub> / S / R", "Lateral", "Applies to"], rows)
+            + "<p class='cnote'>The L<sub>r</sub> / S / R column gives the factor of the roof load named in each "
+              "combination: roof live L<sub>r</sub>, snow S or rain R; each roof load present is combined in its "
+              "own combinations (ASCE 7-22 &sect;2.3.1: 1.6L<sub>r</sub>, 1.0S or 1.6R principal; 0.5L<sub>r</sub>, "
+              "0.3S or 0.5R companion).</p>")
 
 
 def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
@@ -3445,10 +3446,10 @@ def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
                       "&Omega;<sub>0</sub>Q<sub>E</sub> (axial) to the SFRS columns only (&sect;12.4.3)"))
     if info["ecl"]:
         items.append(("E<sub>cl</sub>", "capacity-limited horizontal seismic load effect (&sect;12.4.3.2)"))
-    items.append(("0.5L / 1.0L, 0.3S / 0.5L<sub>r</sub>, 0.15S, 0.9D",
+    items.append(("0.5L / 1.0L, 0.3S / 0.5L<sub>r</sub> / 0.5R, 0.15S, 0.9D",
                   "companion / counteracting load factors (ASCE 7-22 &sect;2.3.1 / &sect;2.3.6: companion L = 1.0 where "
-                  "L<sub>o</sub> &gt; 100 psf or garage / public assembly, else 0.5; companion snow 0.3S (gravity / wind) "
-                  "and 0.15S (seismic); principal snow 1.0S)"))
+                  "L<sub>o</sub> &gt; 100 psf or garage / public assembly, else 0.5; companion roof loads 0.5L<sub>r</sub>, "
+                  "0.3S or 0.5R (gravity / wind) and 0.15S (seismic); principal snow 1.0S, principal rain 1.6R)"))
     return "<h4>Notation used in the combination labels</h4>" + _table(["Symbol", "Meaning"], [[a, b] for a, b in items])
 
 
@@ -3605,7 +3606,7 @@ def _combo_notes(cfg, cases=None, ctx=None):
     wc = info["wind_cases"]
     wind_b = ""
     if cfg.get("wind"):
-        wind_b = ("<li><b>Wind</b>: combinations 4 (1.2D + 1.0W + L + 0.5L<sub>r</sub>/0.3S) and 5 (0.9D + 1.0W) "
+        wind_b = ("<li><b>Wind</b>: combinations 4 (1.2D + 1.0W + L + 0.5L<sub>r</sub>/0.3S/0.5R) and 5 (0.9D + 1.0W) "
                   "with W in both senses along each axis; %s 0.9D + 1.0W includes the MWFRS roof suction "
                   "(Fig. 27.3-1).</li>" % ("the Fig. 27.3-8 Cases 2&ndash;4 are included;" if wc & {2, 3, 4} else
                                            "only Case 1 of Fig. 27.3-8 is included;"))
@@ -4128,10 +4129,14 @@ def _wind_drift_section(cfg):
         worst, _wl, _wx = _headline(_worst(sX, sY), "centre of mass")
         h.append("<h3>Service wind drift, W<sub>a</sub> at V = %s mph (%d-year MRI%s), D + 0.5L + W<sub>a</sub> (Eq. CC.2-3)</h3>"
                  % (_n(Vs), mri, (", ASCE 7-22 Fig. %s" % fig) if fig else ""))
+        _wcf = cfg.get("wind") if isinstance(cfg.get("wind"), dict) else {}
+        _gtx = (("the stated gust-effect factor G<sub>f</sub> = %s kept" % _n(float(_wcf["Gf"])))
+                if _wcf.get("Gf") is not None else
+                "gust-effect factor as in Chapter 3, recomputed at the service speed where the building is flexible")
         h.append("<p>Interstory drift under the serviceability wind W<sub>a</sub> (ASCE 7-22 Appendix CC.2.2: same MWFRS "
-                 "procedure as Chapter 3 at the service wind speed, gust factor recomputed) against the project limit "
+                 "procedure as Chapter 3 at the service wind speed, %s) against the project limit "
                  "%s; Appendix CC cites limits of h/600 to h/400 in common use. First-order analysis: the D + 0.5L part of "
-                 "Eq. CC.2-3 does not change the first-order drift.%s</p>" % (limtxt, btxt))
+                 "Eq. CC.2-3 does not change the first-order drift.%s</p>" % (_gtx, limtxt, btxt))
         h.append(_table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows))
         h.append("<p><b>Worst service wind drift %.3f%%%s &mdash; %s.</b>%s</p>"
                  % (worst * 100, (" (%s)" % _esc(_wl)) if _wl != "centre of mass" else "",

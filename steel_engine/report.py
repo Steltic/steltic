@@ -920,7 +920,7 @@ def _member_calc_block(m, a341=None):
     _lbs = _checks_Lb(m)
     if _lbs:
         _lbv = (_lbs[0] if max(_lbs) - min(_lbs) < 0.5 else
-                "per limit state (%s&ndash;%s)" % (_n(min(_lbs)), _n(max(_lbs))))
+                "per limit state (%s\u2013%s)" % (_n(min(_lbs)), _n(max(_lbs))))   # the cell is escaped: no entity
         pr = [(l_, (_lbv if l_ == "L<sub>b</sub> (in.)" else v_)) for l_, v_ in pr]
         if not any(l_ == "L<sub>b</sub> (in.)" for l_, _ in pr):
             pr.append(("L<sub>b</sub> (in.)", _lbv))
@@ -4364,6 +4364,7 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
     # releases): 'conn-<member id>' -- a moment-connected floor/roof beam is an SMF/IMF/OMF beam
     ctype_of = {str(c.get("id", "")).lower(): str(c.get("type") or "").lower()
                 for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)}
+    _conn_rec = {str(c.get("id", "")).lower(): c for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)}
     a341 = ctx.get("a341")
     if a341 is None:
         a341 = any(f in FAM_341 for f in sf.get("families", []))
@@ -4417,10 +4418,20 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 basis = ("single plate or clip angles: AISC 360-22 J3 / J4 and AISC Manual Part 10 (bolt-group "
                          "eccentricity, plate ductility" + ("; axial transfer with the shear" if ax > 0.5 else "") + ")")
         elif "col" in kind:
-            typ = "column splice"
+            # the column's own connection record ('conn-<member id>') says what the column joint is: a splice, a
+            # one-piece column with no splice (no row), or another joint such as a cap plate or a girder seat
+            _crec = _conn_rec.get("conn-" + str(m.get("id", "")).lower())
+            _crt = str((_crec or {}).get("type") or "").strip()
+            if _crt.lower().startswith("no "):
+                continue
             dem = "P = %s kip" % _n(Pc) + ((", T = %s kip" % _n(Pt)) if Pt > 0.5 else "") + \
                   ((", M<sub>x</sub> = %s kip-ft" % _n(Mz / 12.0)) if Mz else "")
-            basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
+            if _crt and "splice" not in _crt.lower():
+                typ = _esc(_crt.split(";")[0].strip())
+                basis = _esc(str(_crec.get("design_basis") or "AISC 360-22 Ch. J").split(";")[0].strip())
+            else:
+                typ = "column splice"
+                basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
         elif kind == "brace":
             typ = "brace-to-gusset"
             dem = "P = +%s / &minus;%s kip (tension / compression)" % (_n(Pt), _n(Pc))

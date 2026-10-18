@@ -3420,12 +3420,21 @@ def _combo_table(cases):
         if "0.5L" in l_ and "1.0L" not in l_:
             return "%.2f" % float(f)
         return "%.2f / %.2f" % (float(f), float(hi))             # by level (2.3.6 Exception 1)
-    rows = [[_combo_label(c[0]), "%.2f" % c[1], lf(c), "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
-    return (_table(["Combination", "D", "L", "L<sub>r</sub> / S / R", "Lateral", "Applies to"], rows)
-            + "<p class='cnote'>The L<sub>r</sub> / S / R column gives the factor of the roof load named in each "
-              "combination: roof live L<sub>r</sub>, snow S or rain R; each roof load present is combined in its "
-              "own combinations (ASCE 7-22 &sect;2.3.1: 1.6L<sub>r</sub>, 1.0S or 1.6R principal; 0.5L<sub>r</sub>, "
-              "0.3S or 0.5R companion).</p>")
+    def rf(c):
+        # code factor(s) on the roof loads named in the combination (RoofFactors carries Lr / S / R separately;
+        # its float value is only a multiplier on the modelled roof-load pattern)
+        f = c[3]
+        if all(hasattr(f, a) for a in ("Lr", "S", "R")):
+            parts = ["%.2f%s" % (float(getattr(f, a)), lab_) for a, lab_ in (("Lr", "L<sub>r</sub>"), ("S", "S"), ("R", "R"))
+                     if abs(float(getattr(f, a) or 0.0)) > 1e-9]
+            return " + ".join(parts) if parts else "&mdash;"
+        return "%.2f" % float(f)
+    rows = [[_combo_label(c[0]), "%.2f" % c[1], lf(c), rf(c), lab(c), applies(c)] for c in cases]
+    return (_table(["Combination", "D", "L", "Roof load (L<sub>r</sub>, S or R)", "Lateral", "Applies to"], rows)
+            + "<p class='cnote'>The roof-load column gives the load factor and the roof load it applies to: roof live "
+              "L<sub>r</sub>, snow S or rain R. Each roof load present is combined in its own combinations (ASCE 7-22 "
+              "&sect;2.3.1: 1.6L<sub>r</sub>, 1.0S or 1.6R principal; 0.5L<sub>r</sub>, 0.3S or 0.5R companion; 0.2S "
+              "with seismic).</p>")
 
 
 def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
@@ -3441,7 +3450,8 @@ def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
             else "floor live load, unreduced (no &sect;4.7 reduction taken)")
     items = [("D", "dead load"),
              ("L", ltxt),
-             ("L<sub>r</sub> / S", "roof live load / snow load"),
+             (("L<sub>r</sub> / S / R", "roof live load / snow load / rain load (Ch. 8)") if float(cfg.get("rain") or 0.0) > 0
+              or cfg.get("rain_by_level") else ("L<sub>r</sub> / S", "roof live load / snow load")),
              ("E<sub>X</sub>, E<sub>Y</sub>", "horizontal seismic load effect Q<sub>E</sub> in the X (E-W) / Y (N-S) direction; "
               "the vertical term E<sub>v</sub> = 0.2S<sub>DS</sub>D is folded into the D factor"),
              ("W<sub>X</sub>, W<sub>Y</sub>", "MWFRS wind load in the X / Y direction (Fig. 27.3-8 Case 1)"),
@@ -3732,7 +3742,7 @@ def _analysis_record_html(cfg, pkg):
     if isinstance(gad, dict) and isinstance(gad.get("levels"), dict):
         try:
             tot = [sum(float(v[i]) for v in gad["levels"].values()) for i in (0, 1)]
-            rows.append(["Dead-load audit: static model vs seismic weight", "%s kip vs %s kip" % (_n(tot[0]), _n(tot[1]))])
+            rows.append(["Dead-load audit: static model vs the floor and roof dead load of W (partitions, member self-weight and lumped seismic weights are listed separately)", "%s kip vs %s kip" % (_n(tot[0]), _n(tot[1]))])
         except Exception:
             pass
     out = ""

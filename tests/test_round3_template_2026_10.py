@@ -171,3 +171,15 @@ def test_splice_rows_name_the_recorded_splice_and_weld_basis():
     assert "SMF column splice, CJP groove welded" in row and "J2" in row and "J1.4" not in row
     row = html[html.find("W14X132"):]; row = row[:row.find("</tr>")]
     assert "gravity column splice, 4 ft above the floor" in row and "J1.4" in row
+
+
+def test_member_weight_split_by_end_nodes():
+    z = [0.0, 192.0, 372.0]                       # base, office roof (16 ft), hall roof (31 ft)
+    # a 31-ft hall column with no node at the office roof: half to the hall roof, half to grade
+    assert E._split_member_weight(z, 2, [(0.0, 372.0, 10.0)]) == {2: 5.0}
+    # story-by-story columns: the same as splitting each story's weight between its two levels
+    out = E._split_member_weight(z, 2, [(0.0, 192.0, 4.0), (192.0, 372.0, 6.0)])
+    assert out == {1: 5.0, 2: 3.0}
+    # an intermediate node shares its half between the bounding levels by height
+    out = E._split_member_weight(z, 2, [(96.0, 192.0, 2.0)])
+    assert out == {1: 1.5}

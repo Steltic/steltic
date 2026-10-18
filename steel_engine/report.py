@@ -5536,7 +5536,13 @@ def build_report(name, root=None):
             try: irr_html = _irregularity_section(cfg, runs, sf)
             except Exception as ex: irr_html = f"<p class='note'>[irregularity screen failed: {_esc(ex)}] &mdash; irregularities NOT EVALUATED</p>"
         parts.append("<h3>Diaphragm classification and design force (ASCE 7-22 &sect;12.10)</h3>")
-        try: parts.append(_diaphragm_section(cfg, tuple(_fx_by_dir(Fx)), (FwX, FwY) if FwX else None, pkg))
+        try:                                # Eq. 12.10-1 with each direction's own ELF story forces
+            try:
+                _sdf = E.seismic_design_forces(cfg)
+                _fxd = tuple({int(k): float(v) for k, v in _sdf[d]["F_elf"].items()} for d in ("X", "Y"))
+            except Exception:
+                _fxd = tuple(_fx_by_dir(Fx))
+            parts.append(_diaphragm_section(cfg, _fxd, (FwX, FwY) if FwX else None, pkg))
         except Exception as ex: parts.append(f"<p class='note'>[diaphragm section failed: {_esc(ex)}]</p>")
         parts.append("<h3>Plan and vertical irregularity screening</h3>")
         parts.append(irr_html or "<p class='note'>Irregularity screen NOT EVALUATED (the drift/torsion runs failed).</p>")

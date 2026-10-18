@@ -1471,7 +1471,13 @@ def _member_section(cfg, name, pkg, want_roles, title, intro):
                 continue
             sel.append(m)
     if not sel:
-        h.append("<p class='note'>No member of this type is recorded in the calc package.</p>")
+        _has = lambda roles: any(isinstance(m, dict) and _role_of(m.get("id", ""), m.get("inputs", {}) or {}) in roles
+                                 for m in (members or []))
+        if "gravity_col" in want_roles and _has({"lateral_col"}):
+            h.append("<p class='cnote'>None: every column of this building is part of the seismic force-resisting "
+                     "system (lateral-system columns below).</p>")
+        else:
+            h.append("<p class='cnote'>None in this building.</p>")
         return "".join(h)
     try:
         h.append(_table(["Member", "Section", "Demand envelope", "Governing combination", "Governing limit state",

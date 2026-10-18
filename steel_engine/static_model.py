@@ -1884,7 +1884,7 @@ def ecl_plan(cfg, model, desig):
                 struts.append(bm["etag"])
         struts = sorted(set(struts))
         if struts:
-            ne.append("Ecl axial force in %d braced-bay beam(s) / strut(s)%s (e.g. element %s), AISC 341-22 "
+            ne.append("Ecl axial force in %d braced-bay beam(s) / strut(s)%s, AISC 341-22 "
                       "F2.3 / F3.3 / F4.3: their end nodes are slaved to the rigid diaphragm, which the capacity-"
                       "limited analysis restrains, so the horizontal components of the expected brace%s forces enter "
                       "the diaphragm at the work points and the analysis shows ~0 Ecl axial in these beams. The "
@@ -1892,8 +1892,7 @@ def ecl_plan(cfg, model, desig):
                       "horizontal components along the actual diaphragm load path (their moments / shears and the "
                       "unbalanced loads come from the analysis)"
                       % (len(struts), " / beams outside links" if links else "",
-                         ", ".join(str(t) for t in struts[:4]), " / link" if links else "",
-                         " / beams outside links" if links else ""))
+                         " / link" if links else "", " / beams outside links" if links else ""))
     nwp = sum(1 for it in braces if it["cap"].get("L_default"))
     if nwp:
         notes.append("SCBF expected compression of %d brace(s) uses the WORK-POINT length (no cfg['brace_length'] / "

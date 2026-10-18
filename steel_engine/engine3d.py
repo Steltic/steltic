@@ -1264,6 +1264,9 @@ def torsion_summary(cfg):
         return r
     sdc = sdc_of(cfg); flexible = str(cfg.get("diaphragm", "rigid")).lower() == "flexible"
     NF = len(cfg["heights"]); res = {"sdc": sdc}
+    # split-level / multi-wing models: the declared drift-exempt model "stories" (between wing diaphragms) are not
+    # stories, so they do not set the torsional classification (the Chapter 2 screen excludes them too)
+    dex = set(int(k) for k in (cfg.get("drift_exempt_stories") or {}))
     for d in ("X", "Y"):
         Fx = elf_dir(cfg, d)[5]
         c0 = static_lateral(cfg, Fx, d)
@@ -1272,12 +1275,13 @@ def torsion_summary(cfg):
         tir_story = []
         for a, b in zip(ap[5]["tir"], an[5]["tir"]):
             vv = [v for v in (a, b) if v is not None]; tir_story.append(max(vv) if vv else None)
+        _tir_real = [t for i, t in enumerate(tir_story, 1) if t is not None and i not in dex]
         axraw = {}
         for k in range(1, NF+1):
             vv = [v for v in (ap[5]["disp_ratio"].get(k), an[5]["disp_ratio"].get(k)) if v is not None]
             axraw[k] = max(((v/1.2)**2 for v in vv), default=1.0)
-        res[d] = dict(TIR=max(ap[4], an[4]), TIR_story=tir_story, TIR_inherent=c0[4], Ax_raw=axraw,
-                      cm_drift=list(c0[2]), centric=c0, acc=(ap, an))
+        res[d] = dict(TIR=(max(_tir_real) if (dex and _tir_real) else max(ap[4], an[4])), TIR_story=tir_story,
+                      TIR_inherent=c0[4], Ax_raw=axraw, cm_drift=list(c0[2]), centric=c0, acc=(ap, an))
     TIR = max(res["X"]["TIR"], res["Y"]["TIR"])
     type1 = (not flexible) and TIR > 1.2
     amplify = type1 and sdc in ("C", "D", "E", "F")

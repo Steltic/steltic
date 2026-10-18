@@ -427,6 +427,7 @@ def test_ecl_strut_axial_on_a_slaved_braced_bay_beam_is_reported_not_evaluated()
     ne = " ".join(info["not_evaluated"])
     # listed under not_evaluated (the report prints it as "Not evaluated by the analysis"), never silent
     assert info["not_evaluated"] and "~0 Ecl axial" in ne and "2 braced-bay beam(s)" in ne and "F2.3" in ne
+    assert "F3.3" not in ne and "F4.3" not in ne            # only the clause of the system present (SCBF)
     # no braces of an identified capacity-limited system -> no strut note
     cfg2 = _cfg(NX=1, NY=1, heights=[156.0], custom_build=_chevron_build, system="OCBF", D_roof=0.0, Lr=0.0)
     info2 = {}

@@ -2680,14 +2680,23 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
     diaphragm, collectors and chords are designed for the wind as well (19j). wind = (FwX, FwY) story forces."""
     NF = len(cfg["heights"]); s = cfg["seis"]; SDS = s["SDS"]; Ie = s["Ie"]
     w = [E.floor_w(cfg, k) for k in range(1, NF+1)]
+    # Fx: one direction's story forces, or (FxX, FxY) -- Eq. 12.10-1 is then evaluated in both directions
+    # and the larger governs the diaphragm design force of the level
+    two = isinstance(Fx, tuple) and len(Fx) == 2
+    FxX, FxY = (Fx if two else (Fx, Fx))
+    two = two and any(abs(float(FxX[i]) - float(FxY[i])) > 1e-6 for i in range(1, NF + 1))
     rows = []; fpx = {}
     for x in range(1, NF+1):
-        sumF = sum(Fx[i] for i in range(x, NF+1)); sumw = sum(w[i-1] for i in range(x, NF+1))
-        wpx = w[x-1]; Fpx = (sumF/sumw)*wpx if sumw else 0.0
+        sumw = sum(w[i-1] for i in range(x, NF+1)); wpx = w[x-1]
+        FpX = (sum(FxX[i] for i in range(x, NF+1)) / sumw) * wpx if sumw else 0.0
+        FpY = (sum(FxY[i] for i in range(x, NF+1)) / sumw) * wpx if sumw else 0.0
+        Fpx = max(FpX, FpY)
         lo = 0.2*SDS*Ie*wpx; hi = 0.4*SDS*Ie*wpx; gov = min(max(Fpx, lo), hi)
-        tag = "minimum" if gov == lo else ("maximum" if gov == hi else "Eq. 12.10-1")
+        tag = "minimum" if gov == lo else ("maximum" if gov == hi else
+                                           ("Eq. 12.10-1, %s" % ("X" if FpX >= FpY else "Y") if two else "Eq. 12.10-1"))
         fpx[x] = gov
-        row = [x, _n(wpx), _n(Fpx), _n(lo), _n(hi), "%s (%s)" % (_n(gov), tag)]
+        row = ([x, _n(wpx), _n(FpX), _n(FpY)] if two else [x, _n(wpx), _n(Fpx)]) + \
+              [_n(lo), _n(hi), "%s (%s)" % (_n(gov), tag)]
         if wind:
             fw = max(float(wind[0].get(x, 0.0) or 0.0), float(wind[1].get(x, 0.0) or 0.0))
             row.append(_n(fw))
@@ -2744,7 +2753,9 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None):
             "forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. " + _coll
             + ("; the MWFRS wind story forces of Chapter 3 exceed F<sub>px</sub> at %d of the %d levels of this "
                "building and are designed for as well." % (n_wind, NF) if wind_gov else ".") + "</p>")
-    hdr = ["Level x", "w<sub>px</sub> (kip)", "F<sub>px</sub> Eq. 12.10-1 (kip)",
+    hdr = ["Level x", "w<sub>px</sub> (kip)"] + (
+           ["F<sub>px</sub> Eq. 12.10-1, X (kip)", "F<sub>px</sub> Eq. 12.10-1, Y (kip)"] if two else
+           ["F<sub>px</sub> Eq. 12.10-1 (kip)"]) + [
            "min 0.2S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>", "max 0.4S<sub>DS</sub>I<sub>e</sub>w<sub>px</sub>",
            "F<sub>px</sub> design (kip)"] + (["MWFRS wind story force, larger direction (kip)"] if wind else [])
     tbl = _table(hdr, rows)
@@ -4822,8 +4833,9 @@ def _deflection_section(cfg, pkg=None):
     h = ["<h3>Beam deflection and camber (analysis model check)</h3>",
          "<p>Deflection of every beam span / group (section &times; span &times; floor/roof) from %s; live (floor L, roof "
          "S if any, else L<sub>r</sub>) and total D + L against IBC 2024 Table 1604.3: floor members L/360 and L/240%s. "
-         "Camber suggestion &asymp; 80%% of the dead-load deflection (to the nearest 1/4 in.) where that deflection "
-         "exceeds 3/4 in.</p>"
+         "Suggested camber &asymp; 80%% of the dead-load deflection (to the nearest 1/4 in.), listed only where it is at "
+         "least 3/4 in.; it is a suggestion, not a specified camber (any specified camber is stated with the member "
+         "design).</p>"
          % (_n(det.get("basis") or "the tributary loads of each beam"),
             "; roof members %s: L/%d and L/%d" % (
                 {"plaster": "supporting a plaster or stucco ceiling", "nonplaster": "supporting a nonplaster ceiling",
@@ -4847,7 +4859,8 @@ def _deflection_section(cfg, pkg=None):
         uniq, cnt = [], []
         for x in show:
             L = x["L"]; dD = max(x["dTL"] - x["dLL"], 0.0)
-            camber = round(0.8 * dD * 4) / 4 if dD >= 0.75 else 0.0
+            camber = round(0.8 * dD * 4) / 4
+            camber = camber if camber >= 0.75 - 1e-9 else 0.0       # no camber below 3/4 in. is suggested
             if camber > 0:
                 sugg.append((lbl.lower(), x["sec"], L, dD, camber))
             r = [_esc(x["sec"]), _ftin(L),
@@ -4865,7 +4878,7 @@ def _deflection_section(cfg, pkg=None):
             rows.append([lbl + ((" (%d identical groups)" % c) if c > 1 else "")] + r)
     if rows:
         h.append(_table(["Beam", "Section", "Span", "Trib. width", "Live &delta;", "Live / limit", "Total &delta;",
-                         "Total / limit", "Check", "Camber"], rows))
+                         "Total / limit", "Check", "Suggested camber"], rows))
     for key, why in (det.get("skipped") or [])[:10]:
         h.append(f"<p class='note'>Group {_esc(key)} NOT EVALUATED: {_n(why)} &mdash; the check fails until resolved.</p>")
     gate_ok = det["LL"] < 1.0 and det["TL"] < 1.0
@@ -5507,7 +5520,7 @@ def build_report(name, root=None):
             try: irr_html = _irregularity_section(cfg, runs, sf)
             except Exception as ex: irr_html = f"<p class='note'>[irregularity screen failed: {_esc(ex)}] &mdash; irregularities NOT EVALUATED</p>"
         parts.append("<h3>Diaphragm classification and design force (ASCE 7-22 &sect;12.10)</h3>")
-        try: parts.append(_diaphragm_section(cfg, _fx_by_dir(Fx)[0], (FwX, FwY) if FwX else None, pkg))
+        try: parts.append(_diaphragm_section(cfg, tuple(_fx_by_dir(Fx)), (FwX, FwY) if FwX else None, pkg))
         except Exception as ex: parts.append(f"<p class='note'>[diaphragm section failed: {_esc(ex)}]</p>")
         parts.append("<h3>Plan and vertical irregularity screening</h3>")
         parts.append(irr_html or "<p class='note'>Irregularity screen NOT EVALUATED (the drift/torsion runs failed).</p>")

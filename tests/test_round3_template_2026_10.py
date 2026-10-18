@@ -85,3 +85,20 @@ def test_wind_drift_governing_value_heads_the_section_and_scorecard():
     html = R._wind_drift_section(plain)
     assert "Worst wind drift 1.000%" in html and R._QA["wind_drift"][0] == pytest.approx(0.01)
     assert "Worst service wind drift" in html0
+
+
+def test_suggested_camber_only_from_three_quarter_inch():
+    import inspect
+    src = inspect.getsource(R._deflection_section)
+    assert "Suggested camber" in src and "camber >= 0.75" in src
+
+
+def test_diaphragm_fpx_evaluated_in_both_directions():
+    cfg = _rect(); R._INV_CACHE.clear()
+    NF = len(cfg["heights"])
+    FxX = {k: 10.0 * k for k in range(1, NF + 1)}
+    FxY = {k: 14.0 * k for k in range(1, NF + 1)}
+    html = R._diaphragm_section(cfg, (FxX, FxY))
+    assert "Eq. 12.10-1, X (kip)" in html and "Eq. 12.10-1, Y (kip)" in html
+    one = R._diaphragm_section(cfg, (FxX, dict(FxX)))      # same forces both ways: one column, as before
+    assert "Eq. 12.10-1, Y (kip)" not in one and "Eq. 12.10-1 (kip)" in one

@@ -183,3 +183,14 @@ def test_member_weight_split_by_end_nodes():
     # an intermediate node shares its half between the bounding levels by height
     out = E._split_member_weight(z, 2, [(96.0, 192.0, 2.0)])
     assert out == {1: 1.5}
+
+
+def test_extra_floor_mass_is_printed_with_its_basis():
+    cfg = _rect(); R._INV_CACHE.clear()
+    NF = len(cfg["heights"])
+    cfg2 = dict(cfg, extra_mass_floors={k: 1.2 for k in range(1, NF + 1)},
+                extra_mass_basis="6 in slab edge beyond the edge members")
+    html = R._gravity_loads_table(cfg2)
+    assert "Additional dead load by level" in html and "1.2 psf on levels" in html
+    assert "6 in slab edge beyond the edge members" in html
+    assert "Additional dead load by level" not in R._gravity_loads_table(cfg)

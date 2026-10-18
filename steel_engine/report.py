@@ -1220,6 +1220,11 @@ def _gravity_loads_table(cfg, pkg=None):
                      + (("; " + _esc(cfg["rain_basis"])) if cfg.get("rain_basis") else "")])
     else:
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
+    emf = cfg.get("extra_mass_floors")
+    if isinstance(emf, dict) and _levels_txt(emf):
+        rows.append(["Additional dead load by level (in the gravity analysis and in the seismic weight W)",
+                     _levels_txt(emf) + " &mdash; " + (_n(cfg.get("extra_mass_basis")) if cfg.get("extra_mass_basis") else
+                                                       "dead load carried in addition to the floor and roof dead loads above")])
     smo = cfg.get("seismic_mass_only")
     if isinstance(smo, dict) and _levels_txt(smo):
         rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])

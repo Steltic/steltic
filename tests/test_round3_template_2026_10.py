@@ -155,3 +155,19 @@ def test_column_rows_follow_the_column_connection_record():
     assert "column top: cap plate and girder seats" in row and "J10" in row and "splice" not in row
     row = html[html.find("W14X176"):]; row = row[:row.find("</tr>")]
     assert "column splice" in row                                  # no record: the generic splice row stays
+
+
+def test_splice_rows_name_the_recorded_splice_and_weld_basis():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = R._sfrs(cfg)
+    def col(mid, sec):
+        return {"id": mid, "inputs": {"section": sec, "kind": "col", "P_comp_kip": 900.0, "V_kip": 20.0}}
+    pkg = {"members": [col("lateral_col-W14X370", "W14X370"), col("gravity_col-W14X132", "W14X132")],
+           "connections": [
+               {"id": "conn-lateral_col-W14X370", "type": "SMF column splice, CJP groove welded (demand critical), 4 ft above L6: x"},
+               {"id": "conn-gravity_col-W14X132", "type": "gravity column splice, 4 ft above the floor (milled bearing; plates)"}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    row = html[html.find("W14X370"):]; row = row[:row.find("</tr>")]
+    assert "SMF column splice, CJP groove welded" in row and "J2" in row and "J1.4" not in row
+    row = html[html.find("W14X132"):]; row = row[:row.find("</tr>")]
+    assert "gravity column splice, 4 ft above the floor" in row and "J1.4" in row

@@ -1004,10 +1004,15 @@ def _member_calc_block(m, a341=None):
     ratios = C.envelope_ratios(m) if C else []
     if ratios:
         rr = []
+        _terms = C.h1_moment_terms(m)[0] if hasattr(C, "h1_moment_terms") else ["Mx", "My"]
+        _tl = ", ".join({"Mx": "M<sub>x</sub>", "My": "M<sub>y</sub>"}[a] for a in _terms)
+        _miss = [a for a in ("Mx", "My") if a not in _terms and a in C.printed_envelope(m)] if C else []
         for q, d_, c_, r in ratios:
             if q == "H1":
-                rr.append((_q_label(q), "H1-1a/b from the printed P, M<sub>x</sub>, M<sub>y</sub> and strengths",
-                           _n(r, dc=True), "AISC 360-22 H1.1"))
+                rr.append((_q_label(q), "H1-1a/b from the printed P, %s and strengths%s" % (
+                    _tl, ("; no printed strength for %s, so this ratio omits that term (see the limit-state "
+                          "checks below)" % " and ".join({"Mx": "M<sub>x</sub>", "My": "M<sub>y</sub>"}[a] for a in _miss))
+                    if _miss else ""), _n(r, dc=True), "AISC 360-22 H1.1"))
             else:
                 rr.append((_q_label(q), "%s / %s %s" % (_n(d_), _n(c_), _q_unit(q)), _n(r, dc=True), ""))
         h.append(_calc("Printed demand &divide; printed available strength", rr))
@@ -3074,8 +3079,10 @@ def _irregularity_section(cfg, runs, sf=None):
              "story drifts at the two diaphragm edges under the &plusmn;5%% accidental eccentricity with A<sub>x</sub> = 1; "
              "story stiffness is V<sub>x</sub>/&Delta;<sub>xe</sub> at the centre of mass; the re-entrant, opening, "
              "offset and SFRS-dimension tests use the framed footprint and the lateral elements of the built model "
-             "(plane coordinates from the element list)%s. Items marked NOT EVALUATED need data the analysis does "
-             "not compute.</p>" % (sdc, "; declared drift-exempt split-level offsets are skipped" if exempt else ""))
+             "(plane coordinates from the element list)%s.%s</p>"
+             % (sdc, "; declared drift-exempt split-level offsets are skipped" if exempt else "",
+                " Items marked NOT EVALUATED need data the analysis does not compute."
+                if any("NOT EVALUATED" in str(r[1]) for r in rows) else ""))
     req = []
     if trig["12.3.3.4"]:
         req.append("&sect;12.3.3.4 (%s): members supporting the discontinuous frames, and their connections, are designed "
@@ -3853,6 +3860,12 @@ def _composite_section(pkg):
                 v = next((d[kk] for d in srcs if kk in d and d[kk] not in (None, "")), None)
                 if v is not None:
                     found[col] = v; break
+        _cr = m.get("composite") if isinstance(m.get("composite"), dict) else {}
+        if "pct" not in found and _cr.get("pct") not in (None, ""):
+            found["pct"] = _cr["pct"]
+        if isinstance(found.get("pct"), (int, float)) and not isinstance(found.get("pct"), bool):
+            _pv = float(found["pct"])
+            found["pct"] = "%.0f%%" % (_pv * 100.0 if _pv <= 1.0 else _pv)
         # a row needs at least two of the composite values -- a lone I_LB or camber is left to the record below,
         # so the table never prints a line of dashes next to a record that has the studs
         if len(found) >= 2:

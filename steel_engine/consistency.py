@@ -449,14 +449,34 @@ def printed_capacity(entry):
     return out
 
 
+_BIAXIAL_SYM = re.compile(r"^(?:BOX\d+(?:\.\d+)?X\d+(?:\.\d+)?|PIPE.*|HSS\d+(?:\.\d+)?X\d*\.\d+|"
+                          r"HSS(?P<a>\d+(?:\.\d+)?)X(?P=a)X.*)$", re.I)   # square box / square HSS / round
+
+
+def _section_name(entry):
+    inp = entry.get("inputs") if isinstance(entry.get("inputs"), dict) else {}
+    return str(entry.get("section") or inp.get("section") or "").replace(" ", "")
+
+
+def h1_moment_terms(entry):
+    """The moment terms (subset of ('Mx', 'My')) the printed H1-1 ratio can use: a printed strength about each
+    axis carrying a printed moment. A square box / square HSS / round section has one flexural strength for both
+    axes, so a single printed phi*Mn also serves the minor-axis moment."""
+    dem, cap = printed_envelope(entry), printed_capacity(entry)
+    cap = dict(cap)
+    if "Mx" in cap and "My" not in cap and _BIAXIAL_SYM.match(_section_name(entry)):
+        cap["My"] = cap["Mx"]
+    return [a for a in ("Mx", "My") if a in cap and a in dem], dem, cap
+
+
 def envelope_ratios(entry):
     """[(qty, demand, capacity, ratio)] of printed envelope / printed capacity, plus ('H1', ...) when the
     capacity dict carries both an axial and a flexural strength (H1-1a/b on the printed numbers)."""
-    dem, cap = printed_envelope(entry), printed_capacity(entry)
+    terms, dem, cap = h1_moment_terms(entry)
     rows = [(q, dem[q], cap[q], dem[q] / cap[q]) for q, _k, _f in ENV_QTY if q in dem and q in cap]
-    if "P" in cap and ("Mx" in cap or "My" in cap) and ("Mx" in dem or "My" in dem) and "P" in dem:
+    if "P" in cap and "P" in dem and terms:
         pr = dem["P"] / cap["P"]
-        m = sum(dem[a] / cap[a] for a in ("Mx", "My") if a in cap and a in dem)
+        m = sum(dem[a] / cap[a] for a in terms)
         rows.append(("H1", None, None, pr + 8.0 / 9.0 * m if pr >= 0.2 else pr / 2.0 + m))
     return rows
 

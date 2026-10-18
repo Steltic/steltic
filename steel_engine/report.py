@@ -4076,6 +4076,24 @@ def _wind_drift_section(cfg):
                 "OK" if max(abs(a), abs(b)) <= lim else "<b class='ng'>NG</b>"]
     def _worst(a, b):
         return max([max(abs(a[k - 1]), abs(b[k - 1])) for k in range(1, NF + 1) if k not in ex] or [0.0])
+    # cfg['wind_drift_governing'] = {'drift': ratio (or 'drift_pct'), 'where': text}: the governing wind drift the
+    # engineer computed outside the centre-of-mass table (e.g. Fig. 27.3-8 Case 2 at the plan edge), at the same
+    # wind level as the table (service wind when cfg['wind_service'] is given)
+    _g = cfg.get("wind_drift_governing") if isinstance(cfg.get("wind_drift_governing"), dict) else {}
+    try:
+        _gv = abs(float(_g["drift"])) if _g.get("drift") is not None else (
+            abs(float(_g["drift_pct"])) / 100.0 if _g.get("drift_pct") is not None else None)
+    except (TypeError, ValueError):
+        _gv = None
+    _gw = str(_g.get("where") or _g.get("basis") or "engineer's evaluation")
+
+    def _headline(worst_cm, label):
+        """(governing drift, its description, extra sentence) -- the larger of the table and the declared value."""
+        if _gv is not None and _gv > worst_cm:
+            return _gv, _gw, (" The story table is at the centre of mass under the direct wind (%.3f%% worst); the "
+                              "governing value is %s." % (worst_cm * 100, _esc(_gw)))
+        return worst_cm, label, ((" A separately computed %s gives %.3f%%, which does not govern." % (_esc(_gw), _gv * 100))
+                                 if _gv is not None else "")
     h = []
     if ws and ws.get("V"):
         try:
@@ -4096,7 +4114,7 @@ def _wind_drift_section(cfg):
         basis = str(ws.get("basis") or "")
         btxt = (" Basis: %s." % _n(basis)) if basis and "CC.2-1" not in basis else ""
         rows = [_wrow(k, sX[k-1], sY[k-1]) for k in range(1, NF+1)]
-        worst = _worst(sX, sY)
+        worst, _wl, _wx = _headline(_worst(sX, sY), "centre of mass")
         h.append("<h3>Service wind drift, W<sub>a</sub> at V = %s mph (%d-year MRI%s), D + 0.5L + W<sub>a</sub> (Eq. CC.2-3)</h3>"
                  % (_n(Vs), mri, (", ASCE 7-22 Fig. %s" % fig) if fig else ""))
         h.append("<p>Interstory drift under the serviceability wind W<sub>a</sub> (ASCE 7-22 Appendix CC.2.2: same MWFRS "
@@ -4104,21 +4122,26 @@ def _wind_drift_section(cfg):
                  "%s; Appendix CC cites limits of h/600 to h/400 in common use. First-order analysis: the D + 0.5L part of "
                  "Eq. CC.2-3 does not change the first-order drift.%s</p>" % (limtxt, btxt))
         h.append(_table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows))
-        h.append("<p><b>Worst service wind drift %.3f%% &mdash; %s.</b></p>"
-                 % (worst * 100, "OK" if worst <= lim else "<span class='ng'>exceeds the project limit</span>"))
+        h.append("<p><b>Worst service wind drift %.3f%%%s &mdash; %s.</b>%s</p>"
+                 % (worst * 100, (" (%s)" % _esc(_wl)) if _wl != "centre of mass" else "",
+                    "OK" if worst <= lim else "<span class='ng'>exceeds the project limit</span>", _wx))
         _QA["wind_drift"] = (worst, lim, "service wind, %d-year MRI" % mri)
         irows = [[k, "%.3f" % (abs(dX[k-1])*100), "%.3f" % (abs(dY[k-1])*100)] for k in range(1, NF+1)]
         h.append("<h4>Drift under the design (strength-level) wind &mdash; information only</h4>"
                  + _table(["Story", "drift X %", "drift Y %"], irows))
         return "".join(h)
     rows = [_wrow(k, dX[k-1], dY[k-1]) for k in range(1, NF+1)]
-    _QA["wind_drift"] = (_worst(dX, dY), lim, "design wind")
+    _wv, _wl, _wx = _headline(_worst(dX, dY), "centre of mass")
+    _QA["wind_drift"] = (_wv, lim, "design wind")
+    _tail = ("<p><b>Worst wind drift %.3f%%%s &mdash; %s.</b>%s</p>"
+             % (_wv * 100, (" (%s)" % _esc(_wl)) if _wl != "centre of mass" else "",
+                "OK" if _wv <= lim else "<span class='ng'>exceeds the project limit</span>", _wx)) if _gv is not None else ""
     return ("<h3>Wind drift</h3>"
             "<p>Interstory drift under the design (strength-level) MWFRS wind &mdash; conservative for a serviceability "
             "check &mdash; against the project limit %s. ASCE 7-22 sets no mandatory wind drift limit; Appendix CC "
             "(Eq. CC.2-3, D + 0.5L + W<sub>a</sub>) suggests a serviceability wind W<sub>a</sub> of a shorter mean "
             "recurrence interval (e.g. 10-year, Fig. CC.2-2) with limits of h/600 to h/400.</p>" % limtxt
-            + _table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows))
+            + _table(["Story", "drift X %", "drift Y %", "&le; %.2f%%" % (lim * 100)], rows) + _tail)
 
 
 def _capdesign_html(cap):

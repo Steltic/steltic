@@ -115,3 +115,15 @@ def test_member_self_weight_enters_W_only():
     rows = R._gravity_loads_table(cfg2) if hasattr(R, "_gravity_loads_table") else ""
     if rows:
         assert "member self-weight not in the floor dead load" in rows
+
+
+def test_report_passes_each_direction_elf_forces_to_the_diaphragm_table():
+    import inspect
+    src = inspect.getsource(R.build_report)
+    i = src.find("_diaphragm_section(cfg, _fxd")
+    assert i > 0 and "seismic_design_forces(cfg)" in src[max(0, i - 600):i]
+    cfg = _rect(); R._INV_CACHE.clear()
+    sdf = E.seismic_design_forces(cfg)
+    fxd = tuple({int(k): float(v) for k, v in sdf[d]["F_elf"].items()} for d in ("X", "Y"))
+    html = R._diaphragm_section(cfg, fxd)
+    assert "Diaphragm" in html or "F<sub>px</sub>" in html

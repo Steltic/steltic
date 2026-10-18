@@ -2267,7 +2267,6 @@ def theta_rows(cfg, d, dxe=None, V=None, Cd=None, Ie=None):
     Om0 = float(sd.get("Om0", 3.0) or 3.0)
     beta = max(float(cfg.get("theta_beta", 1.0) or 1.0), 1.25 / Om0)
     tmax = max(min(0.5 / (beta * Cd), 0.25), 0.10)
-    own_drift = dxe is None
     if dxe is None:
         dxe = [abs(v) for v in seismic_drift(cfg)[d]["elastic"]]
     if V is None:
@@ -2277,7 +2276,9 @@ def theta_rows(cfg, d, dxe=None, V=None, Cd=None, Ie=None):
         # 12.8.7: Delta and V_x from the SAME analysis -- where the design drift is the MRSA drift (basis 'MRSA',
         # or the stories where it governs the 'envelope'), pair it with the MRSA story shear at the same scale
         # (unscaled modal shear x the 12.9.1.4.2 drift scale), not with the ELF story shear
-        rs = SFd[d].get("rs") if own_drift else None
+        # (also when the caller passes the engine's drift profile scaled by a report-side factor -- the pairing
+        # follows the analysis the drift came from, not who passed it)
+        rs = SFd[d].get("rs")
         if rs is not None and SFd.get("basis") in ("MRSA", "envelope"):
             Vm = [abs(v) / (rs.get("force_scale") or 1.0) * (rs.get("drift_scale") or 1.0) for v in rs["shear"]]
             if SFd["basis"] == "MRSA":

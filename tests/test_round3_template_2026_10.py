@@ -66,3 +66,22 @@ def test_composite_table_reads_pct_from_composite_record():
     row = html[html.find("floor-W18X35"):]
     row = row[:row.find("</tr>")]
     assert "30%" in row and "&mdash;" in row          # pct now printed; camber / wet stage still absent
+
+
+def test_wind_drift_governing_value_heads_the_section_and_scorecard():
+    from test_report_us_practice import _cfg as _ucfg
+    w = dict(V=115.0, exposure="C")
+    base = _ucfg(wind=w, wind_service={"V": 76.0, "MRI": 10})
+    html0 = R._wind_drift_section(base)
+    cm = R._QA["wind_drift"][0]
+    gov = dict(base, wind_drift_governing={"drift": cm * 1.5, "where": "Case 2 (Fig. 27.3-8) at the plan edge"})
+    html = R._wind_drift_section(gov)
+    assert R._QA["wind_drift"][0] == pytest.approx(cm * 1.5)
+    assert "Case 2 (Fig. 27.3-8) at the plan edge" in html and "%.3f%%" % (cm * 150) in html
+    low = dict(base, wind_drift_governing={"drift": cm * 0.5, "where": "Case 3 at the corner"})
+    html = R._wind_drift_section(low)
+    assert R._QA["wind_drift"][0] == pytest.approx(cm) and "does not govern" in html
+    plain = dict(_ucfg(wind=w), wind_drift_governing={"drift_pct": 1.0, "where": "Case 2 at Grid 1"})
+    html = R._wind_drift_section(plain)
+    assert "Worst wind drift 1.000%" in html and R._QA["wind_drift"][0] == pytest.approx(0.01)
+    assert "Worst service wind drift" in html0

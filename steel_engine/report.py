@@ -1481,10 +1481,10 @@ def _member_section(cfg, name, pkg, want_roles, title, intro):
         _has = lambda roles: any(isinstance(m, dict) and _role_of(m.get("id", ""), m.get("inputs", {}) or {}) in roles
                                  for m in (members or []))
         if "gravity_col" in want_roles and _has({"lateral_col"}):
-            h.append("<p class='cnote'>None: every column of this building is part of the seismic force-resisting "
-                     "system (lateral-system columns below).</p>")
+            h.append("<p class='cnote'>Not applicable: every column of this building is part of the seismic "
+                     "force-resisting system (lateral-system columns below).</p>")
         else:
-            h.append("<p class='cnote'>None in this building.</p>")
+            h.append("<p class='cnote'>This building has no members of this type.</p>")
         return "".join(h)
     try:
         h.append(_table(["Member", "Section", "Demand envelope", "Governing combination", "Governing limit state",

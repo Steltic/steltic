@@ -206,3 +206,29 @@ def test_combination_table_prints_code_roof_factors():
     html = R._combo_table(cases)
     assert "1.60R" in html and "1.60L<sub>r</sub>" in html and "1.98" not in html
     assert "0.50" in html                                      # a plain float factor still prints
+
+
+def test_elf_hx_from_declared_seismic_base_level():
+    cfg = _rect(); R._INV_CACHE.clear(); E._ELF_CACHE.clear() if hasattr(E, "_ELF_CACHE") else None
+    T = 1.0
+    F0 = E._elf_impl(cfg, T, "X")[5]
+    cfg1 = dict(cfg, seismic_base_level=1)
+    F1 = E._elf_impl(cfg1, T, "X")[5]
+    assert F1[1] == pytest.approx(0.0, abs=1e-9)            # the base level takes no story force
+    assert sum(F1.values()) == pytest.approx(sum(F0.values()))
+    NF = len(cfg["heights"])
+    assert F1[NF] > F0[NF]                                   # more of V at the top when h_x starts higher
+    assert E.elf_base_z(cfg) == E.zlevels(cfg)[0] and E.elf_base_z(cfg1) == E.zlevels(cfg)[1]
+
+
+def test_fully_restrained_beam_record_drives_the_demand_row():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = R._sfrs(cfg)
+    pkg = {"members": [{"id": "floor-W24X103", "inputs": {"kind": "beam", "role": "floor", "section": "W24X103",
+                                                         "V_kip": 70.0, "P_comp_kip": 254.0}}],
+           "connections": [{"id": "conn-floor-W24X103",
+                            "type": "braced-bay beam-to-column connection (fully restrained per AISC 341-22 F2.6b(c), CJP flanges)"}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    row = html[html.find("W24X103"):]; row = row[:row.find("</tr>")]
+    assert "braced-bay beam-to-column connection, fully restrained" in row and "F2.6b(c)" in row
+    assert "simple shear connection" not in row

@@ -504,7 +504,7 @@ def member_self_weight_by_level(cfg, kinds=("col", "brace")):
     """{level: kip} self-weight of the built members of the given kinds tributary to each level (A x 490 pcf x
     length, lumped half at each end node and shared between levels by node height -- _split_member_weight).
     Builds the model once (call it outside a build). For cfg['seismic_weight_members_kip']."""
-    import sections as _SC
+    import sections as _SC, re
     info = build(cfg, "Linear")
     z = zlevels(cfg); NF = len(cfg["heights"])
     elems = []
@@ -515,7 +515,12 @@ def member_self_weight_by_level(cfg, kinds=("col", "brace")):
         try:
             A = float(_SC.props(str(sec))["A"])
         except Exception:
-            continue
+            mb = re.match(r"\s*BRB\s*([0-9.]+)", str(sec))
+            if not mb:
+                continue
+            # buckling-restrained brace "BRB<Asc>": core steel plus casing and fill, taken as brb_weight_factor x the
+            # core steel weight (default 2.5; the supplier's brace weight governs)
+            A = float(mb.group(1)) * float(cfg.get("brb_weight_factor", 2.5))
         c1, c2 = ops.nodeCoord(n1), ops.nodeCoord(n2)
         elems.append((c1[2], c2[2], A * (490.0 / 1728.0) * math.dist(c1, c2) / 1000.0))
     return _split_member_weight(z, NF, elems)
@@ -1157,6 +1162,18 @@ def elf_dir(cfg, direction):
     return elf(cfg, period_dir(cfg, direction)[0], direction)
 
 
+def elf_base_z(cfg):
+    """Elevation (in.) from which h_x is measured in the 12.8.3 vertical distribution: the model base, or the level
+    cfg['seismic_base_level'] where the declared seismic base is a framed level above the model base (hillside,
+    basement). Levels at or below it receive no story force; their weight stays in W as declared."""
+    z = zlevels(cfg)
+    try:
+        kb = int(cfg.get("seismic_base_level") or 0)
+    except (TypeError, ValueError):
+        kb = 0
+    return z[max(0, min(kb, len(z) - 1))]
+
+
 def _elf_impl(cfg, T1, direction=None):
     s = seis_dir(cfg, direction); NF = len(cfg["heights"]); z = zlevels(cfg)
     W = sum(floor_w(cfg, k) for k in range(1, NF+1))
@@ -1172,7 +1189,8 @@ def _elf_impl(cfg, T1, direction=None):
     if s.get("S1", 0) >= 0.6: cmin = max(cmin, 0.5*s["S1"]/(R/Ie))          # Eq. 12.8-7
     Cs = max(Cs, cmin); V = Cs*W
     kk = 1.0 if Tu <= 0.5 else (2.0 if Tu >= 2.5 else 1+(Tu-0.5)/2.0)
-    whk = {k: floor_w(cfg, k)*z[k]**kk for k in range(1, NF+1)}; ss = sum(whk.values())
+    zb = elf_base_z(cfg)                                                  # h_x from the seismic base (12.8.3)
+    whk = {k: floor_w(cfg, k)*max(z[k]-zb, 0.0)**kk for k in range(1, NF+1)}; ss = sum(whk.values())
     return Cs, V, Tu, Ta, kk, {k: V*whk[k]/ss for k in range(1, NF+1)}, W
 
 

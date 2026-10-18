@@ -1605,7 +1605,7 @@ def _load_activity(name):
             if any(refs(r) for r in s): extra += s
     seen = set(); merged = []
     for r in jrecs + extra:
-        k = (r.get("ts"), r.get("tool"), str(r.get("detail"))[:80])
+        k = (r.get("tool"), str(r.get("detail"))[:200])     # a step re-run repeats its look-ups: list each once
         if k in seen: continue
         seen.add(k); merged.append(r)
     merged.sort(key=lambda r: (r.get("ts") or "", r.get("step") or 0))
@@ -3296,7 +3296,8 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
     same_f = same and abs(X["k"] - Y["k"]) < 1e-6
     if same_f:
         kk = X["k"]
-        vrows = [[k, _n(E.floor_w(cfg, k)), _n(z[k] / 12), _n(E.floor_w(cfg, k) * (z[k] / 12) ** kk),
+        _zb = E.elf_base_z(cfg) if hasattr(E, "elf_base_z") else z[0]
+        vrows = [[k, _n(E.floor_w(cfg, k)), _n(max(z[k] - _zb, 0.0) / 12), _n(E.floor_w(cfg, k) * (max(z[k] - _zb, 0.0) / 12) ** kk),
                   "%.4f" % (FX[k] / X["V"] if X["V"] else 0.0), _n(FX[k])] for k in range(1, NF + 1)]
         vtab = ("<h4>Vertical distribution of the base shear (k = %s, &sect;12.8.3)</h4>" % _k(kk)
                 + "<p>F<sub>x</sub> = C<sub>vx</sub>V, &nbsp; C<sub>vx</sub> = w<sub>x</sub>h<sub>x</sub><sup>k</sup> / "
@@ -3304,7 +3305,8 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
                 + _table(["Level", "w<sub>x</sub> (kip)", "h<sub>x</sub> (ft)", "w<sub>x</sub>h<sub>x</sub><sup>k</sup>",
                           "C<sub>vx</sub>", "F<sub>x</sub> (kip)"], vrows))
     else:
-        vrows = [[k, _n(E.floor_w(cfg, k)), _n(z[k] / 12),
+        _zb = E.elf_base_z(cfg) if hasattr(E, "elf_base_z") else z[0]
+        vrows = [[k, _n(E.floor_w(cfg, k)), _n(max(z[k] - _zb, 0.0) / 12),
                   "%.4f" % (FX[k] / X["V"] if X["V"] else 0.0), _n(FX[k]),
                   "%.4f" % (FY[k] / Y["V"] if Y["V"] else 0.0), _n(FY[k])] for k in range(1, NF + 1)]
         vtab = ("<h4>Vertical distribution of the base shear (&sect;12.8.3; k<sub>X</sub> = %s, k<sub>Y</sub> = %s)</h4>"
@@ -4432,6 +4434,19 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 dem = vtxt + ((", axial T / C = %s / %s kip" % (_n(max(Pt, Pcol)), _n(max(Pc, Pcol)))) if ax > 0.5 else "")
                 basis = ("single plate or clip angles: AISC 360-22 J3 / J4 and AISC Manual Part 10 (bolt-group "
                          "eccentricity, plate ductility" + ("; axial transfer with the shear" if ax > 0.5 else "") + ")")
+                # a beam whose own record makes the joint fully restrained (braced-bay beams, struts, collectors at
+                # boxes) is printed as recorded, with the clauses the record cites
+                _brec = _conn_rec.get("conn-" + str(m.get("id", "")).lower())
+                _brt = str((_brec or {}).get("type") or "").strip()
+                if _brt and any(t_ in _brt.lower() for t_ in ("fully restrained", "cjp")):
+                    _first = re.split(r"[:;(]", _brt)[0].strip(" ,")
+                    typ = _esc(_first if len(_first) <= 90 else "beam-to-column connection") + (
+                        ", fully restrained" if "fully restrained" in _brt.lower() and "fully restrained" not in _first.lower() else "")
+                    dem = vtxt + ((", axial T / C = %s / %s kip" % (_n(max(Pt, Pcol)), _n(max(Pc, Pcol)))) if ax > 0.5 else "") + \
+                          ((", M<sub>end</sub> = %s kip-ft" % _n(Mz / 12.0)) if Mz else "")
+                    _cl = sorted(set(re.findall(r"\b[DEFH]\d\.\d[a-z]?(?:\([a-z0-9]\))*", _brt + " " + str(_brec.get("design_basis") or ""))))
+                    basis = (("AISC 341-22 " + ", ".join(_cl)) if (_cl and a341) else
+                             "AISC 360-22 J2 / J10 (fully restrained beam-to-column connection)")
         elif "col" in kind:
             # the column's own connection record ('conn-<member id>') says what the column joint is: a splice, a
             # one-piece column with no splice (no row), or another joint such as a cap plate or a girder seat

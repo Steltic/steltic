@@ -1179,6 +1179,8 @@ def _gravity_loads_table(cfg, pkg=None):
     lrow = _psf(L) if L is not None else "&mdash;"
     if part:
         lrow += " (incl. %s psf partition allowance, ASCE 7-22 &sect;4.3.2, treated as live load)" % _n(part)
+    if cfg.get("live_basis"):                       # e.g. occupancy blend / Table 4.3-1 items behind L_floor
+        lrow += "; " + _esc(str(cfg["live_basis"]))
     rows = [["Floor dead load, D (self-weight + superimposed dead)", _psf(cfg.get("D_floor"))],
             ["Roof dead load, D", _psf(cfg.get("D_roof"))],
             ["Cladding (per unit wall area)", _psf(cfg.get("clad"))],
@@ -1218,7 +1220,8 @@ def _gravity_loads_table(cfg, pkg=None):
         rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])
     swk = cfg.get("seismic_weight_kip")
     if isinstance(swk, dict) and swk:
-        rows.append(["Seismic weight only, lumped (kip by level: equipment, tanks, storage share per &sect;12.7.2)",
+        rows.append(["Seismic weight only, lumped (kip by level; %s)" % (_esc(cfg.get("seismic_weight_label"))
+                     if cfg.get("seismic_weight_label") else "permanent equipment, storage share and other &sect;12.7.2 items"),
                      ", ".join("level %s: %s kip" % (k, _n(float(v))) for k, v in sorted(swk.items(), key=lambda t: int(t[0]))
                                if isinstance(v, (int, float)))
                      + (" &mdash; %s" % _n(cfg.get("seismic_weight_basis")) if cfg.get("seismic_weight_basis") else "")])
@@ -1332,7 +1335,10 @@ def _wind_section(cfg, cases=None):
              "windward walls C<sub>p</sub> = +0.8 with q<sub>z</sub> at each height, leeward walls C<sub>p</sub>(L/B) per "
              "Fig. 27.3-1 with q<sub>h</sub> at the mean roof height h; internal pressure cancels in the net story shear. "
              "Wall loads are shared between the two diaphragms each wall spans (mid-height bands of the building volume); "
-             "the bottom half of the lowest story goes directly to the foundation. Each level is not less than the "
+             + ("the whole lowest story band is carried by the lowest level (cfg ground band 'lowest', conservative for the "
+                "frames). " if str((cfg.get("wind") or {}).get("ground_band", "base")).lower() == "lowest" else
+                "the bottom half of the lowest story goes directly to the foundation. ")
+             + "Each level is not less than the "
              "&sect;27.1.5 minimum (16 psf walls, 8 psf roof). The MWFRS roof suction (Fig. 27.3-1 roof C<sub>p</sub>) is "
              "applied in the 0.9D + 1.0W combinations. " + ctxt + "</p>",
              _table(["Parameter", "Value"], [["Basic wind speed V", "%s mph" % _n(w.get("V"))],
@@ -1648,11 +1654,14 @@ def _activity_section(name):
         counts[k] = counts.get(k, 0) + 1
     h.append(f"<p>{len(recs)} entries.</p>")
     h.append(_table(["Entry type", "Count"], [[_esc(k), counts[k]] for k in sorted(counts)]))
-    rows = [[i + 1, _esc(r.get("ts", "").split("T")[-1]),
+    # entries in order, without clock times: the record is re-logged when the calculation package is re-filled
+    # after a re-analysis, so its times say when it was last filled, not when the design was done
+    rows = [[i + 1,
              _esc(_TOOL_NAME.get(r.get("tool", ""), str(r.get("tool", "")).replace("_", " "))),
              _esc(_log_detail(r.get("tool", ""), r.get("detail", "")))[:600],
              _esc(_log_result(r.get("tool", ""), r.get("result", "")))[:300]] for i, r in enumerate(recs)]
-    h.append("<h3>Chronological record</h3>" + _table(["#", "time", "entry", "detail", "result"], rows))
+    h.append("<h3>Record (in order; re-logged at the last fill of the calculation package)</h3>"
+             + _table(["#", "entry", "detail", "result"], rows))
     return "".join(h)
 
 
@@ -2252,7 +2261,10 @@ def _theta_rows(cfg, runs, d):
         # its drift profile (the engine's 12.8.6.5 elastic drift x any extra RBS factor found only in the
         # calc package) and story shears, so Ch. 7, the QA table and the gate agree
         try:
-            rows, tmax, beta = E.theta_rows(cfg, d, dxe=r["dxe"], V=r["V"], Cd=r.get("Cd"), Ie=r.get("Ie"))
+            # MRSA / envelope basis: V=None lets the engine pair the story shear with the analysis the drift comes
+            # from (MRSA drift with the MRSA story shear, 12.8.7) -- the ELF shear paired an MRSA drift with an ELF shear
+            _Vp = None if _demand_basis(cfg) in ("MRSA", "envelope") else r["V"]
+            rows, tmax, beta = E.theta_rows(cfg, d, dxe=r["dxe"], V=_Vp, Cd=r.get("Cd"), Ie=r.get("Ie"))
             ex = runs["exempt"]
             for x in rows: x["exempt"] = x["exempt"] or (x["s"] in ex)
             return rows, tmax, beta
@@ -2810,7 +2822,9 @@ def _irregularity_section(cfg, runs, sf=None):
                 % (tirs["X"], tirs["Y"], "/&gt;".join("%.1f" % t for t in tiers),
                    "" if sdc in ("C", "D", "E", "F") else " (A<sub>x</sub> not required in SDC %s)" % sdc,
                    axs["X"], axs["Y"],
-                   "; design drift and P-&Delta; at the edge with the largest drift (&sect;12.8.6.5, Table 12.3-1a)",
+                   ("; design drift and P-&Delta; at the edge with the largest drift (&sect;12.8.6.5, Table 12.3-1a)"
+                    if sdc in ("C", "D", "E", "F") else
+                    "; design drift at the centre of mass (the edge drift of &sect;12.8.6.5 applies in SDC C&ndash;F)"),
                    "; &rho; = 1.3 (&gt;1.4 in both directions, &sect;12.3.4.2.1)" if both14 and sdc in ("D", "E", "F") else ""))
         trig["12.3.3.5"].append("H1"); trig["12.7.3 (3D model)"].append("H1")
     else:
@@ -4054,8 +4068,10 @@ def _wind_drift_section(cfg):
         try:
             Vs = float(ws["V"])
             cfg_s = dict(cfg); cfg_s["wind"] = dict(cfg["wind"], V=Vs)
-            for k in ("story_forces",):
-                cfg_s["wind"].pop(k, None)
+            for k in ("story_forces",):                      # supplied strength-level story forces are not service
+                cfg_s["wind"].pop(k, None)                    # forces: the Ch. 27 calculation is repeated at V_s
+            for k in ("wind_forces_override", "wind_by_level"):
+                cfg_s.pop(k, None)
             sX, sY = _wind_story_drifts(cfg_s)
         except Exception as ex:
             return f"<p class='note'>[service wind drift run failed: {_esc(ex)}]</p>"
@@ -5069,6 +5085,21 @@ def _cvn_rows(cfg, pkg, secs):
     plates >= 2 in in built-up members / inelastic connection plates / BRB cores: CVN 20 ft-lbf at 70 F) and
     AISC 360-22 A3.1c-d (rolled shapes with flanges > 2 in and built-up plates > 2 in in tension with CJP splices)."""
     heavy, thick, plates = [], [], []
+    # only sections that are built: with a calc package, a section must appear as a member section there (analysis
+    # stand-ins such as a truss modelled as a W44 are not built); cfg['cvn_exclude'] removes others (e.g. gravity girders)
+    _built = None
+    if isinstance(pkg, dict) and isinstance(pkg.get("members"), list) and pkg["members"]:
+        _built = {str((m.get("inputs") or {}).get("section") or "") for m in pkg["members"] if isinstance(m, dict)}
+    _gonly = set()
+    if isinstance(pkg, dict) and isinstance(pkg.get("members"), list):
+        _roles = {}
+        for m in pkg["members"]:
+            if isinstance(m, dict):
+                sec_ = str((m.get("inputs") or {}).get("section") or "")
+                _roles.setdefault(sec_, set()).add(_role_of(m.get("id", ""), m.get("inputs", {}) or {}))
+        _gonly = {k for k, v in _roles.items() if v and v <= {"gravity_col"}}      # gravity columns: not SFRS
+    _excl = {str(x) for x in (cfg.get("cvn_exclude") or [])}
+    secs = [x for x in secs if (_built is None or x in _built) and x not in _excl]
     for s in sorted(secs):
         try:
             p = S.props(s, SEC=E.SEC)
@@ -5090,7 +5121,9 @@ def _cvn_rows(cfg, pkg, secs):
     except Exception:
         a341 = float((cfg.get("seis") or {}).get("R") or 0) > 3.0
     rows = []
-    if a341:
+    heavy341 = [x for x in heavy if x not in _gonly]
+    if a341 and (heavy341 or plates):
+        heavy = heavy341
         rows.append(["Notch toughness, heavy sections in the SFRS (AISC 341-22 A3.3)",
                      "rolled shapes with flanges &ge; 1-1/2 in.%s: CVN &ge; 20 ft-lbf at 70&deg;F, alternate core location "
                      "(ASTM A6 Supplementary Requirement S30)%s"
@@ -5150,11 +5183,19 @@ def _materials_table(cfg, pkg=None):
         pl.append("ASTM A36 (F<sub>y</sub> = 36 ksi, F<sub>u</sub> = 58 ksi) where noted in the connection design")
     rows.append(["Plates and bars", "; ".join(pl)])
     bolts = [g for g in ("A325", "A490") if g.lower() in blob_l] or ["A325"]
-    rows.append(["High-strength bolts", "ASTM F3125 Grade %s (snug-tight or pretensioned as noted)" % " / ".join(bolts)])
+    try:
+        _a341m = any(bool(_PIPE_A341(cfg, d)) for d in ("X", "Y"))
+    except Exception:
+        _a341m = False
+    rows.append(["High-strength bolts", "ASTM F3125 Grade %s; %s" % (" / ".join(bolts),
+                 "bolts in the seismic force-resisting system pretensioned with Class A (or better) faying surfaces "
+                 "(AISC 341-22 D2.2), other bolts snug-tight unless noted" if _a341m else "snug-tight or pretensioned as noted")])
     fg = sorted({m for m in re.findall(r"f1554\s*(?:gr(?:ade)?\.?\s*)?(36|55|105)", blob_l)}, key=int)
     rows.append(["Anchor rods", "ASTM F1554 Grade %s" % " / ".join(fg) if fg else
                  "ASTM F1554 (grade per the column-base design, Chapter 10)"])
-    rows.append(["Welds", "E70XX electrodes (F<sub>EXX</sub> = 70 ksi), AWS D1.1"])
+    rows.append(["Welds", "E70XX electrodes (F<sub>EXX</sub> = 70 ksi), AWS D1.1%s" % (
+        "; welds in the seismic force-resisting system per AWS D1.8, demand-critical welds with filler metal per "
+        "AISC 341-22 A3.4b" if _a341m else "")])
     comp = "composite" in str(cfg.get("floor_system", "")).lower() or bool((pkg or {}).get("composite_design")) \
         if isinstance(pkg, dict) else "composite" in str(cfg.get("floor_system", "")).lower()
     if comp:
@@ -5382,7 +5423,8 @@ def build_report(name, root=None):
     md = cfg.get("model") or {}
     parts.append(_table(["Item", "Value"], [
         ["Description", _esc(cfg.get("arch", ""))],
-        ["Stories", "%d (%s)" % (NF, _heights_txt(cfg["heights"]))],
+        ["Stories", (_esc(str(cfg["stories_text"])) if cfg.get("stories_text") else
+                     "%d (%s)" % (NF, _heights_txt(cfg["heights"])))],
         ["Plan", "%s (X) &times; %s (Y)" % (_ftin(Lx), _ftin(Ly))],
         ["Bays", ("%d &times; %d @ %s (X) / %s (Y)" % (NX, NY, _ftin(SX), _ftin(SY))) if not (cfg.get("xcoords") or cfg.get("ycoords"))
          else "%d &times; %d (variable spacing)" % (NX, NY)],

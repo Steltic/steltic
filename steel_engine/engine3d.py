@@ -1844,13 +1844,14 @@ def beam_serviceability(cfg):
     return d["LL"],d["TL"]
 
 
-_ROOF_DEFL = {"plaster": (360.0, 240.0), "nonplaster": (240.0, 180.0), "none": (180.0, 120.0)}
+_ROOF_DEFL = {"plaster": (360.0, 240.0), "nonplaster": (240.0, 180.0), "none": (180.0, 120.0), "floor": (360.0, 240.0)}
 
 
 def defl_limits(cfg, roof):
     """(live, total) span/deflection limits, IBC 2024 Table 1604.3: floor members L/360 and L/240; roof members
     by cfg['roof_deflection'] = 'plaster' (supporting plaster or stucco ceiling: L/360, L/240, the default),
-    'nonplaster' (nonplaster ceiling: L/240, L/180) or 'none' (not supporting a ceiling: L/180, L/120)."""
+    'nonplaster' (nonplaster ceiling: L/240, L/180), 'none' (not supporting a ceiling: L/180, L/120) or 'floor'
+    (an occupied top tier / platform designed with the floor limits L/360, L/240)."""
     if roof:
         return _ROOF_DEFL.get(str(cfg.get("roof_deflection") or "plaster").lower(), (360.0, 240.0))
     return (360.0, 240.0)

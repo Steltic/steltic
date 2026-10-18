@@ -1303,9 +1303,10 @@ def _wind_section(cfg, cases=None):
                       for k in range(1, NF+1))
         ctxt = _wind_cases_txt(cases)
         if DX["method"] == "override" or DY["method"] == "override" or patched:
-            src = DX.get("source") or DY.get("source") or ""
-            h = ["<p>ASCE 7-22 Ch. 27 MWFRS story forces from the design wind calculation%s.</p>"
-                 % ((" (" + _n(src) + ")") if src else ""),
+            # cfg['wind_forces_basis'] states how the supplied story forces were derived (else a neutral line)
+            _wfb = cfg.get("wind_forces_basis") or ((cfg.get("wind") or {}).get("story_forces_basis"))
+            h = ["<p>ASCE 7-22 Ch. 27 MWFRS story forces%s.</p>"
+                 % ((": " + _esc(str(_wfb))) if _wfb else " from the design wind calculation recorded with the design"),
                  "<p><b>Story wind forces (kip):</b></p>",
                  _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
                  f"<p><b>Wind base shear:</b> X = {_n(VwX)} kip, Y = {_n(VwY)} kip. {ctxt}</p>"]
@@ -3372,7 +3373,10 @@ def _combo_table(cases):
             return "%.2f" % float(f)
         return "%.2f / %.2f" % (float(f), float(hi))             # by level (2.3.6 Exception 1)
     rows = [[_combo_label(c[0]), "%.2f" % c[1], lf(c), "%.2f" % float(c[3]), lab(c), applies(c)] for c in cases]
-    return _table(["Combination", "D", "L", "L<sub>r</sub> / S", "Lateral", "Applies to"], rows)
+    return (_table(["Combination", "D", "L", "L<sub>r</sub> / S", "Lateral", "Applies to"], rows)
+            + "<p class='cnote'>The L<sub>r</sub> / S column gives the factor of the governing roof term of each "
+              "combination: S where snow governs the roof, otherwise L<sub>r</sub> (ASCE 7-22 &sect;2.3.1: 1.6L<sub>r</sub> or "
+              "1.0S principal, 0.5L<sub>r</sub> or 0.3S companion).</p>")
 
 
 def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
@@ -3505,7 +3509,8 @@ def _floor_serviceability(pkg):
     if not rows:
         return ""
     return ("<h3>Floor and roof beam deflection and camber (design records)</h3>"
-            "<p>Live-load deflection is limited to L/360 and total-load deflection to L/240 (IBC Table 1604.3). Composite "
+            "<p>Live-load and total-load deflection limits per IBC Table 1604.3, as listed for each member (floor members "
+            "L/360 and L/240; roof members by the ceiling they support). Composite "
             "floor members use a lower-bound transformed moment of inertia I<sub>LB</sub>; the bare-steel (wet-concrete) "
             "dead-load deflection is offset by shop camber where specified.</p>"
             + _table(["Member", "Section", "Live &delta;", "Limit", "Total &delta;", "Limit", "Camber", "&le; limit"], rows))
@@ -4770,7 +4775,9 @@ def _deflection_section(cfg, pkg=None):
          % (_n(det.get("basis") or "the tributary loads of each beam"),
             "; roof members %s: L/%d and L/%d" % (
                 {"plaster": "supporting a plaster or stucco ceiling", "nonplaster": "supporting a nonplaster ceiling",
-                 "none": "not supporting a ceiling"}.get(str(cfg.get("roof_deflection") or "plaster").lower(),
+                 "none": "not supporting a ceiling",
+                 "floor": "at the top tier, an occupied platform designed as a floor"}.get(
+                     str(cfg.get("roof_deflection") or "plaster").lower(),
                                                          "supporting a plaster or stucco ceiling"),
                 *E.defl_limits(cfg, True)) if hasattr(E, "defl_limits") else "")]
     if det.get("error"):
@@ -4900,7 +4907,9 @@ def _grounding_check(cfg, name, pkg):
     head = ("<h3>Code-provision verification</h3>"
             f"<p>Whether the governing provisions of the standards this building's systems require were verified "
             f"against the text of the standards. R = {R} "
-            + ("(&gt; 3 &mdash; AISC 341 ductile detailing applies)." if detailed
+            + (("(&gt; 3 &mdash; AISC 341 ductile detailing applies)." if float(R) > 3.0 else
+                "&mdash; AISC 341 applies to this seismic force-resisting system (the system row of the governing "
+                "table requires its detailing).") if detailed
                else "(&le; 3 &mdash; system not detailed for seismic; AISC 341/358 do not apply, design per AISC 360).")
             + "</p>")
     tail = ("<p class='note'>Verification incomplete: the items marked MISSING were required for this building's "

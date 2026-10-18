@@ -466,6 +466,9 @@ def floor_w(cfg,k):
     w+=_clad_kip(cfg,k)
     w+=_lvl_val(cfg.get("seismic_mass_only"),k)*floor_area_ft2(cfg,k)/1000.0
     w+=_lvl_val(cfg.get("seismic_weight_kip"),k)
+    # self-weight of members not in the floor dead load psf (columns, braces), tributary to the level
+    # (ASCE 7-22 12.7.2: W includes all dead load); seismic weight only -- the member checks carry it
+    w+=_lvl_val(cfg.get("seismic_weight_members_kip"),k)
     if roof:
         snow=cfg.get("snow",0.0)
         if snow>45.0:                          # 12.7.2 item 4: 15% of snow ONLY where pf > 45 psf
@@ -474,6 +477,40 @@ def floor_w(cfg,k):
         w+=0.25*_Llev(cfg,k)*floor_area_ft2(cfg,k)/1000.0
     w+=cfg.get("extra_mass_floors",{}).get(k,0.0)*floor_area_ft2(cfg,k)/1000.0
     return w
+
+def member_self_weight_by_level(cfg, kinds=("col", "brace")):
+    """{level: kip} self-weight of the built members of the given kinds tributary to each level: each element's
+    weight (A x 490 pcf x length) is split between the levels bounding the story that holds its mid-point, in
+    proportion to the mid-point height; weight below the seismic base goes to grade, weight above the roof to
+    the roof. Builds the model once (call it outside a build). For cfg['seismic_weight_members_kip']."""
+    import sections as _SC
+    info = build(cfg, "Linear")
+    z = zlevels(cfg); NF = len(cfg["heights"])
+    out = {k: 0.0 for k in range(1, NF + 1)}
+    for e in info.get("ele", []):
+        t, kind, sec, n1, n2 = e[:5]
+        if kind not in kinds or not sec:
+            continue
+        try:
+            A = float(_SC.props(str(sec))["A"])
+        except Exception:
+            continue
+        c1, c2 = ops.nodeCoord(n1), ops.nodeCoord(n2)
+        wk = A * (490.0 / 1728.0) * math.dist(c1, c2) / 1000.0
+        zm = 0.5 * (c1[2] + c2[2])
+        if zm <= z[0] + 1e-6:
+            continue
+        for k in range(1, NF + 1):
+            if zm <= z[k] + 1e-6:
+                f = (zm - z[k - 1]) / (z[k] - z[k - 1]) if z[k] > z[k - 1] else 1.0
+                out[k] += wk * f
+                if k - 1 >= 1:
+                    out[k - 1] += wk * (1.0 - f)
+                break
+        else:
+            out[NF] += wk
+    return {k: round(v, 1) for k, v in out.items() if v > 0.05}
+
 
 def floor_grav(cfg,k):
     NF=len(cfg["heights"]); roof=(k==NF)

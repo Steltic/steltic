@@ -1223,6 +1223,15 @@ def _gravity_loads_table(cfg, pkg=None):
     smo = cfg.get("seismic_mass_only")
     if isinstance(smo, dict) and _levels_txt(smo):
         rows.append(["Seismic weight only (ASCE 7-22 &sect;12.7.2 item 2 partition weight)", _levels_txt(smo)])
+    swm = cfg.get("seismic_weight_members_kip")
+    if isinstance(swm, dict) and swm:
+        rows.append(["Seismic weight only: member self-weight not in the floor dead load (columns and braces, kip by "
+                     "level, &sect;12.7.2)",
+                     ", ".join("level %s: %s kip" % (k, _n(float(v))) for k, v in sorted(swm.items(), key=lambda t: int(t[0]))
+                               if isinstance(v, (int, float)))
+                     + (" &mdash; %s" % _n(cfg.get("seismic_weight_members_basis")) if cfg.get("seismic_weight_members_basis")
+                        else " &mdash; the built column and brace sections, each split between the levels above and "
+                             "below; the member checks carry the same self-weight")])
     swk = cfg.get("seismic_weight_kip")
     if isinstance(swk, dict) and swk:
         rows.append(["Seismic weight only, lumped (kip by level; %s)" % (_esc(cfg.get("seismic_weight_label"))
@@ -3233,6 +3242,8 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
             + (", 25% of the storage live load" if cfg.get("storage") or cfg.get("storage_levels") else "")
             + (", the lumped seismic weights listed with the gravity loads" if isinstance(cfg.get("seismic_weight_kip"), dict)
                and cfg.get("seismic_weight_kip") else "")
+            + (", the self-weight of the columns and braces" if isinstance(cfg.get("seismic_weight_members_kip"), dict)
+               and cfg.get("seismic_weight_members_kip") else "")
             + (", 15% of the uniform design snow load (p<sub>f</sub> &gt; 45 psf, item 4)"
                if float(cfg.get("snow", 0) or 0) > 45.0 else ""))
     rs_on = SD.get("basis", "ELF") != "ELF"

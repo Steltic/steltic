@@ -102,3 +102,16 @@ def test_diaphragm_fpx_evaluated_in_both_directions():
     assert "Eq. 12.10-1, X (kip)" in html and "Eq. 12.10-1, Y (kip)" in html
     one = R._diaphragm_section(cfg, (FxX, dict(FxX)))      # same forces both ways: one column, as before
     assert "Eq. 12.10-1, Y (kip)" not in one and "Eq. 12.10-1 (kip)" in one
+
+
+def test_member_self_weight_enters_W_only():
+    cfg = _rect(); R._INV_CACHE.clear()
+    w0 = E.floor_w(cfg, 1); d0 = E.floor_dead(cfg, 1)
+    sw = E.member_self_weight_by_level(cfg)
+    assert sw and all(v > 0 for v in sw.values())
+    cfg2 = dict(cfg, seismic_weight_members_kip=sw)
+    assert E.floor_w(cfg2, 1) == pytest.approx(w0 + sw.get(1, 0.0))
+    assert E.floor_dead(cfg2, 1) == pytest.approx(d0)          # gravity dead load unchanged
+    rows = R._gravity_loads_table(cfg2) if hasattr(R, "_gravity_loads_table") else ""
+    if rows:
+        assert "member self-weight not in the floor dead load" in rows

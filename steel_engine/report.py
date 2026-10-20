@@ -5839,7 +5839,7 @@ def build_report(name, root=None):
                      "governing limit state and D/C. The full calculation of each member (section properties, demand, "
                      "available strengths, every limit-state check with its reference) is in Appendix A.</p>")
     parts.append(_member_section(cfg, name, pkg, {"roof"}, "Roof members",
-        "Roof beams and girders for roof dead load, roof live load (and snow); flexure, shear and deflection."))
+        "Roof beams and girders for roof dead load and the governing roof load (roof live, snow or rain); flexure, shear and deflection."))
     parts.append(_member_section(cfg, name, pkg, {"floor"}, "Floor members",
         "Typical floor beams and girders for floor dead and live load (incl. collectors / struts where recorded)."))
     parts.append(_member_section(cfg, name, pkg, {"gravity_col"}, "Gravity columns",

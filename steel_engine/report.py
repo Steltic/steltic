@@ -4430,6 +4430,17 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
             if mf:
                 typ = "beam-to-column moment connection"
                 dem = vtxt + (", M<sub>end</sub> = %s kip-ft" % _n(Mz / 12.0) if Mz else "")
+                # the connection record's own design forces (e.g. Mpr / 1.1RyMp and V of the prequalified procedure)
+                _mrec = _conn_rec.get("conn-" + str(m.get("id", "")).lower())
+                _md = (_mrec or {}).get("demand") if isinstance((_mrec or {}).get("demand"), dict) else {}
+                try:
+                    _mV = float(_md["V_design_kip"]) if _md.get("V_design_kip") not in (None, "") else None
+                    _mM = float(_md["M_design_kipft"]) if _md.get("M_design_kipft") not in (None, "") else None
+                except (TypeError, ValueError):
+                    _mV = _mM = None
+                if _mV is not None or _mM is not None:
+                    dem = ("V = %s kip" % _n(_mV) if _mV is not None else vtxt) + \
+                          ((", M = %s kip-ft" % _n(_mM)) if _mM is not None else "") + " (connection design forces of the record)"
                 fams = sf.get("families", [])
                 basis = ("AISC 358-22 prequalified connection; AISC 341-22 %s" %
                          ("E3" if "SMF" in fams else "E2" if "IMF" in fams else "E1")) if a341 else \

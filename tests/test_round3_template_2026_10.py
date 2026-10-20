@@ -288,3 +288,44 @@ def test_rain_named_in_design_basis_row():
     assert R._rain_txt({"rain": 24.0}) == ", R 24 psf"
     assert "24" in R._rain_txt({"rain_by_level": {3: 24.0, 4: 31.3}}) and "31.3" in R._rain_txt({"rain_by_level": {3: 24.0, 4: 31.3}})
     assert R._rain_txt({"rain": 0.0}) == ""
+
+
+def test_diaphragm_fpx_uses_design_story_forces_and_names_the_basis():
+    import inspect
+    src = inspect.getsource(R.build_report)
+    i = src.find("_diaphragm_section(cfg, _fxd")
+    assert i > 0 and '_sdf[d].get("Fx")' in src[max(0, i - 700):i]
+    cfg = _rect(); R._INV_CACHE.clear()
+    NF = len(cfg["heights"])
+    F = {k: 10.0 * k for k in range(1, NF + 1)}
+    env = R._diaphragm_section(cfg, (F, dict(F)), basis="envelope")
+    assert "story-shear envelope of the ELF and the scaled MRSA" in env
+    assert "ELF story forces (&sect;12.8.3)" in R._diaphragm_section(cfg, (F, dict(F)))
+
+
+def test_drift_note_names_cs_equation_and_cap_per_direction():
+    cfg = _rect(); R._INV_CACHE.clear()
+    txt = R._drift_force_basis_txt(cfg)
+    assert txt.startswith("X: C<sub>s</sub> from Eq. 12.8-") and "; Y: C<sub>s</sub> from Eq. 12.8-" in txt
+    assert ("cap is active" in txt) or ("no cap" in txt)
+    assert "including the C<sub>s</sub> minimum (Eq. 12.8-6) and the C<sub>u</sub>T<sub>a</sub> period cap" not in txt
+
+
+def test_base_rows_follow_the_base_records():
+    emb = {"id": "conn-base-lateral_col-W14X455", "section": "W14X455",
+           "type": "SMF fixed column base: embedded column base (AISC Design Guide 1, 3rd ed.)",
+           "demand": {"P_comp_kip": 1988.5, "uplift_kip": 1005.7, "V_kip": 270.7, "M_kipft": 4700.0, "n_bases": 8}}
+    pin = {"id": "conn-base-gravity_col-W14X132", "section": "W14X132",
+           "type": "gravity column base plate (pinned), anchor rods and cruciform shear lug",
+           "demand": {"P_comp_kip": 1201.3, "V_kip": 15.3, "V_design_kip": 48.8, "n_bases": 20}}
+    r1 = R._base_record_row(emb, True); r2 = R._base_record_row(pin, True)
+    assert "embedded" in r1[1] and "minimum 4 anchor rods" not in r1[3] and "net uplift = 1,006 kip" in r1[2]
+    assert "minimum 4 anchor rods" in r2[3] and "design shear 48.8 kip (AISC 341-22 D2.6b)" in r2[2]
+    note = R._base_design_records_note({"connections": [emb, pin]})
+    assert "conn-base-gravity_col-W14X132" in note and "48.8" in note and "W14X455" not in note
+
+
+def test_hazard_row_prints_rain_by_level_range():
+    import inspect
+    src = inspect.getsource(R)
+    assert "R = %s by roof level" in src

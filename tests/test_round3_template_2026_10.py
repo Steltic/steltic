@@ -267,3 +267,18 @@ def test_strut_row_prints_record_design_forces():
     row = html[html.find("W24X103"):]; row = row[:row.find("</tr>")]
     assert "475.9" in row or "476" in row
     assert "collector / strut detail" in row
+
+
+def test_mf_row_prints_record_design_forces_and_theta_lumped():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = dict(families=["SMF"], dirs={"X": ["SMF"], "Y": ["SMF"]}, has_mf=True, has_br=False)
+    pkg = {"members": [{"id": "floor-W30X132", "inputs": {"kind": "beam", "section": "W30X132", "role": "smf",
+                                                         "V_kip": 61.3, "Mz_kipin": 8066.0}}],
+           "connections": [{"id": "conn-floor-W30X132", "type": "SMF reduced beam section (RBS) moment connection",
+                            "demand": {"V_design_kip": 118.0, "M_design_kipft": 1310.0}}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    row = html[html.find("W30X132"):]; row = row[:row.find("</tr>")]
+    assert "M = 1,310 kip-ft" in row or "M = 1310 kip-ft" in row
+    NF = len(cfg["heights"])
+    p0 = E.theta_px(cfg)[NF]
+    assert E.theta_px(dict(cfg, seismic_weight_kip={NF: 50.0}))[NF] == pytest.approx(p0 + 50.0)

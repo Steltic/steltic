@@ -2307,7 +2307,10 @@ def theta_px(cfg):
         else:
             Lk = 0.0
         # dead load of the members not in the floor psf (columns, braces, BRBs: cfg['seismic_weight_members_kip'])
-        P[k] = floor_dead(cfg, k) + _lvl_val(cfg.get("seismic_weight_members_kip"), k) + 0.5 * Lk
+        # + the lumped seismic weights (equipment, cores, framing listed in cfg["seismic_weight_kip"]): gravity load
+        # present at the level, conservatively carried in full
+        P[k] = floor_dead(cfg, k) + _lvl_val(cfg.get("seismic_weight_members_kip"), k) + \
+            _lvl_val(cfg.get("seismic_weight_kip"), k) + 0.5 * Lk
     return P
 
 

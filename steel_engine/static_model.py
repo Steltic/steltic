@@ -184,9 +184,39 @@ def live_psf(cfg, k):
     return float(eng._Llev(cfg, k) or 0.0)
 
 
+def occupied_roof_levels(cfg):
+    """Levels whose roof bays are occupiable roofs (terraces, roof gardens, assembly or platform decks):
+    cfg['occupied_roof_levels'] = [k, ...] (or {k: note}). There the cfg['Lr_by_level'] value is the live load
+    of the occupancy served (ASCE 7-22 Table 4.3-1, roofs used for occupants) and is combined as L, not as the
+    roof live load Lr; snow and rain still act on those bays as roof loads."""
+    v = cfg.get("occupied_roof_levels") or []
+    try:
+        return set(int(x) for x in (v.keys() if isinstance(v, dict) else v))
+    except (TypeError, ValueError):
+        return set()
+
+
+def occupied_roof_live_psf(cfg, k):
+    """Occupancy live load L (psf) on the roof bays of an occupied roof level k; 0 elsewhere."""
+    if k not in occupied_roof_levels(cfg):
+        return 0.0
+    return float(_lev(cfg.get("Lr_by_level"), k, cfg.get("Lr", 20.0)) or 0.0)
+
+
+def occupied_roof_full(cfg, k):
+    """Companion factor 1.0 on an occupied roof's live load (ASCE 7-22 2.3.1 / 2.3.6 Exception 1): a place of
+    public assembly (the default; cfg['occupied_roof_assembly'] = False otherwise), Lo > 100 psf, or a
+    building-wide garage / public-assembly flag."""
+    if cfg.get("garage") or cfg.get("public_assembly"):
+        return True
+    return bool(cfg.get("occupied_roof_assembly", True)) or occupied_roof_live_psf(cfg, k) > 100.0
+
+
 def roof_psf(cfg, k):
-    """(Lr, S, R) psf on roof bays of level k."""
+    """(Lr, S, R) psf on roof bays of level k (Lr = 0 on an occupied roof level, whose live load is L)."""
     Lr = float(_lev(cfg.get("Lr_by_level"), k, cfg.get("Lr", 20.0)) or 0.0)
+    if k in occupied_roof_levels(cfg):
+        Lr = 0.0
     S = float(_lev(cfg.get("snow_by_level"), k, cfg.get("snow", 0.0)) or 0.0)
     R = float(_lev(cfg.get("rain_by_level"), k, cfg.get("rain", 0.0)) or 0.0)
     return Lr, S, R
@@ -922,6 +952,9 @@ def _case_pieces(cfg, model, fD, fL, fLr, uplift=None, modes=None):
     for (k, i, j), b in model["bays"].items():
         if b["roof"]:
             p = fD * dead_psf(cfg, k) + _roof_terms(fLr, cfg, k)
+            Lo = occupied_roof_live_psf(cfg, k)
+            if Lo > 0.0:                       # occupied roof: its live load is combined as L
+                p += (fL.hi if (isinstance(fL, LiveFactor) and occupied_roof_full(cfg, k)) else float(fL)) * Lo
         else:
             p = fD * dead_psf(cfg, k) + _live_factor(fL, cfg, k) * live_psf(cfg, k)
         if up and b["roof"]:

@@ -55,8 +55,9 @@ def _rf(cfg, b=None, f=0.0):
 def _live_label(cfg):
     """Companion live label: 0.5L, 1.0L, or 0.5L with the 1.0L levels listed (2.3.1 Exc. 1 per level)."""
     NF = len(cfg["heights"])
-    lv = [k for k in range(1, NF + 1) if SM.live_psf(cfg, k) > 0]
-    full = [k for k in lv if SM.live_is_full(cfg, k)]
+    occ = SM.occupied_roof_levels(cfg) if hasattr(SM, "occupied_roof_levels") else set()
+    lv = [k for k in range(1, NF + 1) if SM.live_psf(cfg, k) > 0 or k in occ]
+    full = [k for k in lv if SM.live_is_full(cfg, k) or (k in occ and SM.occupied_roof_full(cfg, k))]
     if lv and len(full) == len(lv):
         return "1.0L"
     if full:

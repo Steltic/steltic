@@ -1199,8 +1199,25 @@ def _gravity_loads_table(cfg, pkg=None):
         rows.append(["Floor live load by level", _n(cfg.get("L_by_level"))])
     rows.append(["Roof live load, L<sub>r</sub>", _psf(cfg.get("Lr", 20.0))])
     if cfg.get("Lr_by_level"):
-        rows.append(["Roof live load by level (psf; partial roofs and setbacks)", _levels_txt(cfg.get("Lr_by_level"))
-                     or _n(cfg.get("Lr_by_level"))])
+        try:
+            import static_model as SM
+            _occ = sorted(SM.occupied_roof_levels(cfg))
+        except Exception:
+            SM = None; _occ = []
+        _lrb = cfg.get("Lr_by_level") if isinstance(cfg.get("Lr_by_level"), dict) else {}
+        _lr_only = {k: v for k, v in _lrb.items() if int(k) not in _occ} if _lrb else {}
+        if _occ:
+            if _lr_only:
+                rows.append(["Roof live load by level (psf; partial roofs and setbacks)", _levels_txt(_lr_only) or _n(_lr_only)])
+            rows.append(["Occupied roof live load L (psf; ASCE 7-22 Table 4.3-1, roofs used for occupants: the load of the "
+                         "occupancy served)",
+                         "; ".join("level %s: %s" % (k, _psf(SM.occupied_roof_live_psf(cfg, k))) for k in _occ)
+                         + " &mdash; combined as live load L (not as L<sub>r</sub>), not reduced%s"
+                         % (", companion factor 1.0 (place of public assembly, ASCE 7-22 2.3.1 / 2.3.6 Exception 1)"
+                            if all(SM.occupied_roof_full(cfg, k) for k in _occ) else "")])
+        else:
+            rows.append(["Roof live load by level (psf; partial roofs and setbacks)", _levels_txt(cfg.get("Lr_by_level"))
+                         or _n(cfg.get("Lr_by_level"))])
     snow = float(cfg.get("snow", 0) or 0)
     rain = cfg.get("rain")
     if snow > 0:
@@ -3109,9 +3126,9 @@ def _irregularity_section(cfg, runs, sf=None):
     else:
         v4 = (NE + " &mdash; story lateral strengths are not computed by the analysis; the weak-story check "
               "(Table 12.3-2 Types 4a/4b) requires the story strengths")
-    if sdc in ("A", "B", "C") and "NOT EVALUATED" in v1:
-        v1 = ("Not required in SDC %s: Table 12.3-2 Types 1a/1b carry requirements only in SDC D&ndash;F (&sect;12.3.3.1); "
-              % sdc) + v1.replace(NE, "not evaluated")
+    if sdc in ("A", "B", "C", "D") and "NOT EVALUATED" in v1:
+        v1 = ("Not required in SDC %s: Table 12.3-2 gives Type 1a no reference section, and Type 1b refers only to "
+              "&sect;12.3.3.1, which applies in SDC E and F; " % sdc) + v1.replace(NE, "not evaluated")
     rows = [
         ["Horizontal 1 &mdash; Torsional (Table 12.3-1a tiers)", tcls],
         ["Horizontal 2 &mdash; Re-entrant corner (both projections &gt; 20%)", h2],
@@ -4593,7 +4610,19 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
             typ = "brace-to-gusset"
             dem = "P = +%s / &minus;%s kip (tension / compression)" % (_n(Pt), _n(Pc))
             fams = sf.get("families", [])
-            if not a341:
+            _bre = _conn_rec.get("conn-" + str(m.get("id", "")).lower())
+            _bty = str((_bre or {}).get("type") or "")
+            if _bre and "truss" in (str(m.get("role_detail") or "") + " " + _bty).lower():
+                # a transfer-truss diagonal grouped with the braces by element kind: its own joint record governs
+                typ = _esc(re.split(r"[;(]", _bty)[0].strip(" ,")) or "truss diagonal joint"
+                _bd = _bre.get("demand") if isinstance(_bre.get("demand"), dict) else {}
+                if _bd.get("P_design_kip") is not None or _bd.get("C_design_kip") is not None:
+                    dem = ("T = %s / C = %s kip (design forces of the joint record)"
+                           % (_n(_bd.get("P_design_kip") if _bd.get("P_design_kip") is not None else Pt),
+                              _n(_bd.get("C_design_kip") if _bd.get("C_design_kip") is not None else Pc)))
+                basis = ("AISC 360-22 Ch. J for the joint record's design forces (transfer truss, elastic; ASCE 7-22 "
+                         "&sect;12.3.3.4 overstrength); not an SCBF brace connection")
+            elif not a341:
                 basis = "AISC 360-22 Ch. J / Ch. K for the analysis forces (Whitmore J4, block shear J4.3, welds J2)"
             else:
                 basis = ("adjusted brace strength (AISC 341-22 F4.6c)" if "BRBF" in fams else

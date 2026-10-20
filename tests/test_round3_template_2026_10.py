@@ -329,3 +329,34 @@ def test_hazard_row_prints_rain_by_level_range():
     import inspect
     src = inspect.getsource(R)
     assert "R = %s by roof level" in src
+
+
+def test_soft_story_not_evaluated_text_follows_table_12_3_2():
+    import inspect
+    src = inspect.getsource(R._irregularity_section)
+    assert 'sdc in ("A", "B", "C", "D") and "NOT EVALUATED" in v1' in src
+    assert "gives Type 1a no reference section, and Type 1b refers only to" in src
+
+
+def test_truss_diagonal_row_uses_its_joint_record():
+    cfg = _rect(); R._INV_CACHE.clear()
+    m = {"id": "brace-W14X665", "role_detail": "transfer truss (12.3.3.4)",
+         "inputs": {"section": "W14X665", "kind": "brace", "P_comp_kip": 2740.5, "P_tens_kip": 5962.1}}
+    c = {"id": "conn-brace-W14X665", "type": "transfer truss diagonal joints (welded double gusset plates; fully restrained)",
+         "demand": {"P_design_kip": 6280.9, "C_design_kip": 2740.5}}
+    html = R._connection_demands(cfg, {"members": [m], "connections": [c]}, ctx={"a341": True})
+    assert html and "transfer truss diagonal joints" in html and "6,281" in html and "F2.6c" not in html
+
+
+def test_occupied_roof_live_load_is_combined_as_L():
+    import static_model as SM
+    cfg = _rect(); R._INV_CACHE.clear()
+    NF = len(cfg["heights"])
+    cfg = dict(cfg, Lr_by_level={NF: 100.0}, occupied_roof_levels=[NF])
+    assert SM.roof_psf(cfg, NF)[0] == 0.0 and SM.occupied_roof_live_psf(cfg, NF) == 100.0
+    assert SM.occupied_roof_full(cfg, NF)                         # assembly by default: f1 = 1.0
+    assert not SM.occupied_roof_full(dict(cfg, occupied_roof_assembly=False), NF)
+    rows = R._gravity_loads_table(cfg)
+    assert "Occupied roof live load L" in rows and "combined as live load L" in rows
+    import design_pipeline as DP
+    assert "1.0L@L%d" % NF in DP._live_label(cfg) or DP._live_label(cfg) == "1.0L"

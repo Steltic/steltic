@@ -4468,6 +4468,21 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                     _cl = sorted(set(re.findall(r"\b[DEFH]\d\.\d[a-z]?(?:\([a-z0-9]\))*", _brt + " " + str(_brec.get("design_basis") or ""))))
                     basis = (("AISC 341-22 " + ", ".join(_cl)) if (_cl and a341) else
                              "AISC 360-22 J2 / J10 (fully restrained beam-to-column connection)")
+                elif _brec and isinstance(_brec.get("demand"), dict) and any(
+                        _brec["demand"].get(k_) not in (None, "") for k_ in ("P_design_kip", "V_design_kip")):
+                    # a simple connection designed for forces above the analysis envelope (strut / collector detail
+                    # at the 12.10.2.1 force): print the record's type and design forces
+                    _rd = _brec["demand"]
+                    try:
+                        _dV = float(_rd.get("V_design_kip") if _rd.get("V_design_kip") not in (None, "") else V)
+                        _dP = float(_rd.get("P_design_kip") or 0.0)
+                    except (TypeError, ValueError):
+                        _dV, _dP = V, 0.0
+                    _first = re.split(r"[:;(]", _brt)[0].strip(" ,") if _brt else ""
+                    if _first and len(_first) <= 90:
+                        typ = _esc(_first) + (" (collector / strut detail)" if "strut" in _brt.lower() or "collector" in _brt.lower() else "")
+                    dem = ("V = %s kip" % _n(_dV)) + ((", axial T / C = %s kip" % _n(_dP)) if _dP > 0.5 else "") + \
+                          " (connection design forces of the record)"
         elif "col" in kind:
             # the column's own connection record ('conn-<member id>') says what the column joint is: a splice, a
             # one-piece column with no splice (no row), or another joint such as a cap plate or a girder seat

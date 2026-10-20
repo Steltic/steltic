@@ -4915,7 +4915,7 @@ def _deflection_section(cfg, pkg=None):
                 "applied; their deflection is part of the joist / truss design.</p>")
     h = ["<h3>Beam deflection and camber (analysis model check)</h3>",
          "<p>Deflection of every beam span / group (section &times; span &times; floor/roof) from %s; live (floor L, roof "
-         "S if any, else L<sub>r</sub>) and total D + L against IBC 2024 Table 1604.3: floor members L/360 and L/240%s. "
+         "the governing one of L<sub>r</sub>, S and R) and total D + L against IBC 2024 Table 1604.3: floor members L/360 and L/240%s. "
          "Suggested camber &asymp; 80%% of the dead-load deflection (to the nearest 1/4 in.), listed only where it is at "
          "least 3/4 in.; it is a suggestion, not a specified camber (any specified camber is stated with the member "
          "design).</p>"

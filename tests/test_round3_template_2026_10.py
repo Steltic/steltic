@@ -282,3 +282,9 @@ def test_mf_row_prints_record_design_forces_and_theta_lumped():
     NF = len(cfg["heights"])
     p0 = E.theta_px(cfg)[NF]
     assert E.theta_px(dict(cfg, seismic_weight_kip={NF: 50.0}))[NF] == pytest.approx(p0 + 50.0)
+
+
+def test_rain_named_in_design_basis_row():
+    assert R._rain_txt({"rain": 24.0}) == ", R 24 psf"
+    assert "24" in R._rain_txt({"rain_by_level": {3: 24.0, 4: 31.3}}) and "31.3" in R._rain_txt({"rain_by_level": {3: 24.0, 4: 31.3}})
+    assert R._rain_txt({"rain": 0.0}) == ""

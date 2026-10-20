@@ -3179,21 +3179,40 @@ def _gravity_loads_note(cfg=None, pkg=None):
             if isinstance(smo, dict) and _levels_txt(smo) else "")
     _snow_rec = bool(re.search(r"snow drift|drift(?:ed)? snow|drift surcharge|unbalanced snow|sliding snow|p<sub>d</sub>|\bpd\s*=",
                                json.dumps(pkg or {}), re.I))
+    _rbl = cfg.get("rain_by_level") if isinstance(cfg.get("rain_by_level"), dict) else {}
+    try:
+        _has_r = float(cfg.get("rain") or 0.0) > 0 or any(float(v or 0) > 0 for v in _rbl.values())
+    except (TypeError, ValueError):
+        _has_r = False
+    rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>"
+            + (", the uniform roof snow load S" if snow > 0 else "")
+            + (" and the rain load R with its ponding head (rain basis in the load table above)" if _has_r else "") + ".")
     if snow > 0 and _snow_rec:
-        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub> and the uniform roof snow load S; snow "
-                "drift, unbalanced or sliding snow and ponding, where they apply, are addressed in the member design "
-                "records (Chapter 6) and are not part of the analysis-model loading.")
+        rtxt += (" Snow drift, unbalanced or sliding snow, where they apply, are addressed in the member design records "
+                 "(Chapter 6) and are not part of the analysis-model loading.")
     elif snow > 0:
-        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub> and the uniform roof snow load S. "
-                "Snow drift, unbalanced and sliding snow are not part of the analysis-model loading; the snow basis in "
-                "the load table above states which of them apply to this roof, and ponding is addressed under the "
-                "rain basis.")
+        rtxt += (" Snow drift, unbalanced and sliding snow are not part of the analysis-model loading; the snow basis in "
+                 "the load table above states which of them apply to this roof.")
     else:
-        rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>. The design criteria contain no snow "
-                "load (snow basis in the load table above), so no snow drift, unbalanced or sliding snow is carried; "
-                "ponding is addressed under the rain basis.")
+        rtxt += (" The design criteria contain no snow load (snow basis in the load table above), so no snow drift, "
+                 "unbalanced or sliding snow is carried.")
+    if not _has_r:
+        rtxt += " Ponding is addressed under the rain basis."
     return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
             "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
+
+
+def _rain_txt(cfg):
+    """', R x psf' (or the per-level range) for the design-basis gravity row where a rain load is carried."""
+    try:
+        r = float(cfg.get("rain") or 0.0)
+        rbl = cfg.get("rain_by_level") if isinstance(cfg.get("rain_by_level"), dict) else {}
+        vals = sorted({float(v) for v in rbl.values() if float(v or 0) > 0})
+    except (TypeError, ValueError):
+        return ""
+    if vals:
+        return ", R %s psf" % (_n(vals[0]) if len(vals) == 1 else "%s&ndash;%s" % (_n(vals[0]), _n(vals[-1])))
+    return (", R %s psf" % _n(r)) if r > 0 else ""
 
 
 def _wind_cc_note():
@@ -5213,8 +5232,9 @@ def _design_basis(cfg):
                       (", " + _esc(str(cfg.get("hn_basis")))) if cfg.get("hn_basis") else "")],
       ["Gravity loads", (("floor D %s / L %s psf; " % (_n(cfg.get("D_floor")), _n(cfg.get("L_floor"))))
                          if len(H) > 1 or cfg.get("top_is_floor") else "")      # one-story: roof only
-                        + "roof D %s psf, L<sub>r</sub> %s psf%s"
-                        % (_n(cfg.get("D_roof")), _n(cfg.get("Lr", 20.0)), (", S %s psf" % _n(snow)) if snow > 0 else "")],
+                        + "roof D %s psf, L<sub>r</sub> %s psf%s%s"
+                        % (_n(cfg.get("D_roof")), _n(cfg.get("Lr", 20.0)), (", S %s psf" % _n(snow)) if snow > 0 else "",
+                           _rain_txt(cfg))],
       ["Seismic", "S<sub>DS</sub> = %s g, S<sub>D1</sub> = %s g; R / C<sub>d</sub> / &Omega;<sub>0</sub> = %s; I<sub>e</sub> = %s"
                   % (_sa(s.get("SDS")), _sa(s.get("SD1")), _rcdo_txt(cfg, s), _fac(s.get("Ie", 1.0)))],
     ]

@@ -232,3 +232,25 @@ def test_fully_restrained_beam_record_drives_the_demand_row():
     row = html[html.find("W24X103"):]; row = row[:row.find("</tr>")]
     assert "braced-bay beam-to-column connection, fully restrained" in row and "F2.6b(c)" in row
     assert "simple shear connection" not in row
+
+
+def test_rain_by_level_is_printed_and_0_15S_note():
+    cfg = _rect(); R._INV_CACHE.clear()
+    NF = len(cfg["heights"])
+    html = R._gravity_loads_table(dict(cfg, rain=24.0, rain_by_level={NF: 24.0, NF - 1: 19.5}, rain_basis="dp under D + R"))
+    assert "level %d: 19.5 psf" % (NF - 1) in html and "dp under D + R" in html
+    import static_model as SM
+    note = R._combo_table([("1.2D + 1.6R", 1.2, 0.0, SM.RoofFactors(R=1.6, cfg={"Lr": 20, "rain": 24}), None)])
+    assert "0.15S" in note and "0.2S with seismic" not in note
+
+
+def test_fr_joint_row_prints_record_design_forces():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = R._sfrs(cfg)
+    pkg = {"members": [{"id": "floor-W21X62", "inputs": {"kind": "beam", "role": "floor", "section": "W21X62",
+                                                        "V_kip": 38.3, "P_comp_kip": 10.6}}],
+           "connections": [{"id": "conn-floor-W21X62", "type": "braced-bay beam-to-column connection (fully restrained per AISC 341-22 F2.6b(b))",
+                            "demand": {"V_design_kip": 492.0, "M_design_kipft": 726.0, "P_design_kip": 10.6, "design_forces": True}}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    row = html[html.find("W21X62"):]; row = row[:row.find("</tr>")]
+    assert "V = 492 kip" in row and "M = 726 kip-ft" in row

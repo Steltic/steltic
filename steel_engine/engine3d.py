@@ -2306,7 +2306,8 @@ def theta_px(cfg):
             Lk = (0.8 if L0 > 100.0 else 0.4) * L0 * floor_area_ft2(cfg, k) / 1000.0
         else:
             Lk = 0.0
-        P[k] = floor_dead(cfg, k) + 0.5 * Lk
+        # dead load of the members not in the floor psf (columns, braces, BRBs: cfg['seismic_weight_members_kip'])
+        P[k] = floor_dead(cfg, k) + _lvl_val(cfg.get("seismic_weight_members_kip"), k) + 0.5 * Lk
     return P
 
 

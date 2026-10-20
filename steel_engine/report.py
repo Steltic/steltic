@@ -1215,9 +1215,14 @@ def _gravity_loads_table(cfg, pkg=None):
                      + (("; " + _esc(cfg["snow_basis"])) if cfg.get("snow_basis") else "")])
     else:
         rows.append(["Roof snow load, S (ASCE 7-22 Ch. 7)", _esc(cfg.get("snow_basis") or "no snow load in the design criteria")])
-    if rain not in (None, "", 0, {}):
-        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", (_psf(rain) if isinstance(rain, (int, float)) else _n(rain))
-                     + (("; " + _esc(cfg["rain_basis"])) if cfg.get("rain_basis") else "")])
+    rbl = cfg.get("rain_by_level") if isinstance(cfg.get("rain_by_level"), dict) else None
+    if rain not in (None, "", 0, {}) or (rbl and any(float(v or 0) > 0 for v in rbl.values())):
+        val = (_psf(rain) if isinstance(rain, (int, float)) and rain else (_n(rain) if rain else ""))
+        if rbl and any(float(v or 0) > 0 for v in rbl.values()):
+            lv = "; ".join("level %s: %s" % (k, _psf(float(v))) for k, v in sorted(rbl.items(), key=lambda t: int(t[0]))
+                           if float(v or 0) > 0)
+            val = (val + " (" + lv + ")") if val else lv
+        rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", val + (("; " + _esc(cfg["rain_basis"])) if cfg.get("rain_basis") else "")])
     else:
         rows.append(["Rain load, R (ASCE 7-22 Ch. 8)", _esc(cfg.get("rain_basis") or "no rain load in the design criteria")])
     emf = cfg.get("extra_mass_floors")
@@ -3435,8 +3440,8 @@ def _combo_table(cases):
     return (_table(["Combination", "D", "L", "Roof load (L<sub>r</sub>, S or R)", "Lateral", "Applies to"], rows)
             + "<p class='cnote'>The roof-load column gives the load factor and the roof load it applies to: roof live "
               "L<sub>r</sub>, snow S or rain R. Each roof load present is combined in its own combinations (ASCE 7-22 "
-              "&sect;2.3.1: 1.6L<sub>r</sub>, 1.0S or 1.6R principal; 0.5L<sub>r</sub>, 0.3S or 0.5R companion; 0.2S "
-              "with seismic).</p>")
+              "&sect;2.3.1: 1.6L<sub>r</sub>, 1.0S or 1.6R principal; 0.5L<sub>r</sub>, 0.3S or 0.5R companion; 0.15S "
+              "with seismic, &sect;2.3.6).</p>")
 
 
 def _combo_legend(cfg, cases=None, pkg=None, ctx=None):
@@ -4442,8 +4447,24 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                     _first = re.split(r"[:;(]", _brt)[0].strip(" ,")
                     typ = _esc(_first if len(_first) <= 90 else "beam-to-column connection") + (
                         ", fully restrained" if "fully restrained" in _brt.lower() and "fully restrained" not in _first.lower() else "")
-                    dem = vtxt + ((", axial T / C = %s / %s kip" % (_n(max(Pt, Pcol)), _n(max(Pc, Pcol)))) if ax > 0.5 else "") + \
-                          ((", M<sub>end</sub> = %s kip-ft" % _n(Mz / 12.0)) if Mz else "")
+                    _rd = (_brec.get("demand") or {}) if isinstance(_brec.get("demand"), dict) else {}
+                    def _fv(*ks):
+                        for k_ in ks:
+                            try:
+                                if _rd.get(k_) not in (None, ""):
+                                    return float(_rd[k_])
+                            except (TypeError, ValueError):
+                                pass
+                        return None
+                    _dV, _dM = _fv("V_design_kip", "V_kip"), _fv("M_design_kipft", "M_kipft")
+                    _dP = _fv("P_design_kip", "Pu_kip", "P_kip")
+                    if _rd.get("design_forces") or _fv("V_design_kip", "M_design_kipft", "P_design_kip") is not None:
+                        dem = ("V = %s kip" % _n(_dV) if _dV is not None else vtxt) + \
+                              ((", axial = %s kip" % _n(_dP)) if _dP else "") + ((", M = %s kip-ft" % _n(_dM)) if _dM else "") + \
+                              " (joint design forces of the record)"
+                    else:
+                        dem = vtxt + ((", axial T / C = %s / %s kip" % (_n(max(Pt, Pcol)), _n(max(Pc, Pcol)))) if ax > 0.5 else "") + \
+                              ((", M<sub>end</sub> = %s kip-ft" % _n(Mz / 12.0)) if Mz else "")
                     _cl = sorted(set(re.findall(r"\b[DEFH]\d\.\d[a-z]?(?:\([a-z0-9]\))*", _brt + " " + str(_brec.get("design_basis") or ""))))
                     basis = (("AISC 341-22 " + ", ".join(_cl)) if (_cl and a341) else
                              "AISC 360-22 J2 / J10 (fully restrained beam-to-column connection)")

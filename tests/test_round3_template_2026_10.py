@@ -254,3 +254,16 @@ def test_fr_joint_row_prints_record_design_forces():
     html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
     row = html[html.find("W21X62"):]; row = row[:row.find("</tr>")]
     assert "V = 492 kip" in row and "M = 726 kip-ft" in row
+
+
+def test_strut_row_prints_record_design_forces():
+    cfg = _rect(); R._INV_CACHE.clear()
+    sf = R._sfrs(cfg)
+    pkg = {"members": [{"id": "floor-W24X103", "inputs": {"kind": "beam", "role": "floor", "section": "W24X103",
+                                                         "V_kip": 30.2, "P_comp_kip": 412.4}}],
+           "connections": [{"id": "conn-floor-W24X103", "type": "single-plate shear + axial connection (collector / strut detail)",
+                            "demand": {"V_kip": 30.2, "P_comp_kip": 412.4, "P_design_kip": 475.9, "V_design_kip": 30.2}}]}
+    html = R._connection_demands(cfg, pkg, sf=sf, ctx={"a341": True}) or ""
+    row = html[html.find("W24X103"):]; row = row[:row.find("</tr>")]
+    assert "475.9" in row or "476" in row
+    assert "collector / strut detail" in row

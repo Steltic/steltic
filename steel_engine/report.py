@@ -4159,8 +4159,13 @@ def _drift_force_basis_txt(cfg):
                         ("the model period %.3f s exceeds C<sub>u</sub>T<sub>a</sub>, so the cap is active" % T) if capped
                         else ("below C<sub>u</sub>T<sub>a</sub> = %.3f s: no cap" % cuta)))
         rl = []
-        if "12.8-6" in gov:
-            rl.append("the &sect;12.8.6.1 Exception would drop Eq. 12.8-6")
+        try:
+            gov_T = _cs_terms(cfg, d, T)["gov"] if capped else gov
+        except Exception:
+            gov_T = gov
+        if "12.8-6" in gov or (capped and "12.8-6" in gov_T):
+            rl.append("the &sect;12.8.6.1 Exception would drop Eq. 12.8-6"
+                      + (" (which governs at the model period)" if "12.8-6" not in gov else ""))
         if capped and any(e in gov for e in ("12.8-4", "12.8-5", "12.8-6")):
             rl.append("&sect;12.8.6.2 would use the model period without the cap")
         relief.append((d, " and ".join(rl)))
@@ -4788,31 +4793,45 @@ def _base_reactions_section(cfg, pkg, ctx=None):
 
 
 def _base_design_records_note(pkg):
-    """Chapter 11: where the base design records carry a design shear above the analysis value (AISC 341-22 D2.6b),
-    list it for the foundation design next to the analysis reactions."""
+    """Chapter 11: the design forces of the column-base records -- the AISC 341-22 D2.6b shear and the D2.6c base moment
+    (for the base and its attachment to the foundation) where they exceed the analysis values, the design axial forces,
+    and the forces the record hands to the foundation design (demand['foundation_forces'], e.g. embedment bearing)."""
+    def _f(d, k):
+        try:
+            return float(d.get(k)) if d.get(k) is not None else None
+        except (TypeError, ValueError):
+            return None
     rows = []
     for c in ((pkg or {}).get("connections") or []):
         if not (isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base")):
             continue
         d = c.get("demand") if isinstance(c.get("demand"), dict) else {}
-        try:
-            vd = float(d.get("V_design_kip"))
-        except (TypeError, ValueError):
-            continue
-        try:
-            va = float(d.get("V_kip")) if d.get("V_kip") is not None else max(float(d.get("Vx_kip") or 0.0),
-                                                                              float(d.get("Vy_kip") or 0.0))
-        except (TypeError, ValueError):
-            va = 0.0
-        if vd <= 1.005 * va:
+        va = _f(d, "V_kip")
+        if va is None:
+            va = max(_f(d, "Vx_kip") or 0.0, _f(d, "Vy_kip") or 0.0)
+        vd = _f(d, "V_design_kip"); md = _f(d, "M_design_kipft"); ma = abs(_f(d, "M_kipft") or 0.0)
+        pdz = _f(d, "P_design_kip"); tdz = _f(d, "T_design_kip")
+        ff = d.get("foundation_forces") if isinstance(d.get("foundation_forces"), str) else ""
+        v_txt = _n(vd) if (vd is not None and vd > 1.005 * va) else "&mdash;"
+        m_txt = _n(md) if (md is not None and md > 1.005 * ma) else "&mdash;"
+        ax = []
+        if pdz is not None and (d.get("design_forces") or md is not None):
+            ax.append("P = %s" % _n(pdz))
+        if tdz is not None and tdz > 0.05:
+            ax.append("T = %s" % _n(tdz))
+        if v_txt == "&mdash;" and m_txt == "&mdash;" and not ff and not ax:
             continue
         where = d.get("bases") or (("%s bases" % _n(d.get("n_bases"))) if d.get("n_bases") else "")
-        rows.append([_esc(c.get("id")), _esc(str(c.get("section") or "")), _esc(str(where)), _n(vd)])
+        rows.append([_esc(c.get("id")), _esc(str(c.get("section") or "")), _esc(str(where)), v_txt, m_txt,
+                     " / ".join(ax) or "&mdash;", _esc(ff) if ff else "&mdash;"])
     if not rows:
         return ""
-    return ("<p>Design base shears for the foundation and anchorage where AISC 341-22 D2.6b sets the base shear above "
-            "the analysis value (the base design records of Chapter 10 and Appendix A give the governing term):</p>"
-            + _table(["Base design record", "Column", "Bases", "Design shear (kip)"], rows))
+    return ("<p>Design forces of the column-base records for the foundation and anchorage design, where they exceed the "
+            "analysis reactions above: the AISC 341-22 D2.6b base shear, the D2.6c base moment (the base and its attachment "
+            "to the foundation are designed for it), the design axial forces, and the forces each record hands to the "
+            "foundation (the Appendix A records give the derivations):</p>"
+            + _table(["Base design record", "Column", "Bases", "Design shear (kip)", "Design moment (kip-ft)",
+                      "Design axial (kip)", "Forces on the foundation"], rows))
 
 
 _SANITY_NAMES = {"drift_X": "seismic drift X", "drift_Y": "seismic drift Y", "period": "period vs C<sub>u</sub>T<sub>a</sub>",
@@ -5369,9 +5388,10 @@ def _design_credit(pkg):
     if not isinstance(da, dict) or not da.get("model"):
         return ""
     harness = da.get("harness") or "Steltic"
-    return ("Designed by %s%s with %s%s" %
-            (_esc(da.get("model")), (" (%s)" % _esc(da["provider"])) if da.get("provider") else "", _esc(harness),
-             (", %s" % _esc(da["date"])) if da.get("date") else ""))
+    # no date here: the report and the QA annex carry the date they were produced, and a design re-run on a later
+    # day would otherwise print two different dates
+    return ("Designed by %s%s with %s" %
+            (_esc(da.get("model")), (" (%s)" % _esc(da["provider"])) if da.get("provider") else "", _esc(harness)))
 
 
 def _design_basis(cfg):

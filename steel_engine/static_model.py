@@ -2329,6 +2329,9 @@ def llr_plan(cfg, model, modes, spec, info):
 
     def solve(Lmap):
         cf = dict(cfg); cf["L_by_level"] = dict(Lmap); cf["L_floor"] = 0.0
+        # the reducible-live solves carry the floor live load only: an occupied roof's live load (a place of assembly or
+        # an occupancy combined as L, ASCE 7-22 4.8.3 -> 4.7) is never reduced here (4.7.5) and must not enter AT
+        cf["occupied_roof_levels"] = []
         _reset(); ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
         g = apply_case_gravity(cf, model, 0.0, 1.0, zero_roof, modes=modes)
         ok = _solve(); info["solves"] += 1

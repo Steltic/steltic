@@ -323,6 +323,10 @@ def test_base_rows_follow_the_base_records():
     assert "minimum 4 anchor rods" in r2[3] and "design shear 48.8 kip (AISC 341-22 D2.6b)" in r2[2]
     note = R._base_design_records_note({"connections": [emb, pin]})
     assert "conn-base-gravity_col-W14X132" in note and "48.8" in note and "W14X455" not in note
+    emb2 = dict(emb, demand=dict(emb["demand"], M_design_kipft=5949.0, P_design_kip=726.7, design_forces=True,
+                                 foundation_forces="front bearing block 2,502 kip, back block 2,108 kip"))
+    note2 = R._base_design_records_note({"connections": [emb2, pin]})
+    assert "5,949" in note2 and "front bearing block 2,502 kip" in note2 and "Design moment (kip-ft)" in note2
 
 
 def test_hazard_row_prints_rain_by_level_range():
@@ -360,3 +364,14 @@ def test_occupied_roof_live_load_is_combined_as_L():
     assert "Occupied roof live load L" in rows and "combined as live load L" in rows
     import design_pipeline as DP
     assert "1.0L@L%d" % NF in DP._live_label(cfg) or DP._live_label(cfg) == "1.0L"
+
+
+def test_design_credit_has_no_date():
+    c = R._design_credit({"design_agent": {"model": "Claude Opus 5.5", "provider": "Anthropic", "date": "2026-10-18"}})
+    assert c == "Designed by Claude Opus 5.5 (Anthropic) with Steltic"
+
+
+def test_occupied_roof_live_not_in_live_load_reduction():
+    import inspect, static_model as SM
+    src = inspect.getsource(SM.llr_plan)
+    assert 'cf["occupied_roof_levels"] = []' in src

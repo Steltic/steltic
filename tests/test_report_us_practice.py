@@ -81,7 +81,7 @@ def test_publication_text_drops_harness_wording():
 def test_design_credit_line_only_when_recorded():
     assert R._design_credit({}) == "" and R._design_credit({"design_agent": {}}) == ""
     pkg = {"design_agent": {"model": "Claude Opus 5.5", "provider": "Anthropic", "date": "2026-10-17"}}
-    assert R._design_credit(pkg) == "Designed by Claude Opus 5.5 (Anthropic) with Steltic, 2026-10-17"
+    assert R._design_credit(pkg) == "Designed by Claude Opus 5.5 (Anthropic) with Steltic"        # the report carries the date
     assert R._design_credit({"design_agent": "Claude Opus 5.5"}) == "Designed by Claude Opus 5.5 with Steltic"
 
 

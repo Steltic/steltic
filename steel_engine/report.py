@@ -4703,8 +4703,9 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
 
 
 def _base_record_row(c, a341=False):
-    """Chapter 10 row of one column-base design record: its own type, its design demand (the D2.6b design shear
-    where the record carries V_design_kip) and the basis that fits the base type."""
+    """Chapter 10 row of one column-base design record: its own type, its design demand (the D2.6b design shears and
+    the D2.6c design moments where the record carries them, about both axes where it gives the weak-axis values, as in
+    Chapter 11) and the basis that fits the base type."""
     d = c.get("demand") or {}
     def _f(k):
         try:
@@ -4723,10 +4724,21 @@ def _base_record_row(c, a341=False):
         v = max(_f("Vx_kip") or 0.0, _f("Vy_kip") or 0.0)
     if v is not None:
         bits.append("V = %s kip (analysis)" % _n(v))
-    if _f("V_design_kip") is not None and (v is None or _f("V_design_kip") > 1.005 * v):
-        bits.append("design shear %s kip (AISC 341-22 D2.6b)" % _n(_f("V_design_kip")))
-    if abs(_f("M_kipft") or 0.0) > 0.5:
+    vd, vyd = _f("V_design_kip"), _f("Vy_design_kip")
+    if vyd is not None and vyd > 0.05:                    # design shears about both axes (as in Chapter 11)
+        bits.append("design shear %s kip strong axis / %s kip weak axis (AISC 341-22 D2.6b)"
+                    % (_n(vd) if vd is not None else "&mdash;", _n(vyd)))
+    elif vd is not None and (v is None or vd > 1.005 * v):
+        bits.append("design shear %s kip (AISC 341-22 D2.6b)" % _n(vd))
+    ma = abs(_f("M_kipft") or 0.0)
+    if ma > 0.5:
         bits.append("M = %s kip-ft" % _n(_f("M_kipft")))
+    md, myd = _f("M_design_kipft"), _f("My_design_kipft")
+    if myd is not None and myd > 0.5:                      # design moments about both axes (as in Chapter 11)
+        bits.append("design moment %s kip-ft strong axis / %s kip-ft weak axis (AISC 341-22 D2.6c)"
+                    % (_n(md) if md is not None else "&mdash;", _n(myd)))
+    elif md is not None and md > 1.005 * ma and md > 0.5:
+        bits.append("design moment %s kip-ft (AISC 341-22 D2.6c)" % _n(md))
     nb = d.get("n_bases") or c.get("n_bases")
     if d.get("bases"):
         bits.append("bases %s" % _esc(str(d.get("bases"))))

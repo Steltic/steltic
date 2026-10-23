@@ -399,3 +399,16 @@ def test_existing_bases_named_in_uplift_and_base_rows():
          "demand": {"P_comp_kip": 348.0, "uplift_kip": 25.9, "V_kip": 70.0}}
     row = R._base_record_row(c, True)
     assert "capacity by the evaluation" in row[3] and "minimum 4 anchor rods" not in row[3]
+
+
+def test_base_row_prints_both_axes():
+    c = {"id": "conn-base-crane-W24X104", "section": "W24X104", "type": "SFRS column base: moment base plate, cruciform lug",
+         "demand": {"P_comp_kip": 120.0, "V_kip": 47.7, "V_design_kip": 39.7, "Vy_design_kip": 82.3, "M_kipft": 300.0,
+                    "M_design_kipft": 777.2, "My_design_kipft": 374.2}}
+    row = R._base_record_row(c, True)
+    assert "39.7 kip strong axis / 82.3 kip weak axis" in row[2]
+    assert "777.2 kip-ft strong axis / 374.2 kip-ft weak axis" in row[2]
+    c2 = {"id": "conn-base-x", "section": "W14X90", "type": "column base plate",
+          "demand": {"V_kip": 10.0, "V_design_kip": 30.5, "M_kipft": 0.0}}
+    row2 = R._base_record_row(c2, True)
+    assert "design shear 30.5 kip (AISC 341-22 D2.6b)" in row2[2] and "design moment" not in row2[2]

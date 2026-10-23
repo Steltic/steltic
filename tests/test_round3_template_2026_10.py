@@ -378,3 +378,9 @@ def test_occupied_roof_live_not_in_live_load_reduction():
     import inspect, static_model as SM
     src = inspect.getsource(SM.llr_plan)
     assert 'cf["occupied_roof_levels"] = []' in src
+
+
+def test_uplift_sentence_follows_base_types():
+    import inspect
+    src = inspect.getsource(R._uplift_summary)
+    assert "embedment of the embedded column bases" in src and "anchor rods of the base-plate design" in src

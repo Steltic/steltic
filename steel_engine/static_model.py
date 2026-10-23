@@ -1925,7 +1925,7 @@ def ecl_plan(cfg, model, desig):
                       "the diaphragm at the work points and the analysis shows ~0 Ecl axial in these beams. The "
                       "struts%s and the collectors delivering to the braced bays are checked separately for those "
                       "horizontal components along the actual diaphragm load path (their moments / shears and the "
-                      "unbalanced loads come from the analysis)")
+                      "unbalanced loads come from the analysis).")
                       % (len(struts), " / beams outside links" if links else "",
                          " / link" if links else "", " / beams outside links" if links else ""))
     nwp = sum(1 for it in braces if it["cap"].get("L_default"))

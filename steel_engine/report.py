@@ -3170,8 +3170,8 @@ def _irregularity_section(cfg, runs, sf=None):
     out = intro + _table(["Irregularity type", "Determination"], rows)
     if req:
         out += "<p><b>Provisions triggered:</b></p><ul>" + "".join("<li>%s</li>" % x for x in req) + "</ul>"
-    irregular = bool(tr > 1.2 or (pl and (pl["reentrant"] or pl["opening"])) or term or inpl or npar or v2p
-                     or tx or ty or cfg.get("skew"))
+    # the advisory follows the determinations printed in the table (screens and the engineer's irregularity statements)
+    irregular = bool(any("YES" in str(r[1]) for r in rows) or cfg.get("skew"))
     if irregular and "RS" not in [a.upper() for a in cfg.get("analyses", [])]:
         out += ("<p class='cnote'><b>Analysis procedure &mdash; ADVISORY:</b> MRSA (&sect;12.9) is recommended for the "
                 "irregularities above; <b>ELF is permitted by ASCE 7-22 &sect;12.6</b> for all structures (the 7-16 "
@@ -4349,15 +4349,19 @@ def _uplift_summary(pkg):
     types = [str(c.get("type") or "").lower() for c in ((pkg or {}).get("connections") or [])
              if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base")]
     emb = any("embedded" in t for t in types)
-    plate = any(("embedded" not in t) and any(w in t for w in ("plate", "anchor rod", "pinned", "moment base", "fixed"))
-                for t in types)
-    if emb and plate:
-        how = ("the anchor rods of the exposed base plates and the embedment of the embedded column bases (headed studs "
-               "or end plate with the foundation's anchor reinforcement)")
-    elif emb:
-        how = "the embedment of the embedded column bases (headed studs or end plate with the foundation's anchor reinforcement)"
-    else:
-        how = "the anchor rods of the base-plate design"
+    plate = any(("embedded" not in t) and not t.startswith("existing")
+                and any(w in t for w in ("plate", "anchor rod", "pinned", "moment base", "fixed")) for t in types)
+    exist = any(t.startswith("existing") for t in types)
+    parts = []
+    if plate:
+        parts.append("the anchor rods of the exposed base plates")
+    if emb:
+        parts.append("the embedment of the embedded column bases (headed studs or end plate with the foundation's anchor "
+                     "reinforcement)")
+    if exist:
+        parts.append("the existing column bases and footings, whose capacity is established by the evaluation (the base "
+                     "records give the required strengths)")
+    how = " and ".join(parts) or "the anchor rods of the base-plate design"
     return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest net uplift is <b>%s kip</b> at "
             "base %s (%s). It is resisted by %s (Chapter 10) and delivered to the foundations (Chapter 11).</p>"
             % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is", _n(up[1].get("uplift")),
@@ -4714,7 +4718,10 @@ def _base_record_row(c, a341=False):
         bits.append(("%s base" if str(_n(nb)) == "1" else "%s bases") % _n(nb))
     embedded = "embedded" in tl
     plate = any(t in tl for t in ("plate", "anchor rod"))
-    basis = ("AISC Design Guide 1 (3rd ed.) embedded base: bearing on the concrete (ACI 318-19 22.8), the embedment "
+    existing = tl.startswith("existing")
+    basis = ("existing column base: capacity by the evaluation of the existing structure (the record gives the required "
+             "strengths)" if existing else
+             "AISC Design Guide 1 (3rd ed.) embedded base: bearing on the concrete (ACI 318-19 22.8), the embedment "
              "and the end plate; AISC 360-22 J8 / J9" if embedded and not plate else
              "AISC 360-22 J8 / J9, AISC Design Guide 1 (3rd ed.) and ACI 318-19 Ch. 17 (minimum 4 anchor rods)")
     if a341:

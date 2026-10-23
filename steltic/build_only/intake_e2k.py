@@ -20,6 +20,11 @@ ETABS conventions used (CSI Analysis Reference / the .e2k text format):
   * Column local axes: at ANG 0 the local 2 axis is global +X, and an I-shape's major axis (M3) bends in the
     1-2 plane -> its strong axis resists X; at ANG 90 it resists Y.
   * RELEASE "M3I M3J ..." releases the major-axis moment at I / J; "PINNED" releases M2 and M3 at both ends.
+
+Both text dialects are read: ETABS 2013 and later (LOAD PATTERNS / LOADPATTERN, SHELL OBJECT LOADS, SLAB / DECK
+PROPERTIES, WEIGHTPERVOLUME, GRIDSYSTEM / GRID) and ETABS 9 and earlier (STATIC LOADS / LOADCASE, AREA OBJECT LOADS,
+WALL/SLAB/DECK PROPERTIES with SLABDEPTH / RIBDEPTH / WEIGHT, material W, GENGRID lines -- an axis-parallel one is a
+grid line, a skewed one is not read).
 """
 from __future__ import annotations
 
@@ -67,7 +72,8 @@ def parse(text: str) -> dict:
     sec = None
     R = dict(units=None, stories=[], grids=[], gridsys={}, diaph={}, materials={}, sections={}, autolists=set(),
              points={}, lines={}, pt_assign={}, line_assign={}, area_conn={}, area_assign={}, loadpat={},
-             loadsets={}, arealoads=[], lineloads=[], shellprops={}, steelpref={}, seismic=[], massource=[], other_sections=set())
+             loadsets={}, arealoads=[], lineloads=[], shellprops={}, steelpref={}, seismic=[], massource=[], other_sections=set(),
+             skew_grids=[])
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -90,6 +96,16 @@ def parse(text: str) -> dict:
             kv = _kv(t, 2)
             if kv.get("DIR", "").upper() in ("X", "Y") and _f(kv.get("COORD")) is not None:
                 R["grids"].append(dict(sys=t[1], label=kv.get("LABEL"), dir=kv["DIR"].upper(), coord=_f(kv["COORD"])))
+        elif sec == "GRIDS" and key == "GENGRID":                 # ETABS 9: a general grid line from (XA, YA) to (XB, YB)
+            kv = _kv(t, 2)
+            xa, ya, xb, yb = (_f(kv.get(k)) for k in ("XA", "YA", "XB", "YB"))
+            if str(kv.get("TYPE", "LINE")).upper() == "LINE" and None not in (xa, ya, xb, yb):
+                if abs(xa - xb) <= 1e-6 * max(1.0, abs(ya - yb)):
+                    R["grids"].append(dict(sys=t[1], label=kv.get("LABEL"), dir="X", coord=xa))
+                elif abs(ya - yb) <= 1e-6 * max(1.0, abs(xa - xb)):
+                    R["grids"].append(dict(sys=t[1], label=kv.get("LABEL"), dir="Y", coord=ya))
+                else:
+                    R["skew_grids"].append(kv.get("LABEL"))
         elif sec == "DIAPHRAGM NAMES" and key == "DIAPHRAGM":
             R["diaph"][t[1]] = _kv(t, 2).get("TYPE", "").upper()
         elif sec == "MATERIAL PROPERTIES" and key == "MATERIAL":
@@ -113,18 +129,18 @@ def parse(text: str) -> dict:
             R["area_conn"][t[1]] = dict(kind=t[2].upper(), pts=t[4:4 + n])
         elif sec == "AREA ASSIGNS" and key == "AREAASSIGN":
             R["area_assign"].setdefault((t[1], t[2]), {}).update(_kv(t, 3))
-        elif sec == "LOAD PATTERNS" and key == "LOADPATTERN":
+        elif (sec == "LOAD PATTERNS" and key == "LOADPATTERN") or (sec == "STATIC LOADS" and key == "LOADCASE"):
             R["loadpat"][t[1]] = _kv(t, 2)
         elif sec == "LOAD PATTERNS" and key in ("SEISMIC", "AUTOSEISMIC", "SEISMICLOAD") or (sec == "LOAD PATTERNS" and "ASCE" in line.upper()):
             R["seismic"].append(t)
         elif sec == "SHELL UNIFORM LOAD SETS" and key == "SHELLUNIFORMLOADSET":
             kv = _kv(t, 2)
             R["loadsets"].setdefault(t[1], {})[kv.get("LOADPAT")] = _f(kv.get("VALUE"), 0.0)
-        elif sec == "SHELL OBJECT LOADS" and key == "AREALOAD":
+        elif sec in ("SHELL OBJECT LOADS", "AREA OBJECT LOADS") and key == "AREALOAD":
             R["arealoads"].append(t)
         elif sec == "FRAME OBJECT LOADS" and key == "LINELOAD":
             R["lineloads"].append(t)
-        elif sec in ("SLAB PROPERTIES", "DECK PROPERTIES", "WALL PROPERTIES") and key == "SHELLPROP":
+        elif sec in ("SLAB PROPERTIES", "DECK PROPERTIES", "WALL PROPERTIES", "WALL/SLAB/DECK PROPERTIES") and key == "SHELLPROP":
             R["shellprops"].setdefault(t[1], {}).update(_kv(t, 2))
         elif sec == "STEEL DESIGN PREFERENCES" and key == "STEELPREFERENCE":
             R["steelpref"].update(_kv(t, 1))
@@ -216,6 +232,9 @@ def read_e2k(path, text=None) -> dict:
     for ax in ("x", "y"):
         d["grid"][ax].sort(key=lambda e: e["coord_ft"])
     S.mark(d, "grid", "file")
+    if R["skew_grids"]:
+        notes.append("grid line(s) %s run skewed to X and Y: not read as grid lines (version 1 grids are along X and Y)"
+                     % ", ".join(str(x) for x in R["skew_grids"]))
     G = S.Geometry(d)
 
     def plan(p):
@@ -467,6 +486,7 @@ def read_e2k(path, text=None) -> dict:
         xy = [(R["points"][p][0] * L, R["points"][p][1] * L) for p in pts if p in R["points"]]
         return 0.5 * abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(xy, xy[1:] + xy[:1])))
     floors = {n: a for n, a in R["area_conn"].items() if a["kind"] == "FLOOR"}
+    _openings(d, R, floors, sidx, order, L, notes)
     fl_area = {}
     for (n, story), a in R["area_assign"].items():
         if n in floors and story in sidx:
@@ -515,7 +535,7 @@ def read_e2k(path, text=None) -> dict:
                 lv = m["j"]["level"]; Lm = _len3(G, m["i"], m["j"])
             if Lm:
                 frame_kip[lv] = frame_kip.get(lv, 0.0) + float(r["A"]) / 144.0 * Lm * STEEL_PCF / 1000.0
-    Dp, Lp, why = {}, {}, []
+    Dp, Lp, why, found = {}, {}, [], {}
     for n in order[1:]:
         A = area.get(n)
         if not A:
@@ -524,15 +544,22 @@ def read_e2k(path, text=None) -> dict:
         sup = 1000.0 * ld.get("D", 0.0) / A; sset = 1000.0 * ld.get("D_set", 0.0) / A
         sl = 1000.0 * slabw.get(n, 0.0) / A; fr = 1000.0 * frame_kip.get(n, 0.0) / A
         Dp[n] = round(sup + sset + sl + fr, 2)
+        found[n] = sup + sset + sl
         Lp[n] = round(1000.0 * (ld.get("L", 0.0) + ld.get("L_set", 0.0)) / A, 2)
         why.append("%s: %.1f area loads + %.1f uniform load sets + %.1f slab/deck + %.1f framing self-weight = %.1f psf over %.0f ft2"
                    % (n, sup, sset, sl, fr, Dp[n], A))
         if sup and sset:
             notes.append("%s: floors carry BOTH direct area loads and uniform load sets -- check they are not the same load "
                          "twice before accepting D and L" % n)
+    zero = [n for n in Dp if found.get(n, 0.0) <= 0.0]
+    if zero:                                      # a floor with no area load and no slab found -- framing self-weight
+                                                  # alone is not its dead load: ask, do not propose
+        notes.append("no dead load found in the file for %s: D and L are asked, not proposed" % ", ".join(zero))
+        Dp = {}
     if Dp:
         props["loads/D_psf"] = dict(value=Dp, reason="derived from the .e2k -- " + "; ".join(why))
-        props["loads/L_psf"] = dict(value=Lp, reason="derived from the .e2k area live loads per level (live / reducible live patterns)")
+        if any(v > 0 for v in Lp.values()):
+            props["loads/L_psf"] = dict(value=Lp, reason="derived from the .e2k area live loads per level (live / reducible live patterns)")
         top = order[-1]
         A = area.get(top)
         lt = load.get(top, {})
@@ -542,7 +569,7 @@ def read_e2k(path, text=None) -> dict:
         if A and (lt.get("S") is not None or lt.get("S_set") is not None):
             props["loads/snow_psf"] = dict(value=round(1000.0 * (lt.get("S", 0.0) + lt.get("S_set", 0.0)) / A, 2),
                                            reason="derived from the .e2k snow area loads at %s" % top)
-    else:
+    elif not zero:
         notes.append("no floor area objects with area loads: the dead and live loads per level are asked")
     if R["lineloads"]:
         notes.append("%d frame line load(s) (e.g. cladding) are not carried as such: give the cladding weight in psf of wall"
@@ -570,6 +597,57 @@ def _dedupe(lst, cap=60):
     return out
 
 
+def _inside(x, y, poly):
+    """Point in polygon (ray casting); poly = [(x, y), ...]."""
+    c = False
+    n = len(poly)
+    for k in range(n):
+        (x0, y0), (x1, y1) = poly[k], poly[(k + 1) % n]
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            c = not c
+    return c
+
+
+def _openings(d, R, floors, sidx, order, L, notes):
+    """Grid bays framed by columns at all four corners that no floor object of the story covers -> openings (a
+    court, an atrium, a shaft): without them the floor plate would be every framed bay."""
+    polys = {}
+    for (n, story), a in R["area_assign"].items():
+        if n in floors and sidx.get(story, 0) > 0:
+            xy = [(R["points"][p][0] * L, R["points"][p][1] * L) for p in floors[n]["pts"] if p in R["points"]]
+            if len(xy) >= 3:
+                polys.setdefault(story, []).append(xy)
+    if not polys:
+        return
+    gx, gy = d["grid"]["x"], d["grid"]["y"]
+    framed = {}
+    for c in d["columns"]:
+        k0, k1 = sidx.get(c.get("base_level")), sidx.get(c.get("top_level"))
+        if k0 is None or k1 is None:
+            continue
+        for k in range(k0, k1 + 1):
+            framed.setdefault(order[k], set()).add((str(c["x"]), str(c["y"])))
+    out = []
+    for story in order[1:]:
+        if story not in polys:
+            continue
+        P = framed.get(story, set())
+        for i in range(len(gx) - 1):
+            for j in range(len(gy) - 1):
+                corners = {(str(gx[a]["label"]), str(gy[b]["label"])) for a in (i, i + 1) for b in (j, j + 1)}
+                if not corners <= P:
+                    continue
+                cx, cy = (gx[i]["coord_ft"] + gx[i + 1]["coord_ft"]) / 2, (gy[j]["coord_ft"] + gy[j + 1]["coord_ft"]) / 2
+                if not any(_inside(cx, cy, poly) for poly in polys[story]):
+                    out.append({"level": story, "x": gx[i]["label"], "y": gy[j]["label"]})
+    if out:
+        d["openings"] = out
+        S.mark(d, "openings", "file", "framed grid bays no floor object covers")
+        bays = sorted({"%s/%s" % (o["x"], o["y"]) for o in out})
+        notes.append("framed bay(s) %s have no floor object at %s: read as openings, so the floor plate is the framed bays "
+                     "less these" % (", ".join(bays), ", ".join(sorted({o["level"] for o in out}, key=order.index))))
+
+
 def _len(G, a, b):
     p, q = G.xy(a), G.xy(b)
     return math.dist(p, q) if p and q else None
@@ -587,18 +665,29 @@ def _slab_psf(sp, R, PSF, L, F):
     """Self-weight (psf) of a slab / deck shell property, from its thickness and material unit weight."""
     if not sp:
         return 0.0
-    mat = R["materials"].get(sp.get("MATERIAL") or sp.get("SLABMATERIAL")) or {}
+    mat = R["materials"].get(sp.get("MATERIAL") or sp.get("SLABMATERIAL") or sp.get("CONCMATERIAL")) or {}
     gam = _f(mat.get("WEIGHTPERVOLUME"))              # force / length^3 (file units)
+    if gam is None:
+        gam = _f(mat.get("W"))                        # ETABS 9: MATERIAL ... W <weight per volume>
     if gam is None:
         return 0.0
     gam_pcf = gam * F * 1000.0 / (L ** 3)
     t = _f(sp.get("SLABTHICKNESS")) or _f(sp.get("THICKNESS"))
+    if not t and str(sp.get("PROPTYPE", "")).upper() == "SLAB":
+        t = _f(sp.get("TM")) or _f(sp.get("TB"))          # ETABS 9 slab: membrane / bending thickness
     if t:
         return gam_pcf * t * L
-    ds, dr = _f(sp.get("DECKSLABDEPTH")), _f(sp.get("DECKRIBDEPTH"))
+    ds = _f(sp.get("DECKSLABDEPTH"))
+    dr = _f(sp.get("DECKRIBDEPTH"))
+    wr, ws = _f(sp.get("DECKRIBWIDTHTOP"), 0.0) or 0.0, _f(sp.get("DECKRIBSPACING"), 0.0) or 0.0
+    unit = (_f(sp.get("DECKUNITWEIGHT"), 0.0) or 0.0) * PSF
+    if ds is None and _f(sp.get("SLABDEPTH")) is not None:                   # ETABS 9 deck
+        ds, dr = _f(sp.get("SLABDEPTH")), _f(sp.get("RIBDEPTH"))
+        wr, ws = _f(sp.get("RIBWIDTH"), 0.0) or 0.0, _f(sp.get("RIBSPACING"), 0.0) or 0.0
+        unit = (_f(sp.get("WEIGHT"), 0.0) or 0.0) * PSF
+        if str(sp.get("DECKTYPE", "FILLED")).upper() != "FILLED":
+            return unit                                   # an unfilled deck carries no concrete
     if ds is not None:
-        wr, ws = _f(sp.get("DECKRIBWIDTHTOP"), 0.0) or 0.0, _f(sp.get("DECKRIBSPACING"), 0.0) or 0.0
         frac = (wr / ws) if ws else 0.5
-        unit = (_f(sp.get("DECKUNITWEIGHT"), 0.0) or 0.0) * PSF
         return gam_pcf * (ds + (dr or 0.0) * frac) * L + unit
     return 0.0

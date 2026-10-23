@@ -3170,12 +3170,19 @@ def _irregularity_section(cfg, runs, sf=None):
     out = intro + _table(["Irregularity type", "Determination"], rows)
     if req:
         out += "<p><b>Provisions triggered:</b></p><ul>" + "".join("<li>%s</li>" % x for x in req) + "</ul>"
-    # the advisory follows the determinations printed in the table (screens and the engineer's irregularity statements)
-    irregular = bool(any("YES" in str(r[1]) for r in rows) or cfg.get("skew"))
-    if irregular and "RS" not in [a.upper() for a in cfg.get("analyses", [])]:
+    # the advisory follows the determinations printed in the table, for the types that change the dynamic response
+    # (horizontal 1 torsional, vertical 1a/1b soft story, vertical 2 geometric: those for which the deleted 7-16 Table
+    # 12.6-1 did not permit ELF) and for nonparallel (skewed) systems; the other types carry their own provisions only
+    dyn_types = [r[0].split(" &mdash;")[0].strip() for i, r in enumerate(rows) if i in (0, 5, 6) and "YES" in str(r[1])]
+    if cfg.get("skew") or "YES" in str(rows[4][1]):
+        dyn_types.append("Horizontal 5 (nonparallel system)")
+    if dyn_types and "RS" not in [a.upper() for a in cfg.get("analyses", [])]:
         out += ("<p class='cnote'><b>Analysis procedure &mdash; ADVISORY:</b> MRSA (&sect;12.9) is recommended for the "
-                "irregularities above; <b>ELF is permitted by ASCE 7-22 &sect;12.6</b> for all structures (the 7-16 "
-                "Table 12.6-1 procedure matrix was deleted).</p>")
+                "%s irregularit%s above; <b>ELF is permitted by ASCE 7-22 &sect;12.6</b> for all structures (the 7-16 "
+                "Table 12.6-1 procedure matrix was deleted).</p>"
+                % (", ".join(dyn_types).replace("Horizontal 1", "Horizontal 1 (torsional)")
+                   .replace("Vertical 1a/1b", "Vertical 1a/1b (soft story)").replace("Vertical 2", "Vertical 2 (geometric)"),
+                   "ies" if len(dyn_types) > 1 else "y"))
     return out
 
 

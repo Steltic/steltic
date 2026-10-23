@@ -389,7 +389,8 @@ def test_uplift_sentence_follows_base_types():
 def test_mrsa_advisory_follows_table_determinations():
     import inspect
     src = inspect.getsource(R._irregularity_section)
-    assert 'irregular = bool(any("YES" in str(r[1]) for r in rows) or cfg.get("skew"))' in src
+    # only the torsional, soft-story and vertical geometric rows (and nonparallel systems) prompt the MRSA advisory
+    assert 'i in (0, 5, 6) and "YES" in str(r[1])' in src and 'cfg.get("skew") or "YES" in str(rows[4][1])' in src
 
 
 def test_existing_bases_named_in_uplift_and_base_rows():

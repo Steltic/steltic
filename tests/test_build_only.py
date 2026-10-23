@@ -416,3 +416,155 @@ def test_api_flow(tmp_path, monkeypatch):
     assert any(a["item"] == "loads.Lr_psf" for a in st["provenance"]["accepted_defaults"])
     t = c.get("/api/build_only/template", params={"building": "api1"})
     assert t.status_code == 200 and t.content[:2] == b"PK"
+
+
+# ------------------------------------------------------------------------------------------- ETABS 9 text dialect
+_E2K_V9 = """$ File C:\\\\models\\\\v9.e2k saved 3/15/11 9:29:10
+$ PROGRAM INFORMATION
+  PROGRAM  "ETABS"  VERSION "9.7.2"
+
+$ CONTROLS
+  UNITS  "KIP"  "IN"
+
+$ STORIES - IN SEQUENCE FROM TOP
+  STORY "STORY2"  HEIGHT 144  MASTERSTORY "Yes"
+  STORY "STORY1"  HEIGHT 144  SIMILARTO "STORY2"
+  STORY "BASE"  ELEV 0
+
+$ DIAPHRAGM NAMES
+  DIAPHRAGM "D1"    TYPE RIGID
+
+$ GRIDS
+  COORDSYSTEM "GLOBAL"  TYPE "GENERAL"  BUBBLESIZE 60
+  GENGRID "GLOBAL"  LABEL "A"  TYPE "LINE"  XA 0  YA 0  XB 0  YB 288  GRIDTYPE "PRIMARY"
+  GENGRID "GLOBAL"  LABEL "B"  TYPE "LINE"  XA 288  YA 0  XB 288  YB 288  GRIDTYPE "PRIMARY"
+  GENGRID "GLOBAL"  LABEL "1"  TYPE "LINE"  XA 0  YA 0  XB 288  YB 0  GRIDTYPE "PRIMARY"
+  GENGRID "GLOBAL"  LABEL "2"  TYPE "LINE"  XA 0  YA 288  XB 288  YB 288  GRIDTYPE "PRIMARY"
+  GENGRID "GLOBAL"  LABEL "S1"  TYPE "LINE"  XA 0  YA 0  XB 288  YB 288  GRIDTYPE "PRIMARY"
+
+$ MATERIAL PROPERTIES
+  MATERIAL  "STEEL"  M 7.324016E-07  W 0.000283  TYPE "ISOTROPIC"  E 29000  U 0.3  A 6.5E-06
+  MATERIAL  "STEEL"  DESIGNTYPE "STEEL"  FY 50  FU 65  PRICE 1
+  MATERIAL  "CONC"  M 2.246377E-07  W 0.0000868  TYPE "ISOTROPIC"  E 3600  U 0.2  A 5.5E-06
+  MATERIAL  "CONC"  DESIGNTYPE "CONCRETE"  FY 60  FC 4  FYS 60
+
+$ FRAME SECTIONS
+  FRAMESECTION  "W14X90"  MATERIAL "STEEL"  SHAPE "W14X90"
+  FRAMESECTION  "W18X35"  MATERIAL "STEEL"  SHAPE "W18X35"
+
+$ WALL/SLAB/DECK PROPERTIES
+  SHELLPROP  "DECK1"  PROPTYPE "DECK"  TYPE "MEMBRANE"
+  SHELLPROP  "DECK1"  DECKTYPE "FILLED"  CONCMATERIAL "CONC"  SLABDEPTH 3.5
+  SHELLPROP  "DECK1"  RIBDEPTH 3  RIBWIDTH 6  RIBSPACING 12  WEIGHT 1.597222E-05
+
+$ POINT COORDINATES
+  POINT "1"  0 0
+  POINT "2"  288 0
+  POINT "3"  288 288
+  POINT "4"  0 288
+
+$ LINE CONNECTIVITIES
+  LINE  "C1"  COLUMN  "1"  "1"  1
+  LINE  "C2"  COLUMN  "2"  "2"  1
+  LINE  "C3"  COLUMN  "3"  "3"  1
+  LINE  "C4"  COLUMN  "4"  "4"  1
+  LINE  "B1"  BEAM  "1"  "2"  0
+  LINE  "B2"  BEAM  "2"  "3"  0
+  LINE  "B3"  BEAM  "3"  "4"  0
+  LINE  "B4"  BEAM  "4"  "1"  0
+
+$ AREA CONNECTIVITIES
+  AREA "F1"  FLOOR  4  "1"  "2"  "3"  "4"  0  0  0  0
+
+$ POINT ASSIGNS
+  POINTASSIGN  "1"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"
+  POINTASSIGN  "2"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"
+  POINTASSIGN  "3"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"
+  POINTASSIGN  "4"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"
+
+$ LINE ASSIGNS
+%(lines)s
+
+$ AREA ASSIGNS
+  AREAASSIGN  "F1"  "STORY2"  SECTION "DECK1"  OBJMESHTYPE "DEFAULT"  DIAPH  "D1"
+  AREAASSIGN  "F1"  "STORY1"  SECTION "DECK1"  OBJMESHTYPE "DEFAULT"  DIAPH  "D1"
+
+$ STATIC LOADS
+  LOADCASE "DEAD"  TYPE  "DEAD"  SELFWEIGHT  1
+  LOADCASE "LIVE"  TYPE  "LIVE"  SELFWEIGHT  0
+  LOADCASE "SDEAD"  TYPE  "SUPERDEAD"  SELFWEIGHT  0
+
+$ AREA OBJECT LOADS
+%(loads)s
+
+$ END OF MODEL FILE
+"""
+
+
+def _v9(loads=True):
+    lines = []
+    for st in ("STORY2", "STORY1"):
+        for c in ("C1", "C2", "C3", "C4"):
+            lines.append('  LINEASSIGN  "%s"  "%s"  SECTION "W14X90"  ANG  0' % (c, st))
+        for b in ("B1", "B2", "B3", "B4"):
+            lines.append('  LINEASSIGN  "%s"  "%s"  SECTION "W18X35"  ANG  0' % (b, st))
+    ld = []
+    if loads:
+        for st in ("STORY2", "STORY1"):
+            ld.append('  AREALOAD  "F1"  "%s"  TYPE "UNIFF"  DIR "GRAV"  LC "LIVE"  FVAL 5.208334E-04' % st)
+            ld.append('  AREALOAD  "F1"  "%s"  TYPE "UNIFF"  DIR "GRAV"  LC "SDEAD"  FVAL 1.736111E-04' % st)
+    return _E2K_V9 % dict(lines="\n".join(lines), loads="\n".join(ld))
+
+
+def test_e2k_etabs9_dialect_loads_decks_and_general_grids(tmp_path):
+    p = tmp_path / "v9.e2k"
+    p.write_text(_v9())
+    e = E2K.read_e2k(p)
+    assert [g["label"] for g in e["grid"]["x"]] == ["A", "B"] and [g["label"] for g in e["grid"]["y"]] == ["1", "2"]
+    assert any("S1" in n and "skewed" in n for n in e["_intake"]["notes"])
+    assert len(e["columns"]) == 8 and len(e["beams"]) == 8 and e["diaphragm"] == "rigid"
+    D = e["_proposals"]["loads/D_psf"]["value"]
+    L = e["_proposals"]["loads/L_psf"]["value"]
+    # 25 psf superimposed + 150 pcf x (3.5 + 3 x 6/12) in of filled deck + 2.3 psf deck + framing self-weight
+    deck = 0.0000868 * 1728 * 1000 * 5.0 / 12.0 + 1.597222e-05 * 144000
+    assert L == {"STORY1": 75.0, "STORY2": 75.0}
+    for lv in ("STORY1", "STORY2"):
+        assert abs(D[lv] - (25.0 + deck + (4 * 12 * 90 + 4 * 24 * 35) / 576.0)) < 0.1     # 4 W14X90 x 12 ft + 4 W18X35 x 24 ft
+    assert "64.8 slab/deck" in e["_proposals"]["loads/D_psf"]["reason"]
+
+
+def test_e2k_floor_without_loads_is_asked_not_proposed_as_zero(tmp_path):
+    p = tmp_path / "v9.e2k"
+    p.write_text(_v9(loads=False).replace('SECTION "DECK1"', 'SECTION "NONE"'))
+    e = E2K.read_e2k(p)
+    assert "loads/D_psf" not in (e.get("_proposals") or {})
+    assert any("no dead load found" in n for n in e["_intake"]["notes"])
+    kinds = {i["id"]: i["kind"] for i in S.validate(e)["items"]}
+    assert kinds.get("loads.D_psf") == "key" and kinds.get("loads.L_psf") == "key"
+
+
+def test_e2k_framed_bay_without_a_floor_object_is_an_opening(tmp_path):
+    """A 2 x 1 bay frame whose floor object covers only the first bay: the second bay is an opening (a court)."""
+    t = _v9()
+    t = t.replace('  GENGRID "GLOBAL"  LABEL "B"  TYPE "LINE"  XA 288  YA 0  XB 288  YB 288  GRIDTYPE "PRIMARY"',
+                  '  GENGRID "GLOBAL"  LABEL "B"  TYPE "LINE"  XA 288  YA 0  XB 288  YB 288  GRIDTYPE "PRIMARY"\n'
+                  '  GENGRID "GLOBAL"  LABEL "C"  TYPE "LINE"  XA 576  YA 0  XB 576  YB 288  GRIDTYPE "PRIMARY"')
+    t = t.replace('  POINT "4"  0 288', '  POINT "4"  0 288\n  POINT "5"  576 0\n  POINT "6"  576 288')
+    t = t.replace('  LINE  "B4"  BEAM  "4"  "1"  0', '  LINE  "B4"  BEAM  "4"  "1"  0\n  LINE  "C5"  COLUMN  "5"  "5"  1\n'
+                  '  LINE  "C6"  COLUMN  "6"  "6"  1\n  LINE  "B5"  BEAM  "2"  "5"  0\n  LINE  "B6"  BEAM  "3"  "6"  0')
+    extra = []
+    for st in ("STORY2", "STORY1"):
+        extra += ['  LINEASSIGN  "C5"  "%s"  SECTION "W14X90"  ANG  0' % st, '  LINEASSIGN  "C6"  "%s"  SECTION "W14X90"  ANG  0' % st,
+                  '  LINEASSIGN  "B5"  "%s"  SECTION "W18X35"  ANG  0' % st, '  LINEASSIGN  "B6"  "%s"  SECTION "W18X35"  ANG  0' % st]
+    t = t.replace("\n\n$ AREA ASSIGNS", "\n" + "\n".join(extra) + "\n\n$ AREA ASSIGNS")
+    t = t.replace('  POINTASSIGN  "4"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"',
+                  '  POINTASSIGN  "4"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"\n  POINTASSIGN  "5"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"\n'
+                  '  POINTASSIGN  "6"  "BASE"  RESTRAINT "UX UY UZ RX RY RZ"')
+    p = tmp_path / "court.e2k"
+    p.write_text(t)
+    e = E2K.read_e2k(p)
+    assert len(e["columns"]) == 12
+    assert sorted((o["level"], o["x"], o["y"]) for o in e["openings"]) == [("STORY1", "B", "1"), ("STORY2", "B", "1")]
+    assert any("read as openings" in n for n in e["_intake"]["notes"])
+    assert not [i for i in S.validate(e)["items"] if i["kind"] == "refused"]
+    assert "64.8 slab/deck" in e["_proposals"]["loads/D_psf"]["reason"]        # the loads still come from the floor

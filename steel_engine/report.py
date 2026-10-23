@@ -4724,8 +4724,10 @@ def _connection_summary(pkg):
         if chks and C:
             best = max(((C._dc_num(k.get("DC")), k) for k in chks if C._dc_num(k.get("DC")) is not None),
                        key=lambda t: t[0], default=(None, None))
-            if best[0] is not None and (dc is None or best[0] > dc):
-                dc = best[0]
+            if best[0] is not None and (dc is None or best[0] >= dc - 1e-9):
+                # the governing check names the row; the record's own summary may already list every check, and
+                # "(+n more checks)" then counts the others
+                dc = max(best[0], dc or 0.0)
                 ls = best[1].get("limit_state")
         issues = C._entry_issues("connection", c) if C else []
         cid = str(c.get("id", ""))

@@ -4346,8 +4346,17 @@ def _uplift_summary(pkg):
     n_up = sum(1 for r in br.values() if (r.get("uplift") or 0.0) > 0.05)
     # what resists the uplift follows the base types actually designed: anchor rods of exposed base plates, or the
     # embedment (headed studs, end plate, anchor reinforcement) of embedded column bases
-    types = [str(c.get("type") or "").lower() for c in ((pkg or {}).get("connections") or [])
-             if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base")]
+    def _tension(c):
+        d = c.get("demand") if isinstance(c.get("demand"), dict) else {}
+        try:
+            return max(float(d.get("uplift_kip") or 0.0), float(d.get("T_design_kip") or 0.0)) > 0.05
+        except (TypeError, ValueError):
+            return False
+    recs = [c for c in ((pkg or {}).get("connections") or [])
+            if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base")]
+    # the bases actually in net tension name the load path (all base records where none records its uplift)
+    up_recs = [c for c in recs if _tension(c)] or recs
+    types = [str(c.get("type") or "").lower() for c in up_recs]
     emb = any("embedded" in t for t in types)
     plate = any(("embedded" not in t) and not t.startswith("existing")
                 and any(w in t for w in ("plate", "anchor rod", "pinned", "moment base", "fixed")) for t in types)

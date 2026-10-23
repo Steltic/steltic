@@ -384,3 +384,17 @@ def test_uplift_sentence_follows_base_types():
     import inspect
     src = inspect.getsource(R._uplift_summary)
     assert "embedment of the embedded column bases" in src and "anchor rods of the base-plate design" in src
+
+
+def test_mrsa_advisory_follows_table_determinations():
+    import inspect
+    src = inspect.getsource(R._irregularity_section)
+    assert 'irregular = bool(any("YES" in str(r[1]) for r in rows) or cfg.get("skew"))' in src
+
+
+def test_existing_bases_named_in_uplift_and_base_rows():
+    c = {"id": "conn-base-existing-W14X90", "section": "W14X90",
+         "type": "existing column base (encased steel grillage in the footing), fixed-base assumption",
+         "demand": {"P_comp_kip": 348.0, "uplift_kip": 25.9, "V_kip": 70.0}}
+    row = R._base_record_row(c, True)
+    assert "capacity by the evaluation" in row[3] and "minimum 4 anchor rods" not in row[3]

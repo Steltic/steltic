@@ -326,7 +326,10 @@ def test_base_rows_follow_the_base_records():
     emb2 = dict(emb, demand=dict(emb["demand"], M_design_kipft=5949.0, P_design_kip=726.7, design_forces=True,
                                  foundation_forces="front bearing block 2,502 kip, back block 2,108 kip"))
     note2 = R._base_design_records_note({"connections": [emb2, pin]})
-    assert "5,949" in note2 and "front bearing block 2,502 kip" in note2 and "Design moment (kip-ft)" in note2
+    assert "5,949" in note2 and "front bearing block 2,502 kip" in note2 and "Design moment, strong / weak axis (kip-ft)" in note2
+    emb3 = dict(emb, demand=dict(emb2["demand"], My_design_kipft=2100.0, Vy_design_kip=76.0, n_bases=1))
+    note3 = R._base_design_records_note({"connections": [emb3]})
+    assert "5,949 / 2,100" in note3 and "1 base<" in note3
 
 
 def test_hazard_row_prints_rain_by_level_range():

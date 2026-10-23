@@ -4697,7 +4697,7 @@ def _base_record_row(c, a341=False):
     if d.get("bases"):
         bits.append("bases %s" % _esc(str(d.get("bases"))))
     elif nb:
-        bits.append("%s bases" % _n(nb))
+        bits.append(("%s base" if str(_n(nb)) == "1" else "%s bases") % _n(nb))
     embedded = "embedded" in tl
     plate = any(t in tl for t in ("plate", "anchor rod"))
     basis = ("AISC Design Guide 1 (3rd ed.) embedded base: bearing on the concrete (ACI 318-19 22.8), the embedment "
@@ -4810,10 +4810,15 @@ def _base_design_records_note(pkg):
         if va is None:
             va = max(_f(d, "Vx_kip") or 0.0, _f(d, "Vy_kip") or 0.0)
         vd = _f(d, "V_design_kip"); md = _f(d, "M_design_kipft"); ma = abs(_f(d, "M_kipft") or 0.0)
+        vyd = _f(d, "Vy_design_kip"); myd = _f(d, "My_design_kipft")
         pdz = _f(d, "P_design_kip"); tdz = _f(d, "T_design_kip")
         ff = d.get("foundation_forces") if isinstance(d.get("foundation_forces"), str) else ""
         v_txt = _n(vd) if (vd is not None and vd > 1.005 * va) else "&mdash;"
         m_txt = _n(md) if (md is not None and md > 1.005 * ma) else "&mdash;"
+        if vyd is not None and vyd > 0.05:                       # weak-axis design shear (D2.6b about y)
+            v_txt = "%s / %s" % (v_txt if v_txt != "&mdash;" else (_n(vd) if vd is not None else "&mdash;"), _n(vyd))
+        if myd is not None and myd > 0.5:                        # weak-axis design moment (D2.6c about y)
+            m_txt = "%s / %s" % (m_txt if m_txt != "&mdash;" else (_n(md) if md is not None else "&mdash;"), _n(myd))
         ax = []
         if pdz is not None and (d.get("design_forces") or md is not None):
             ax.append("P = %s" % _n(pdz))
@@ -4821,7 +4826,8 @@ def _base_design_records_note(pkg):
             ax.append("T = %s" % _n(tdz))
         if v_txt == "&mdash;" and m_txt == "&mdash;" and not ff and not ax:
             continue
-        where = d.get("bases") or (("%s bases" % _n(d.get("n_bases"))) if d.get("n_bases") else "")
+        nb = d.get("n_bases")
+        where = d.get("bases") or ((("%s base" if str(_n(nb)) == "1" else "%s bases") % _n(nb)) if nb else "")
         rows.append([_esc(c.get("id")), _esc(str(c.get("section") or "")), _esc(str(where)), v_txt, m_txt,
                      " / ".join(ax) or "&mdash;", _esc(ff) if ff else "&mdash;"])
     if not rows:
@@ -4830,8 +4836,8 @@ def _base_design_records_note(pkg):
             "analysis reactions above: the AISC 341-22 D2.6b base shear, the D2.6c base moment (the base and its attachment "
             "to the foundation are designed for it), the design axial forces, and the forces each record hands to the "
             "foundation (the Appendix A records give the derivations):</p>"
-            + _table(["Base design record", "Column", "Bases", "Design shear (kip)", "Design moment (kip-ft)",
-                      "Design axial (kip)", "Forces on the foundation"], rows))
+            + _table(["Base design record", "Column", "Bases", "Design shear, strong / weak axis (kip)",
+                      "Design moment, strong / weak axis (kip-ft)", "Design axial (kip)", "Forces on the foundation"], rows))
 
 
 _SANITY_NAMES = {"drift_X": "seismic drift X", "drift_Y": "seismic drift Y", "period": "period vs C<sub>u</sub>T<sub>a</sub>",

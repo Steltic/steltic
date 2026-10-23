@@ -4344,10 +4344,24 @@ def _uplift_summary(pkg):
         return ("<p>Net uplift: no column base is in net tension in any combination (base-reaction envelope, "
                 "Chapter 11).</p>")
     n_up = sum(1 for r in br.values() if (r.get("uplift") or 0.0) > 0.05)
+    # what resists the uplift follows the base types actually designed: anchor rods of exposed base plates, or the
+    # embedment (headed studs, end plate, anchor reinforcement) of embedded column bases
+    types = [str(c.get("type") or "").lower() for c in ((pkg or {}).get("connections") or [])
+             if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base")]
+    emb = any("embedded" in t for t in types)
+    plate = any(("embedded" not in t) and any(w in t for w in ("plate", "anchor rod", "pinned", "moment base", "fixed"))
+                for t in types)
+    if emb and plate:
+        how = ("the anchor rods of the exposed base plates and the embedment of the embedded column bases (headed studs "
+               "or end plate with the foundation's anchor reinforcement)")
+    elif emb:
+        how = "the embedment of the embedded column bases (headed studs or end plate with the foundation's anchor reinforcement)"
+    else:
+        how = "the anchor rods of the base-plate design"
     return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest net uplift is <b>%s kip</b> at "
-            "base %s (%s). It is resisted by the anchor rods of the base-plate design (Chapter 10) and delivered to the "
-            "foundations (Chapter 11).</p>" % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is",
-                                               _n(up[1].get("uplift")), _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo"))))
+            "base %s (%s). It is resisted by %s (Chapter 10) and delivered to the foundations (Chapter 11).</p>"
+            % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is", _n(up[1].get("uplift")),
+               _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo")), how))
 
 
 _NEG_341 = re.compile(r"not appl|does not apply|do not apply|n/a|not required|\bno\b|without", re.I)

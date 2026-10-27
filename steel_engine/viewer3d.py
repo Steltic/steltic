@@ -9,14 +9,16 @@ Data sources (no NEW eigen solves -- adds a few seconds at most to a report buil
   * geometry / sections / mode shapes : engine3d.mode_shapes() cached eigen snapshot
   * end releases / column web dirs    : engine3d.build() info (beam_rel / col_dir snapshots)
   * member demands + governing combos : <root>/design/member_schedule.csv
-  * capacities                        : sections.props() from the AISC Shapes DB
+  * member D/C                        : <root>/design/calc_package.json (the governing D/C of the member's
+                                        design record, matched by member kind and section)
   * loads: dynamic-model gravity (level totals at grid nodes, as static_lateral applies them),
     static-model true tributary gravity per beam segment (apply_gravity math), wind story
     forces (engine3d.wind_forces) and ELF seismic story forces (engine3d.elf)
   * LLM model used: "_model=<x>" line in <root>/execution_log.md
 
-D/C is a screening check (AISC 360 E3 with K=1, phi*Mp bending without LTB, H1 interaction);
-the calc package is the check of record.  Vendored engine: vendor/three.min.js (r128, MIT).
+The member D/C shown is the calc package's (the check of record); members whose design record cannot be matched
+show no D/C.  The old built-in screen (K = 1, no LTB) is kept only as _dc() for tests and is not displayed.
+Vendored engine: vendor/three.min.js (r128, MIT).
 """
 import os, re, csv, json, math, html as _html
 
@@ -73,6 +75,36 @@ def _demands(root):
                 out[int(row["ele_tag"])] = row
             except (KeyError, ValueError):
                 continue
+    return out
+
+
+_KIND = {"col": "column", "column": "column", "beam": "beam", "girder": "beam", "brace": "brace"}
+
+
+def _package_dc(root):
+    """{(kind, section): governing D/C} from <root>/design/calc_package.json: the largest headline D/C among the
+    design records of that member kind and section (records are grouped by role and section, so one element
+    takes the worst record its section appears in). Empty when no filled package exists."""
+    path = os.path.join(root, "design", "calc_package.json")
+    out = {}
+    try:
+        pkg = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return out
+    for m in pkg.get("members") or []:
+        if not isinstance(m, dict):
+            continue
+        inp = m.get("inputs") or {}
+        if not isinstance(inp, dict):
+            continue
+        kind = _KIND.get(str(inp.get("kind", "")).lower())
+        sec = str(inp.get("section") or "").upper()
+        try:
+            dc = float(m.get("DC"))
+        except (TypeError, ValueError):
+            continue
+        if kind and sec and dc == dc:
+            out[(kind, sec)] = max(dc, out.get((kind, sec), 0.0))
     return out
 
 
@@ -174,7 +206,7 @@ def _viewer_data(cfg, name, root):
     used = set()
     elements = []
     dem = _demands(root)
-    Fy = float(cfg.get("Fy", 50.0))
+    pdc = _package_dc(root)
     for (tag, kind, sec, n1, n2) in ms["ele"]:
         if n1 not in coords or n2 not in coords:
             continue
@@ -199,16 +231,15 @@ def _viewer_data(cfg, name, root):
         if d:
             Pc = float(d.get("P_comp_kip") or 0); Pt = float(d.get("P_tens_kip") or 0)
             Mx = float(d.get("Mx_kipft") or 0);   My = float(d.get("My_kipft") or 0)
-            u = _dc("col" if rec["type"] == "column" else rec["type"],
-                    sec, L, Pc, Pt, Mx * 12.0, My * 12.0, Fy)
-            if u is not None:
-                rec["util"] = round(u, 3)
             rec["combo"] = d.get("governing_combo")
             if rec["type"] == "brace":
                 rec["f"] = {"N": round(-Pc if Pc >= Pt else Pt, 1)}
             else:
                 rec["f"] = {"P": round(max(Pc, Pt), 1), "Mx": round(Mx, 1),
                             "My": round(My, 1), "V": round(float(d.get("V_kip") or 0), 1)}
+        u = pdc.get((rec["type"], str(sec).upper()))
+        if u is not None:
+            rec["util"] = round(u, 3)
         elements.append(rec)
 
     zs = sorted({round(coords[t][2], 1) for t in used})
@@ -253,15 +284,15 @@ def _viewer_data(cfg, name, root):
     support_label = "Supports (%s)" % ("fixed" if "fix" in base else "pinned")
     model_used = _model_used(root)
 
-    have_dem = sum(1 for e in elements if e["util"] is not None)
-    umax = max((e["util"] for e in elements if e["util"] is not None), default=None)
+    have_dem = sum(1 for e in elements if e.get("f"))
+    umax = max(pdc.values(), default=None)
     nfe = sum(1 for e in elements if e.get("fe"))
     stats = [["Nodes / elements", "%d / %d" % (len(used), len(elements))],
              ["Periods T1-T3", " / ".join("%.3f" % t for t in ms["T"][:3]) + " s"],
              ["Members with demands", "%d of %d" % (have_dem, len(elements))],
              ["Fixed-ended beams", str(nfe)]]
     if umax is not None:
-        stats.append(["Max D/C (screening)", "%.2f" % umax])
+        stats.append(["Max member D/C (calc package)", "%.2f" % umax])
     if loads.get("seis"):
         stats.append(["Seismic base shear V X / Y", "%.0f / %.0f k" %
                       (loads["seis"].get("VX", loads["seis"]["V"]), loads["seis"].get("VY", loads["seis"]["V"]))])
@@ -277,12 +308,11 @@ def _viewer_data(cfg, name, root):
             "model_line": ("designed with model: %s" % model_used) if model_used else "",
             "support_label": support_label,
             "levels": levels, "stats": stats,
-            "demand_src": ("demands: design/member_schedule.csv (governing combos)" if dem
-                           else "no member_schedule.csv found — run the design pipeline"),
-            "caveat": ("Demands are the pipeline's governing-combo envelopes from "
-                       "design/member_schedule.csv; D/C here is a screening check (AISC 360 E3 "
-                       "with K=1, phi*Mp bending with no LTB reduction, H1 interaction). "
-                       "The calc package is the check of record. North = +Y (report convention). "
+            "demand_src": ("D/C: governing check of each member's design record in the calc package"
+                           if pdc else "member D/C: see the calc package"),
+            "caveat": ("Member forces are the governing-combination envelopes of the analysis. The D/C shown "
+                       "for a member is the governing D/C of its design record in the calc package (records "
+                       "group members by role and section). North = +Y (report convention). "
                        "Drag = orbit, scroll = zoom, right-drag = pan, click a member for details."),
         },
         "nodes": {str(t): [round(c, 1) for c in coords[t]] for t in used},

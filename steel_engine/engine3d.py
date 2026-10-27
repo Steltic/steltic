@@ -3024,8 +3024,13 @@ def export_model(cfg, outdir, name="model", transf="PDelta"):
           'Auto-generated from the design cfg; rebuilds the EXACT analysis model.',
           'Run:  python model_opensees.py   (prints node/element counts + modal periods)."""',
           'import math', 'import openseespy.opensees as ops', '']
+    # The model is what the commands after the LAST wipe() build: a custom_build runs twice here (the probe build
+    # in build(), then the real one -- HR-38), and replaying both made a script whose second model had no
+    # geomTransf (the dedupe below had dropped the second registration of each tag), so `python model_opensees.py`
+    # stopped at its first element after the wipe.
+    last = max([n for n, (cmd, _) in enumerate(rec) if cmd == "wipe"] or [0])
     _gt_seen = set()                                   # drop duplicate geomTransf(tag,...) registrations
-    for cmd, a in rec:                                 # (a custom_build may register the same tag twice)
+    for cmd, a in rec[last:]:                          # (a custom_build may register the same tag twice)
         if cmd == "geomTransf" and len(a) >= 2:
             if a[1] in _gt_seen: continue
             _gt_seen.add(a[1])

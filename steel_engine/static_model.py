@@ -281,8 +281,11 @@ def export_static_model(cfg, outdir, name="model", nseg=6):
           'gravity, so internal N / V / M are correct everywhere. Auto-generated; replays the exact',
           'build_static OpenSees calls.  Run:  python model_static.py"""',
           'import openseespy.opensees as ops', '']
+    # only the model the commands after the LAST wipe() build (see engine3d.export_model): an earlier, wiped model
+    # replayed first left the final one without its geomTransf registrations
+    last = max([n for n, (cmd, _) in enumerate(rec) if cmd == "wipe"] or [0])
     _gt_seen = set()
-    for cmd, a in rec:
+    for cmd, a in rec[last:]:
         if cmd == "geomTransf" and len(a) >= 2:
             if a[1] in _gt_seen:
                 continue

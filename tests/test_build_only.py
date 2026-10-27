@@ -7,7 +7,9 @@ import copy
 import json
 import os
 import pathlib
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -351,6 +353,23 @@ def test_build_runs_the_hr_pipeline(built):
     assert calc["build_only"] and all(m.get("build_only") for m in calc["members"])
     assert all(m.get("DC") is None for m in calc["members"])     # never checked by HR
     assert RN.gate(job) == []
+
+
+@pytest.mark.parametrize("script", ["model_opensees.py", "model_static.py"])
+def test_the_exported_models_run_standalone(built, script):
+    """`python model_opensees.py` / `python model_static.py` rebuild the model on their own: the custom_build runs
+    twice (probe + real build), and only the final model is written -- replaying both left the second without its
+    geomTransf and the script stopped at its first element."""
+    job, res = built
+    src = (job / script).read_text()
+    assert src.count("ops.wipe()") == 1
+    p = subprocess.run([sys.executable, str(job / script)], capture_output=True, text=True, cwd=str(job), timeout=600)
+    assert p.returncode == 0, (p.stderr or p.stdout)[-2000:]
+    n_el = int(re.search(r"elements:\s*(\d+)", p.stdout).group(1))
+    assert n_el == src.count("ops.element(")
+    if script == "model_opensees.py":
+        T = [float(x) for x in re.findall(r"[\d.]+", p.stdout.split("periods T (s):")[1])]
+        assert T and abs(T[0] - res["summary"]["T"][0]) < 0.005 * res["summary"]["T"][0]
 
 
 def test_gate_refuses_an_edited_cfg(built):

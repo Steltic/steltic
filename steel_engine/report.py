@@ -848,6 +848,42 @@ def _term_txt(terms, which):
     return "; ".join(out) if out else "&mdash;"
 
 
+_DETAIL_LIMIT_RE = re.compile(
+    r"plate length within the beam's flat web depth|rotational ductility|plate within the coped web|"
+    r"within the (?:beam's )?flat web|\bL_?p\s*(?:/|<=|&le;|\u2264)\s*T\b|bracing spacing (?:ratio|limit)|"
+    r"dimensional limit|detailing limit", re.I)
+
+
+def _is_detailing_limit(k):
+    """A pass/fail dimensional or detailing limit (Lp <= T, the Part 10 single-plate ductility thickness, a bracing
+    spacing limit): printed as a limit, never as the governing strength D/C (October 2026 review, H12)."""
+    return isinstance(k, dict) and (bool(k.get("detailing_limit")) or
+                                    bool(_DETAIL_LIMIT_RE.search(str(k.get("limit_state", "")))))
+
+
+def _governing_dc(rec, C=None):
+    """(governing D/C, governing check or None, detailing limits present) of a member or connection record. The
+    headline is the worst strength check; a recorded headline that only equals a detailing-limit ratio is set aside
+    for the worst strength check, so a fit ratio never heads a record, a table or the scorecard."""
+    C = C or _consistency_mod()
+    if C is None:
+        return (rec.get("DC") if isinstance(rec.get("DC"), (int, float)) else None), None, False
+    chks = [k for k in (rec.get("checks") or []) if isinstance(k, dict)]
+    top = C._dc_num(rec.get("DC"))
+    st = [(C._dc_num(k.get("DC")), k) for k in chks if not _is_detailing_limit(k)]
+    st = [t for t in st if t[0] is not None]
+    lim = [C._dc_num(k.get("DC")) for k in chks if _is_detailing_limit(k)]
+    lim = [x for x in lim if x is not None]
+    best = max(st, key=lambda t: t[0]) if st else (None, None)
+    if best[0] is None:
+        return (top if top is not None else (max(lim) if lim else None)), None, bool(lim)
+    if top is None or top <= best[0] + 1e-9:
+        return best[0], best[1], bool(lim)
+    if lim and any(abs(top - x) <= 1e-3 for x in lim) and max(lim) <= 1.0 + 1e-9:
+        return best[0], best[1], True                 # the recorded headline is a detailing-limit ratio
+    return top, None, bool(lim)
+
+
 def _checks_table(chks, C=None, member=True, waived=None):
     """The entry's own limit-state checks: limit state | reference | demand | capacity | D/C | printed
     demand / printed capacity | status. The recomputed ratio is shown wherever the check prints its demand
@@ -870,6 +906,13 @@ def _checks_table(chks, C=None, member=True, waived=None):
         if rec is not None and dc is not None and C is not None:
             bad = not C._close(rec, dc)
         st = ("<b class='ng'>NG / reconcile</b>" if bad else _dc_status(dc, waived=waived))
+        if _is_detailing_limit(k) and not bad:        # a dimensional limit: the ratio shows the fit, not a strength D/C
+            ok = dc is None or dc <= 1.0 + 1e-9
+            rows.append([_n(k.get("limit_state", k.get("name", ""))), _n(k.get("cited", "")),
+                         _term_txt(terms, "dem"), _term_txt(terms, "cap"), "limit",
+                         (_n(rec if rec is not None else dc, dc=True) if (rec is not None or dc is not None) else "&mdash;"),
+                         "limit met" if ok else "<b class='ng'>limit exceeded</b>"])
+            continue
         rows.append([_n(k.get("limit_state", k.get("name", ""))), _n(k.get("cited", "")),
                      _term_txt(terms, "dem"), _term_txt(terms, "cap"),
                      (_n(dc, dc=True) if dc is not None else _n(k.get("DC"))),
@@ -1021,6 +1064,10 @@ def _member_calc_block(m, a341=None):
         h.append(_checks_table(chks, C, waived=m.get("waived")))
     issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
     dcv = C._dc_num(dc) if C else (dc if isinstance(dc, (int, float)) else None)
+    if C and chks:
+        _g, _gk, _gl = _governing_dc(m, C)
+        if _g is not None and dcv is not None and _g < dcv - 1e-9 and _gk is not None:
+            dcv, ls = _g, _gk.get("limit_state")       # the headline was a dimensional limit: name the strength check
     if dcv is not None or dc is not None or ls:
         h.append("<p><b>Governing D/C = %s &mdash; %s</b>%s%s</p>"
                  % ((_n(dcv, dc=True) if dcv is not None else _n(dc)), _dc_status(dcv, issues, m.get("waived")),
@@ -1056,11 +1103,11 @@ def _connection_block(c, cid=None):
     if isinstance(chks, list) and chks:
         h.append(_checks_table(chks, C, member=False, waived=c.get("waived")))
     issues = C._entry_issues("connection", c) if C else []
-    top = C._dc_num(c.get("DC")) if C else None
-    dcs = [x for x in ([top] + [C._dc_num(k.get("DC")) for k in (chks or []) if isinstance(k, dict)]
-                       if C else []) if x is not None]
-    if dcs:
-        h.append("<p><b>Governing D/C = %s &mdash; %s</b></p>" % (_n(max(dcs), dc=True), _dc_status(max(dcs), issues, c.get("waived"))))
+    gdc, _gk, glim = _governing_dc(c, C) if C else (None, None, False)
+    if gdc is not None:
+        h.append("<p><b>Governing D/C = %s &mdash; %s</b>%s</p>"
+                 % (_n(gdc, dc=True), _dc_status(gdc, issues, c.get("waived")),
+                    " (dimensional limits listed above as limits)" if glim else ""))
     elif not chks:
         h.append("<p class='note'>Limit-state checks and D/C: not recorded in the calc package for this connection.</p>")
     if c.get("design_note"):
@@ -1489,11 +1536,7 @@ def _member_rows(members):
     rows = []
     for m in members:
         inp = m.get("inputs", {}) or {}
-        dcv = C._dc_num(m.get("DC")) if C else (m.get("DC") if isinstance(m.get("DC"), (int, float)) else None)
-        if dcv is None and C and isinstance(m.get("checks"), list):
-            dd = [C._dc_num(k.get("DC")) for k in m["checks"] if isinstance(k, dict)]
-            dd = [x for x in dd if x is not None]
-            dcv = max(dd) if dd else None
+        dcv = _governing_dc(m, C)[0] if C else (m.get("DC") if isinstance(m.get("DC"), (int, float)) else None)
         issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
         mid = str(m.get("id", ""))
         rows.append(["<a href='#m-%s'>%s</a>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", mid)), _esc(mid)),
@@ -3391,7 +3434,10 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
                        "%.3f" % float(q.get("drift_scale", 1.0)), "%.0f%%" % (100.0 * float(q.get("mass", 0) or 0)),
                        _n(q.get("nmodes"))])
         mr = ("<h4>Modal response spectrum analysis (&sect;12.9.1)</h4>"
-              "<p>CQC combination, 5%% damping. Forces are scaled to the ELF base shear where V<sub>t</sub> &lt; V "
+              "<p>Design response spectrum: the two-period spectrum of &sect;11.4.5.2 (Fig. 11.4-1) from S<sub>DS</sub>, "
+              "S<sub>D1</sub> and T<sub>L</sub> of the design criteria, as &sect;11.4.5 Exception 2 permits where the "
+              "multi-period MCE<sub>R</sub> spectrum of &sect;11.4.5.1 is not available for the site. "
+              "CQC combination, 5%% damping. Forces are scaled to the ELF base shear where V<sub>t</sub> &lt; V "
               "(&sect;12.9.1.4.1); drifts are scaled by C<sub>s</sub>W/V<sub>t</sub> only where C<sub>s</sub> is set by "
               "Eq. 12.8-7 (&sect;12.9.1.4.2). Member demands use the %s.</p>"
               % ("story-shear envelope of the ELF and the scaled MRSA (never below either in any story)"
@@ -4771,19 +4817,18 @@ def _connection_summary(pkg):
         chks = [k for k in (c.get("checks") or []) if isinstance(k, dict)]
         ls, dc = c.get("limit_state"), (C._dc_num(c.get("DC")) if C else None)
         if chks and C:
-            best = max(((C._dc_num(k.get("DC")), k) for k in chks if C._dc_num(k.get("DC")) is not None),
-                       key=lambda t: t[0], default=(None, None))
-            if best[0] is not None and (dc is None or best[0] >= dc - 1e-9):
-                # the governing check names the row; the record's own summary may already list every check, and
-                # "(+n more checks)" then counts the others
-                dc = max(best[0], dc or 0.0)
-                ls = best[1].get("limit_state")
+            # the governing strength check names the row (dimensional limits never head it); "(+n more checks)"
+            # then counts the others
+            dc, gk, _l = _governing_dc(c, C)
+            if gk is not None:
+                ls = gk.get("limit_state")
         issues = C._entry_issues("connection", c) if C else []
         cid = str(c.get("id", ""))
         rows.append(["<a href='#c-%s'>%s</a>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", cid)), _esc(cid)),
                      _n(c.get("type", "")),
                      _fmt(c.get("demand")) if isinstance(c.get("demand"), dict) else _n(c.get("demand")),
-                     (_n(ls) + (" (+%d more checks)" % (len(chks) - 1) if len(chks) > 1 else "")) if ls else "&mdash;",
+                     (_n(ls) + (" (+%d more check%s)" % (len(chks) - 1, "s" if len(chks) > 2 else "")
+                                if len(chks) > 1 else "")) if ls else "&mdash;",
                      _n(dc, dc=True) if dc is not None else "&mdash;",
                      _dc_status(dc, issues, c.get("waived")) if (dc is not None or issues) else "not recorded"])
     return ("<h3>Designed connections</h3><p>Each connection type is designed in this package; its components and every "
@@ -4837,7 +4882,8 @@ def _base_reactions_section(cfg, pkg, ctx=None):
         hdr += ["M max (kip-ft)", "combination"]
     tail = ("<p class='cnote'>Base grid labels (i, j) as in the plan figure of Chapter 1. Reactions are factored "
             "(LRFD); the foundation and geotechnical design (bearing, sliding, uplift anchorage, footing sizing) is by "
-            "others. Overall overturning and sliding stability are confirmed against the geotechnical capacities.</p>")
+            "others. Overall overturning and sliding stability are to be confirmed by the foundation engineer with these "
+            "reactions.</p>")
     more = ("<p class='cnote'>%d further bases (no uplift, lower compression) are retained in the calc package.</p>"
             % (len(order) - 60)) if len(order) > 60 else ""
     return "".join(head) + _table(hdr, rows) + more + _base_design_records_note(pkg) + tail
@@ -4966,9 +5012,7 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
             continue
         dcs = []; exist = []
         for m in ents:
-            vals = [C._dc_num(m.get("DC"))] + [C._dc_num(k.get("DC")) for k in (m.get("checks") or []) if isinstance(k, dict)]
-            vals = [v for v in vals if v is not None]
-            dv = max(vals) if vals else None
+            dv = _governing_dc(m, C)[0]
             if dv is not None and dv > 1.0 + 1e-9 and m.get("waived"):
                 exist.append((dv, m.get("id")))        # existing member carried as a retrofit-scope item
                 continue

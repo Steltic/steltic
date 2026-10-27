@@ -552,6 +552,24 @@ def test_e2k_etabs9_dialect_loads_decks_and_general_grids(tmp_path):
     assert "64.8 slab/deck" in e["_proposals"]["loads/D_psf"]["reason"]
 
 
+def test_e2k_etabs9_seismic_lines_under_static_loads(tmp_path):
+    """ETABS 9 writes the auto-seismic parameters under STATIC LOADS (IBC 2003 / IBC 2006 patterns, as the CSI
+    training models do): the mapped S1, TL and the site class are read there; SDS / SD1 (ETABS derives them from Ss
+    and the site coefficients) are not invented."""
+    t = _v9().replace('  LOADCASE "SDEAD"  TYPE  "SUPERDEAD"  SELFWEIGHT  0',
+                      '  LOADCASE "SDEAD"  TYPE  "SUPERDEAD"  SELFWEIGHT  0\n'
+                      '  LOADCASE "EQX"  TYPE  "QUAKE"  SELFWEIGHT  0\n'
+                      '  SEISMIC "EQX"  "IBC2006"    DIR "X"  TOPSTORY "STORY2"    BOTTOMSTORY "BASE"   PERIODTYPE "PROGCALC"   '
+                      'CT 0.028  SITECLASS "D"  Ss 1.5  S1 0.5  TL 8  R 8  OMEGA 3  CD 5.5  I 1.5\n'
+                      '  LOADCASE "WX"  TYPE  "WIND"  SELFWEIGHT  0\n'
+                      '  WIND "WX"  "ASCE7-05"  ANG 0  WINDWARD 0.8  LEEWARD 0.5  SPEED 110  EXPOSURE "C"')
+    p = tmp_path / "v9.e2k"
+    p.write_text(t)
+    se = E2K.read_e2k(p)["seismic"]
+    assert se["S1"] == 0.5 and se["TL"] == 8.0 and se["site_class"] == "D"
+    assert "SDS" not in se and "SD1" not in se
+
+
 def test_e2k_floor_without_loads_is_asked_not_proposed_as_zero(tmp_path):
     p = tmp_path / "v9.e2k"
     p.write_text(_v9(loads=False).replace('SECTION "DECK1"', 'SECTION "NONE"'))

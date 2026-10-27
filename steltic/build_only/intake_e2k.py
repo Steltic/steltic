@@ -131,8 +131,9 @@ def parse(text: str) -> dict:
             R["area_assign"].setdefault((t[1], t[2]), {}).update(_kv(t, 3))
         elif (sec == "LOAD PATTERNS" and key == "LOADPATTERN") or (sec == "STATIC LOADS" and key == "LOADCASE"):
             R["loadpat"][t[1]] = _kv(t, 2)
-        elif sec == "LOAD PATTERNS" and key in ("SEISMIC", "AUTOSEISMIC", "SEISMICLOAD") or (sec == "LOAD PATTERNS" and "ASCE" in line.upper()):
-            R["seismic"].append(t)
+        elif (sec in ("LOAD PATTERNS", "STATIC LOADS") and key in ("SEISMIC", "AUTOSEISMIC", "SEISMICLOAD")) or \
+                (sec == "LOAD PATTERNS" and "ASCE" in line.upper()):
+            R["seismic"].append(t)                                # ETABS 9 writes the SEISMIC lines under STATIC LOADS
         elif sec == "SHELL UNIFORM LOAD SETS" and key == "SHELLUNIFORMLOADSET":
             kv = _kv(t, 2)
             R["loadsets"].setdefault(t[1], {})[kv.get("LOADPAT")] = _f(kv.get("VALUE"), 0.0)

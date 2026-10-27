@@ -2820,6 +2820,20 @@ def wind_detail(cfg, direction):
     LB = Lw/Bw if Bw > 0 else 1.0
     cpl = _cp_leeward(LB)
     hL = h/Lw if Lw > 0 else 0.25
+    # leeward Cp per height (Fig. 27.3-1 with L/B of the building at that height): over a podium or below a setback the
+    # plan that reaches a wall band sets its L/B, so a tower above a podium takes the tower's own L/B
+    _cpl_cache = {}
+    def cpl_at(zm):
+        bz = tuple(sorted(b for b, sk in st.items() if z[sk[-1][0]] >= zm - 1e-6))
+        if not bz:
+            return cpl
+        if bz not in _cpl_cache:
+            xs_ = [xedge(i) for i, j in bz] + [xedge(i+1) for i, j in bz]
+            ys_ = [yedge(j) for i, j in bz] + [yedge(j+1) for i, j in bz]
+            Lx_, Ly_ = max(xs_)-min(xs_), max(ys_)-min(ys_)
+            Lw_, Bw_ = (Lx_, Ly_) if direction == "X" else (Ly_, Lx_)
+            _cpl_cache[bz] = _cp_leeward(Lw_/Bw_ if Bw_ > 0 else 1.0)
+        return _cpl_cache[bz]
     # ---- strips parallel to the wind, cells along the wind ----
     NX, NY = cfg["NX"], cfg["NY"]
     if direction == "X":
@@ -2872,7 +2886,7 @@ def wind_detail(cfg, direction):
                         if kk == 0: kk = sk[0][0] if lump else 0
                         if kk == 0:
                             Fb["walls"] += ((0.8*G*q0*(_kz_integral(zb, exp)-_kz_integral(za, exp))) if role == "w"
-                                            else -cpl*G*qh*(zb-za))*wd/1000.0
+                                            else -cpl_at(zm)*G*qh*(zb-za))*wd/1000.0
                             if role == "w": Fb["min"] += 16.0*(zb-za)*wd/1000.0
                             continue
                         if zm > T + 1e-9:                             # parapet band (Sec. 27.3.4)
@@ -2883,7 +2897,7 @@ def wind_detail(cfg, direction):
                             Fw[kk] += 0.8*G*q0*(_kz_integral(zb, exp)-_kz_integral(za, exp))*wd/1000.0
                             Amin[kk] += (zb-za)*wd
                         else:
-                            Fl[kk] += -cpl*G*qh*(zb-za)*wd/1000.0
+                            Fl[kk] += -cpl_at(zm)*G*qh*(zb-za)*wd/1000.0
             # gable roof surfaces, wind normal to the ridge (horizontal component on projected height)
             for kt in normal:
                 gr = gable[kt]

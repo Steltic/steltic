@@ -87,13 +87,15 @@ def test_split_level_wings_get_their_own_wall_heights():
 
 def test_split_level_silhouette_x_wind_envelopes_both_senses():
     """X wind across the step: from -X wing A is windward over its full height and wing B's east wall is
-    leeward up to 20 ft; from +X the roles swap. Each level takes the larger sense; L/B = 2 -> Cp = -0.3."""
+    leeward up to 20 ft; from +X the roles swap. Each level takes the larger sense. Below 20 ft both wings are
+    reached: L/B = 2 -> Cp = -0.3. Above 20 ft only wing A (60 x 60 ft) is: its own L/B = 1 -> Cp = -0.5 (leeward Cp
+    per height, October 2026 review: a tower over a podium takes the tower's own L/B)."""
     c = _split_cfg(); V = 115.0; G = 0.85; qh = q(30, V); W = 60.0
     d = E.wind_detail(c, "X")
     assert d["Cp_leeward"] == pytest.approx(-0.3)
     L1 = max(0.8*G*iq(5, 20, V), 0.3*G*qh*15)*W/1000.0
     L2 = max(0.3*G*qh*10, 0.8*G*iq(10, 20, V))*W/1000.0
-    L3 = (0.8*G*iq(20, 30, V) + 0.3*G*qh*10)*W/1000.0
+    L3 = (0.8*G*iq(20, 30, V) + 0.5*G*qh*10)*W/1000.0
     for k, v in {1: L1, 2: L2, 3: L3}.items():
         assert d["F"][k] == pytest.approx(v, rel=2e-3), k
 

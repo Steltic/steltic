@@ -515,7 +515,7 @@ def _heights_txt(H):
 # ============================================================ analysis helpers
 def _seismic(cfg):
     NF = len(cfg["heights"])
-    T, w2, eX, eY, Mtot = E.modal(cfg, min(3*NF, 16))
+    T, w2, eX, eY, Mtot = E.modal(cfg, E._nm_default(NF))       # the mode count of every seismic routine
     # hr-seismic (HR-01/02): ELF per direction (own period + factors); this single-Fx helper takes the
     # direction with the larger base shear (conservative) until the report shows both (E.elf_dir)
     Cs, V, Tu, Ta, kk, Fx, W = max((E.elf_dir(cfg, d) for d in ("X", "Y")), key=lambda r: r[1])
@@ -1023,10 +1023,22 @@ def _member_calc_block(m, a341=None):
                     [[_v(x, sc) for _, x, sc in env] + [_combo_label(inp.get("governing_combo"))]]))
     llr = inp.get("live_load_reduction")
     if isinstance(llr, dict) and llr:
-        h.append("<p class='cnote'>Floor live load reduced per ASCE 7-22 &sect;4.7 (Eq. 4.7-1): L/L<sub>o</sub> = %s for "
-                 "the governing member (A<sub>T</sub> = %s ft<sup>2</sup>, K<sub>LL</sub> = %s); range in this group %s&ndash;%s.</p>"
-                 % (_n(llr.get("RF_governing_member")), _n(llr.get("AT_ft2_governing_member")), _n(llr.get("KLL")),
-                    _n(llr.get("RF_min")), _n(llr.get("RF_max"))))
+        def _lf(*ks):
+            for k_ in ks:
+                try:
+                    if llr.get(k_) is not None:
+                        return float(llr.get(k_))
+                except (TypeError, ValueError):
+                    pass
+            return None
+        rf, at = _lf("RF_governing_member", "RF"), _lf("AT_ft2_governing_member", "AT_ft2")
+        r0, r1 = _lf("RF_min"), _lf("RF_max")
+        if rf is not None and rf < 0.999 and (at or 0.0) > 0.0:       # a reduction is actually taken
+            h.append("<p class='cnote'>Floor live load reduced per ASCE 7-22 &sect;4.7 (Eq. 4.7-1): L/L<sub>o</sub> = %s "
+                     "for the governing member (A<sub>T</sub> = %s ft<sup>2</sup>, K<sub>LL</sub> = %s)%s.</p>"
+                     % (_n(rf), _n(at), _n(llr.get("KLL")),
+                        ("; range in this group %s&ndash;%s" % (_n(r0), _n(r1)))
+                        if (r0 is not None and r1 is not None and abs(r1 - r0) > 1e-3) else ""))
     cap = m.get("capacity"); dc = m.get("DC"); ls = m.get("limit_state"); cited = m.get("cited")
     chks = m.get("checks") if isinstance(m.get("checks"), list) else []
     if not ((isinstance(cap, dict) and cap) or dc is not None or ls or cited or chks):
@@ -1474,7 +1486,7 @@ def _horizontal_distribution(cfg, Fx, VwX, VwY, sf=None, runs=None):
          "demand toward the plane on the leading side).</p>"]
     rows = []
     for d, Vw, F in (("X", VwX, FxX), ("Y", VwY, FxY)):
-        Vs = sum(F.values()); gov = "seismic" if Vs >= (Vw or 0) else "wind"
+        Vs = sum(F.values()); gov = "seismic" if _rho_of(cfg, d) * Vs >= (Vw or 0) else "wind"
         shares = (runs or {}).get(d, {}).get("share") or {}
         ax = "y" if d == "X" else "x"
         if shares:
@@ -1490,12 +1502,46 @@ def _horizontal_distribution(cfg, Fx, VwX, VwY, sf=None, runs=None):
     h.append(_table(["Direction", "System", "Lateral planes (model)", "Wind base (kip)", "Seismic base (kip)",
                      "Governs", "Base-shear share by plane (solved model)"], rows))
     if any("other columns<sup>a</sup>" in r[-1] for r in rows):
-        h.append("<p class='cnote'><sup>a</sup> Shear in the columns outside the lateral planes: the second-order "
-                 "(P-&Delta;) shear of the gravity columns, which lean on the lateral system; a negative share means the "
-                 "planes carry slightly more than the applied story force.</p>")
+        h.append("<p class='cnote'><sup>a</sup> Shear in the columns outside the lateral planes: the cantilever action of "
+                 "columns with fixed bases or continuity (including weak-axis bending of perimeter columns) and the "
+                 "second-order (P-&Delta;) shear of the gravity columns that lean on the lateral system; a negative share "
+                 "means the planes carry slightly more than the applied story force.</p>")
     for w in sf.get("warnings", []):
         h.append("<p class='note'>%s</p>" % _n(w))
     return "".join(h)
+
+def _rho_of(cfg, d):
+    """Redundancy factor of direction d (cfg rho_X / rho_Y / rho, as the engine resolves it)."""
+    try:
+        return float(E.seis_dir(cfg, d).get("rho") or 1.0)
+    except Exception:
+        try:
+            return float(cfg.get("rho_" + d) or cfg.get("rho") or 1.0)
+        except (TypeError, ValueError):
+            return 1.0
+
+
+def _specified_camber(cfg, pkg, sec):
+    """Camber (in.) specified for a section: cfg composite_floor camber_in, or a member record's composite camber."""
+    vals = []
+    try:
+        cmb = ((cfg or {}).get("composite_floor") or {}).get("camber_in") or {}
+        if cmb.get(sec) is not None:
+            vals.append(float(cmb.get(sec)))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    for m in ((pkg or {}).get("members") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(m, dict) or str((m.get("inputs") or {}).get("section") or "") != str(sec):
+            continue
+        for src in (m.get("composite") or {}, m.get("camber") if isinstance(m.get("camber"), dict) else {}):
+            try:
+                if isinstance(src, dict) and src.get("camber_in") is not None:
+                    vals.append(float(src.get("camber_in")))
+            except (TypeError, ValueError):
+                pass
+    v = max(vals) if vals else 0.0
+    return v if v >= 0.25 else 0.0
+
 
 def _role_of(mid, inp):
     r = (inp.get("role") or "").lower().strip().replace(" ", "_")
@@ -1503,12 +1549,13 @@ def _role_of(mid, inp):
               "gravity_col": "gravity_col", "interior_col": "gravity_col", "interior_column": "gravity_col",
               "gravity_column": "gravity_col", "lateral_col": "lateral_col", "mf_col": "lateral_col",
               "moment_col": "lateral_col", "braced_col": "lateral_col", "lateral_column": "lateral_col",
-              "brace": "brace"}
+              "brace": "brace", "collector": "floor", "drag": "floor", "drag_strut": "floor", "chord": "floor"}
     if r in _alias: return _alias[r]
     s = (mid or "").lower()
     if "roof" in s: return "roof"
     if "brace" in s or inp.get("kind") == "brace": return "brace"
-    if "col" in s or inp.get("kind") == "col":
+    if "collector" in s or "drag" in s: return "floor"             # a collector is a beam, never a column
+    if re.search(r"(?:^|[-_ ])col(?:[-_ ]|$)|column", s) or inp.get("kind") == "col":
         return "gravity_col" if ("grav" in s or "interior" in s) else "lateral_col"
     if "floor" in s or "beam" in s or inp.get("kind") == "beam": return "floor"
     return "other"
@@ -2222,8 +2269,7 @@ def _lateral_runs(cfg, Fx, sf=None):
             ops.reactions(); di = 1 if d == "X" else 2; tot = 0.0
             planes = sorted((sf or {}).get("lines", {}).get(d, {}) or {})
             for n in ops.getFixedNodes():
-                c = ops.nodeCoord(n)
-                if abs(c[2]) > 1.0: continue
+                c = ops.nodeCoord(n)                      # every support, whatever its elevation (hillside footings)
                 rx = ops.nodeReaction(n, di); tot += rx
                 pos = c[1] if d == "X" else c[0]
                 p = next((pp for pp in planes if abs(pp - pos) <= 12.0), None)
@@ -2867,7 +2913,7 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None, basis=None):
             if dia else "The deck diaphragm itself (deck shear and fasteners) is designed by the deck supplier for these "
                         "forces and confirmed on the drawings.")
     tail = ("<p class='cnote'>Collector members are designed in Chapter 6 (%s). %s</p>"
-            % (", ".join(_esc(c) for c in coll[:6]), deck) if coll else
+            % (", ".join(_esc(c) for c in coll), deck) if coll else
             "<p class='cnote'>F<sub>px</sub> (and the wind story forces where larger) are the diaphragm, collector and "
             "chord design forces. %s</p>" % deck)
     return just + tbl + tail
@@ -3280,8 +3326,8 @@ def _gravity_loads_note(cfg=None, pkg=None):
     else:
         rtxt += (" The design criteria contain no snow load (snow basis in the load table above), so no snow drift, "
                  "unbalanced or sliding snow is carried.")
-    if not _has_r:
-        rtxt += " Ponding is addressed under the rain basis."
+    if not _has_r and cfg.get("rain_basis"):
+        rtxt += " Rain and ponding: see the rain basis in the load table above."
     return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
             "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
 
@@ -3480,13 +3526,16 @@ def _governing_lateral(cfg, V, VwX, VwY, SD=None):
         return "<p class='note'>[seismic base shear unavailable]</p>"
     rows = []
     for d, lab, Vw in (("X", "X (E-W)", VwX), ("Y", "Y (N-S)", VwY)):
+        rho = _rho_of(cfg, d)
+        vtxt = _n(Vd[d]) + (" (&rho;V = %s)" % _n(rho * Vd[d]) if abs(rho - 1.0) > 1e-9 else "")
         if Vw is None:
-            rows.append([lab, _n(Vd[d]), "&mdash; (no wind defined)", "<b>Seismic</b>"])
+            rows.append([lab, vtxt, "&mdash; (no wind defined)", "<b>Seismic</b>"])
         else:
-            rows.append([lab, _n(Vd[d]), _n(Vw), "<b>%s</b>" % ("Seismic" if Vd[d] >= Vw else "Wind")])
+            rows.append([lab, vtxt, _n(Vw), "<b>%s</b>" % ("Seismic" if rho * Vd[d] >= Vw else "Wind")])
     note = ("<p class='cnote'>Strength-level base-shear comparison (E and W are both strength-level loads in the ASCE "
-            "7-22 LRFD combinations). Both hazards are carried through the load combinations (Chapter 4); the member "
-            "design forces are the envelope of all combinations.</p>")
+            "7-22 LRFD combinations; the seismic load effect is &rho;Q<sub>E</sub>, so &rho;V is compared with the wind "
+            "V). Both hazards are carried through the load combinations (Chapter 4); the member design forces are the "
+            "envelope of all combinations.</p>")
     return _table(["Direction", "Seismic V (kip)", "Wind V, Case 1 (kip)", "Governs base shear"], rows) + note
 
 
@@ -4418,8 +4467,11 @@ def _uplift_summary(pkg):
     if plate:
         parts.append("the anchor rods of the exposed base plates")
     if emb:
-        parts.append("the embedment of the embedded column bases (headed studs or end plate with the foundation's anchor "
-                     "reinforcement)")
+        _et = " ".join(json.dumps(c, default=str).lower() for c in up_recs if "embedded" in str(c.get("type") or "").lower())
+        _st, _ep = "stud" in _et, "end plate" in _et
+        _how = ("headed studs and end plate" if (_st and _ep) else "headed studs" if _st else "end plate" if _ep
+                else "embedment")
+        parts.append("the embedment of the embedded column bases (%s with the foundation's anchor reinforcement)" % _how)
     if exist:
         parts.append("the existing column bases and footings, whose capacity is established by the evaluation (the base "
                      "records give the required strengths)")
@@ -4765,6 +4817,8 @@ def _base_record_row(c, a341=False):
         bits.append("P = %s kip" % _n(_f("P_comp_kip")) + (" [%s]" % _combo_label(d.get("P_comp_combo")) if d.get("P_comp_combo") else ""))
     if (_f("uplift_kip") or 0.0) > 0.05:
         bits.append("net uplift = %s kip" % _n(_f("uplift_kip")) + (" [%s]" % _combo_label(d.get("uplift_combo")) if d.get("uplift_combo") else ""))
+    if (_f("T_design_kip") or 0.0) > max(0.05, 1.005 * (_f("uplift_kip") or 0.0)):
+        bits.append("design tension %s kip (AISC 341-22 D2.6a)" % _n(_f("T_design_kip")))
     v = _f("V_kip")
     if v is None and (_f("Vx_kip") is not None or _f("Vy_kip") is not None):
         v = max(_f("Vx_kip") or 0.0, _f("Vy_kip") or 0.0)
@@ -4929,10 +4983,14 @@ def _base_design_records_note(pkg):
                      " / ".join(ax) or "&mdash;", _esc(ff) if ff else "&mdash;"])
     if not rows:
         return ""
+    _a341 = any(re.search(r"341", json.dumps(c, default=str)) for c in ((pkg or {}).get("connections") or [])
+                if isinstance(c, dict) and str(c.get("id", "")).lower().startswith("conn-base"))
     return ("<p>Design forces of the column-base records for the foundation and anchorage design, where they exceed the "
-            "analysis reactions above: the AISC 341-22 D2.6b base shear, the D2.6c base moment (the base and its attachment "
-            "to the foundation are designed for it), the design axial forces, and the forces each record hands to the "
-            "foundation (the Appendix A records give the derivations):</p>"
+            "analysis reactions above: "
+            + ("the AISC 341-22 D2.6b base shear, the D2.6c base moment (the base and its attachment to the foundation are "
+               "designed for it), " if _a341 else "the design shear and moment of each base record, ")
+            + "the design axial forces, and the forces each record hands to the foundation (the Appendix A records give "
+            "the derivations):</p>"
             + _table(["Base design record", "Column", "Bases", "Design shear, strong / weak axis (kip)",
                       "Design moment, strong / weak axis (kip-ft)", "Design axial (kip)", "Forces on the foundation"], rows))
 
@@ -5025,7 +5083,8 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
                 what.lower(), ", ".join("%s %s" % (_esc(i), _n(v, dc=True)) for v, i in sorted(exist, reverse=True)[:6]))
                 if exist else "")
             rows.append(["%s D/C &le; 1.0 (%d of %d %ss with a D/C%s)" % (what, len(have), len(dcs), what.lower(),
-                                                                         ", new / altered" if exist else ""),
+                                                                         "; existing %ss over capacity listed separately"
+                                                                         % what.lower() if exist else ""),
                          "max %s (%s)%s" % (_n(dmax, dc=True), _esc(idm), ex_txt),
                          ("PASS" if dmax <= 1.0 + 1e-9 and not miss else ("FAIL" if dmax > 1.0 + 1e-9 else "INCOMPLETE"))
                          + ("; existing: retrofit scope" if exist else "")])
@@ -5263,13 +5322,20 @@ def _deflection_section(cfg, pkg=None):
         return sorted(g, key=lambda x: -max(x["rLL"], x["rTL"]))
     for roof, lbl in ((False, "Floor"), (True, "Roof")):
         lst = pick(roof)
-        show = [x for x in lst if max(x["rLL"], x["rTL"]) >= 1.0] or lst[:1]
+        show = [x for x in lst if max(x["rLL"], x["rTL"]) >= 1.0]
+        if not show and lst:                       # the groups behind the worst live and the worst total ratio
+            show = [lst[0]]
+            for key in ("rLL", "rTL"):
+                g_ = max(lst, key=lambda x: x[key])
+                if g_ not in show:
+                    show.append(g_)
         uniq, cnt = [], []
         for x in show:
             L = x["L"]; dD = max(x["dTL"] - x["dLL"], 0.0)
             camber = round(0.8 * dD * 4) / 4
             camber = camber if camber >= 0.75 - 1e-9 else 0.0       # no camber below 3/4 in. is suggested
-            if camber > 0:
+            spec_c = _specified_camber(cfg, pkg, x["sec"])
+            if camber > 0 and not spec_c:
                 sugg.append((lbl.lower(), x["sec"], L, dD, camber))
             r = [_esc(x["sec"]), _ftin(L),
                  (_ftin(x['trib']) if x.get("trib") is not None else "solved model"),
@@ -5277,7 +5343,8 @@ def _deflection_section(cfg, pkg=None):
                  "%s (L/%d)" % (_n(x["rLL"], nd=2), int(x.get("limL", 360))), "%s in." % _n(x['dTL'], nd=2),
                  "%s (L/%d)" % (_n(x["rTL"], nd=2), int(x.get("limT", 240))),
                  "OK" if max(x["rLL"], x["rTL"]) < 1.0 else ("see justification" if _just0 else "<b class='ng'>NG</b>"),
-                 ("%s in." % _n(camber, nd=2)) if camber > 0 else "none"]
+                 ("none (%s in. specified)" % _n(spec_c, nd=2)) if spec_c else
+                 (("%s in." % _n(camber, nd=2)) if camber > 0 else "none")]
             if r in uniq:
                 cnt[uniq.index(r)] += 1
             else:
@@ -5446,7 +5513,8 @@ def _consistency_section(name, root, pkg):
             "seismic factors against the declared system, drift-limit vs Risk Category, and the guards for the "
             "conditions this building has (single-plate eccentricity, base-reaction envelope, composite floor, floor "
             "vibration, discontinuities with overstrength).</li>"
-            "<li><b>Supplementary analyses</b> &mdash; module verdicts recorded in the package (listed below).</li></ol>"
+            + ("<li><b>Supplementary analyses</b> &mdash; module verdicts recorded in the package (listed below).</li>"
+               if mods else "") + "</ol>"
             "<p class='cnote'>Not covered by these checks (left to the checking engineer): the choice of limit states and the code equations inside each "
             "capacity (spot-check Appendix A), drawings and specifications (Chapter 12), and engineering judgement.</p>")
     mtxt = ""
@@ -5734,7 +5802,7 @@ def _base_shear_otm_table(cfg, SD, wind):
         Fw = (wind or {}).get(d) or {}
         Vs, Ms = sum(Fs.values()), otm(Fs)
         Vw, Mw = (sum(Fw.values()), otm(Fw)) if Fw else (None, None)
-        gov = "seismic" if Vw is None or Vs >= Vw else "wind"
+        gov = "seismic" if Vw is None or _rho_of(cfg, d) * Vs >= Vw else "wind"
         rows.append([d, _n(Vs), _n(Ms), _n(Vw) if Vw is not None else "&mdash;", _n(Mw) if Mw is not None else "&mdash;",
                      "<b>%s</b>" % gov])
     return _table(["Direction", "Seismic V (kip)", "Seismic base OTM (kip-ft)", "Wind V (kip)",

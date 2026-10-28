@@ -902,6 +902,10 @@ def _checks_table(chks, C=None, member=True, waived=None):
             rec = C.h1_recompute(terms, txt)
         if rec is None and len(terms) == 1 and terms[0]["cap"] and (not inter or terms[0]["qty"] in ("*", "ratio")):
             rec = terms[0]["dem"] / terms[0]["cap"]
+        if rec is None and inter and len(terms) == 1 and terms[0]["cap"] and dc is not None and C is not None:
+            r1 = terms[0]["dem"] / terms[0]["cap"]     # a "+" or "combined" in the name, one demand/strength pair:
+            if C._close(r1, dc):                       # shown where it is the recorded D/C, never flagged
+                rec = r1
         bad = False
         if rec is not None and dc is not None and C is not None:
             bad = not C._close(rec, dc)
@@ -2924,7 +2928,10 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None, basis=None):
         dia = dia or ["diaphragm design record"]
     deck = ("The diaphragm itself (%s) is designed in the calculation package." % ", ".join(_esc(c) for c in dia[:6])
             if dia else "The deck diaphragm itself (deck shear and fasteners) is designed by the deck supplier for these "
-                        "forces and confirmed on the drawings.")
+                        "forces%s and confirmed on the drawings." % (
+                            ", with the 25%% increase of &sect;12.3.3.5 (%s) on the deck connections to the vertical "
+                            "elements and collectors"
+                            % "/".join(_QA.get("t12335")) if _QA.get("t12335") else ""))
     tail = ("<p class='cnote'>Collector members are designed in Chapter 6 (%s). %s</p>"
             % (", ".join(_esc(c) for c in coll), deck) if coll else
             "<p class='cnote'>F<sub>px</sub> (and the wind story forces where larger) are the diaphragm, collector and "
@@ -3249,6 +3256,7 @@ def _irregularity_section(cfg, runs, sf=None):
              % (sdc, "; declared drift-exempt split-level offsets are skipped" if exempt else "",
                 " Items marked NOT EVALUATED need data the analysis does not compute."
                 if any("NOT EVALUATED" in str(r[1]) for r in rows) else ""))
+    _QA["t12335"] = sorted(set(trig["12.3.3.5"])) if sdc in ("D", "E", "F") else []
     req = []
     if trig["12.3.3.4"]:
         req.append("&sect;12.3.3.4 (%s): members supporting the discontinuous frames, and their connections, are designed "

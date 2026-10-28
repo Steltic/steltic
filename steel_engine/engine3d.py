@@ -2925,7 +2925,7 @@ def wind_detail(cfg, direction):
     Fbase = max(res[+1]["base_direct"], res[-1]["base_direct"])
     return dict(F=F, F_base_direct=Fbase, V_foundation=sum(F.values())+Fbase,
                 method="ASCE 7-22 Ch.27 directional", direction=direction, G=G, rigid=rigid,
-                n1=n1, n1_source=n1_src, Cp_windward=0.8, Cp_leeward=cpl, L_over_B=LB, L_ft=Lw, B_ft=Bw,
+                beta=None if rigid else float(w.get("beta", 0.01)), n1=n1, n1_source=n1_src, Cp_windward=0.8, Cp_leeward=cpl, L_over_B=LB, L_ft=Lw, B_ft=Bw,
                 Cp_leeward_tiers=sorted({(lb, cp) for lb, cp, _z in _cpl_tiers.values()}),
                 h_ft=h, qh_psf=qh/Kd, Kd=Kd, exposure=exp, governs=gov, senses={"+": res[+1], "-": res[-1]},
                 warnings=warns)

@@ -1433,7 +1433,9 @@ def _wind_section(cfg, cases=None):
             else:
                 stxt = _esc(src)
             return ("%s (flexible building, &sect;26.11.5: n<sub>1</sub> = %s Hz &lt; 1 Hz, %s; G<sub>f</sub> by "
-                    "Eq. 26.11-10)" % (_n(D["G"], nd=3), _n(D.get("n1"), nd=3), stxt))
+                    "Eq. 26.11-10%s)" % (_n(D["G"], nd=3), _n(D.get("n1"), nd=3), stxt,
+                                         (" with damping ratio &beta; = %s of critical" % _n(D["beta"], nd=3))
+                                         if D.get("beta") is not None else ""))
         h = ["<p>ASCE 7-22 Ch. 27 directional procedure (MWFRS). q<sub>z</sub> = 0.00256&middot;K<sub>z</sub>K<sub>zt</sub>"
              "K<sub>e</sub>V<sup>2</sup> (Eq. 26.10-1); p = q&middot;K<sub>d</sub>&middot;G&middot;C<sub>p</sub> (Eq. 27.3-1): "
              "windward walls C<sub>p</sub> = +0.8 with q<sub>z</sub> at each height, leeward walls C<sub>p</sub>(L/B) per "

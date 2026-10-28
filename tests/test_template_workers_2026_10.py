@@ -167,3 +167,20 @@ def test_ocbf_v_beam_cases_can_be_declared_absent():
     import design_pipeline as DP
     src = open(DP.__file__, encoding="utf-8").read()
     assert 'cfg.get("ocbf_v_beams", True) is not False' in src
+
+
+def test_web_strip_and_rod_members_state_their_basis():
+    for sec, txt in (("WEB3/16", "tension-field strips"), ("ROD1", "tension-only rod")):
+        m = {"id": "brace-" + sec, "section": sec, "inputs": {"kind": "brace", "section": sec, "length_in": 240.0},
+             "checks": [{"limit_state": "tension yielding", "cited": "AISC 360-22 D2", "Tu_kip": 10.0,
+                         "phiTn_kip": 20.0, "DC": 0.5}], "DC": 0.5}
+        html = R._member_calc_block(m)
+        assert txt in html and "not found in the AISC Shapes Database" not in html
+
+
+def test_deflection_tie_tags_each_ratio_once(monkeypatch):
+    g1 = dict(sec="W24X62", L=336.0, trib=None, roof=False, dLL=0.30, dTL=0.93, rLL=0.3330000000001, rTL=0.664)
+    g2 = dict(sec="W24X62", L=336.0, trib=None, roof=False, dLL=0.30, dTL=0.84, rLL=0.3330000000002, rTL=0.600)
+    monkeypatch.setattr(R.E, "beam_serviceability_detail", lambda cfg: {"groups": [g1, g2], "LL": 0.333, "TL": 0.664})
+    html = R._deflection_section({"heights": [168.0], "D_floor": 50.0})
+    assert html.count("worst live") == 1 + html.count("worst live ratio") and "W24X62 (worst total)" in html

@@ -985,7 +985,13 @@ def _member_calc_block(m, a341=None):
                 pr.append(("L<sub>c</sub>/r" if inp.get("Lc_in") else "L/r", _fx(float(lc) / float(r_use), 1)))
         except (TypeError, ValueError):
             pass
-        if r_gov is None and re.match(r"^\s*L\d", str(sec).upper()) and rr in (None, ""):
+        if r_gov is None and re.match(r"^\s*WEB", str(sec).upper()):
+            pr.append(("web plate", "tension-field strips (AISC 341-22 F5); the web's compression strength is "
+                                    "neglected, so no slenderness limit applies"))
+        elif r_gov is None and re.match(r"^\s*ROD", str(sec).upper()):
+            pr.append(("rod brace", "tension-only rod (AISC 360-22 D2, J3.6); compression is not relied on, so the "
+                                    "D1 slenderness recommendation does not apply"))
+        elif r_gov is None and re.match(r"^\s*L\d", str(sec).upper()) and rr in (None, ""):
             _e5 = any(re.search(r"\bE5\b", str(k.get("cited", "")) + " " + str(k.get("limit_state", "")))
                       for k in (m.get("checks") or []) if isinstance(k, dict))
             pr.append(("governing r", "single angle: slenderness by AISC 360-22 E5 (r<sub>x</sub> / r<sub>z</sub>), "
@@ -5386,10 +5392,9 @@ def _deflection_section(cfg, pkg=None):
                 if g_ not in show:
                     show.append(g_)
             if len(show) > 1:                      # say which group each row is, so like rows never read as repeats
-                for x in show:
-                    tags = [t for key, t in (("rLL", "worst live"), ("rTL", "worst total"))
-                            if x[key] >= max(y[key] for y in lst) - 1e-9]
-                    tag_of[id(x)] = ", ".join(tags)
+                for key, t in (("rLL", "worst live"), ("rTL", "worst total")):
+                    w_ = max(lst, key=lambda y: y[key])            # the group shown for this ratio (first maximum)
+                    tag_of[id(w_)] = (tag_of[id(w_)] + ", " + t) if id(w_) in tag_of else t
         uniq, cnt = [], []
         for x in show:
             L = x["L"]; dD = max(x["dTL"] - x["dLL"], 0.0)

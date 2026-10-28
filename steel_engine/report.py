@@ -985,7 +985,14 @@ def _member_calc_block(m, a341=None):
                 pr.append(("L<sub>c</sub>/r" if inp.get("Lc_in") else "L/r", _fx(float(lc) / float(r_use), 1)))
         except (TypeError, ValueError):
             pass
-        if r_gov is None and not str(sec).upper().startswith("BRB"):
+        if r_gov is None and re.match(r"^\s*L\d", str(sec).upper()) and rr in (None, ""):
+            _e5 = any(re.search(r"\bE5\b", str(k.get("cited", "")) + " " + str(k.get("limit_state", "")))
+                      for k in (m.get("checks") or []) if isinstance(k, dict))
+            pr.append(("governing r", "single angle: slenderness by AISC 360-22 E5 (r<sub>x</sub> / r<sub>z</sub>), "
+                                      "in the checks below" if _e5 else
+                                      "single angle: in the member checks below (r<sub>z</sub> governs flexural "
+                                      "buckling of an unrestrained single angle)"))
+        elif r_gov is None and not str(sec).upper().startswith("BRB"):
             pr.append(("governing r", "not found in the AISC Shapes Database"))
         elif r_gov is None:
             pr.append(("brace type", "buckling-restrained brace (manufacturer core; qualified by testing, AISC 341-22 F4 / K3)"))
@@ -4786,6 +4793,15 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                               _n(_bd.get("C_design_kip") if _bd.get("C_design_kip") is not None else Pc)))
                 basis = ("AISC 360-22 Ch. J for the joint record's design forces (transfer truss, elastic; ASCE 7-22 "
                          "&sect;12.3.3.4 overstrength); not an SCBF brace connection")
+            elif _bre and _bty and not re.search(r"\b(?:SCBF|OCBF|BRBF|EBF|SFRS)\b|brace[- ]to[- ]gusset|brace connection",
+                                                 _bty, re.I):
+                # a member grouped with the braces by element kind that is not an SFRS brace (plan bracing,
+                # equipment-support diagonals and ties): its own connection record governs
+                typ = _esc(re.split(r"[:;(]", _bty)[0].strip(" ,")) or "connection"
+                _bd = _bre.get("demand") if isinstance(_bre.get("demand"), dict) else {}
+                if isinstance(_bd.get("P_kip"), (int, float)):
+                    dem = "P = %s kip (design force of the connection record)" % _n(_bd["P_kip"])
+                basis = "AISC 360-22 Ch. J for the design forces of its connection record (not an SFRS brace connection)"
             elif not a341:
                 basis = "AISC 360-22 Ch. J / Ch. K for the analysis forces (Whitmore J4, block shear J4.3, welds J2)"
             else:
@@ -5461,7 +5477,8 @@ def _grounding_check(cfg, name, pkg):
     # the moment frames of a dual or mixed system; STMF/OMF/braced-only systems do not need it. An undeclared
     # system with fixed-ended (moment) beams is treated as needing it.
     _fams = (_sf or {}).get("families") or []
-    need358 = detailed and (any(f in ("SMF", "IMF") for f in _fams) or (("MF?" in _fams) if _sf else not E.is_braced(cfg)))
+    need358 = detailed and (any(f in ("SMF", "IMF", "SPSW") for f in _fams) or (("MF?" in _fams) if _sf else not E.is_braced(cfg))
+                            or bool(re.search(r"AISC[\s_-]*358", _ct)))
     has_conn = bool((pkg or {}).get("connections")); has_cap = bool((pkg or {}).get("capacity_design"))
     rows = []
     def row(item, required, ok, ev):
@@ -5475,7 +5492,7 @@ def _grounding_check(cfg, name, pkg):
         n("engineering_standards_A341") > 0 or has_cap or cite_a341,
         f"{n('engineering_standards_A341')} queries" + (" + capacity-design record" if has_cap else "")
         + (" + cited in calc_package" if cite_a341 else ""))
-    row("AISC 358 &mdash; prequalified moment connections (SMF/IMF, incl. dual/mixed)", need358,
+    row("AISC 358 &mdash; prequalified moment connections (SMF/IMF incl. dual/mixed; SPSW HBE-to-VBE, AISC 341-22 F5.6b)", need358,
         n("engineering_standards_A358") > 0 or cite_a358,
         f"{n('engineering_standards_A358')} queries" + (" + cited in calc_package" if cite_a358 else ""))
     nmiss = sum(1 for r in rows if "MISSING" in r[3])

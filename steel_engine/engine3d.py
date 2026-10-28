@@ -2822,7 +2822,7 @@ def wind_detail(cfg, direction):
     hL = h/Lw if Lw > 0 else 0.25
     # leeward Cp per height (Fig. 27.3-1 with L/B of the building at that height): over a podium or below a setback the
     # plan that reaches a wall band sets its L/B, so a tower above a podium takes the tower's own L/B
-    _cpl_cache = {}
+    _cpl_cache = {}; _cpl_tiers = {}
     def cpl_at(zm):
         bz = tuple(sorted(b for b, sk in st.items() if z[sk[-1][0]] >= zm - 1e-6))
         if not bz:
@@ -2833,6 +2833,7 @@ def wind_detail(cfg, direction):
             Lx_, Ly_ = max(xs_)-min(xs_), max(ys_)-min(ys_)
             Lw_, Bw_ = (Lx_, Ly_) if direction == "X" else (Ly_, Lx_)
             _cpl_cache[bz] = _cp_leeward(Lw_/Bw_ if Bw_ > 0 else 1.0)
+            _cpl_tiers[bz] = (round(Lw_/Bw_ if Bw_ > 0 else 1.0, 3), _cpl_cache[bz], round(zm/12.0, 1))
         return _cpl_cache[bz]
     # ---- strips parallel to the wind, cells along the wind ----
     NX, NY = cfg["NX"], cfg["NY"]
@@ -2925,6 +2926,7 @@ def wind_detail(cfg, direction):
     return dict(F=F, F_base_direct=Fbase, V_foundation=sum(F.values())+Fbase,
                 method="ASCE 7-22 Ch.27 directional", direction=direction, G=G, rigid=rigid,
                 n1=n1, n1_source=n1_src, Cp_windward=0.8, Cp_leeward=cpl, L_over_B=LB, L_ft=Lw, B_ft=Bw,
+                Cp_leeward_tiers=sorted({(lb, cp) for lb, cp, _z in _cpl_tiers.values()}),
                 h_ft=h, qh_psf=qh/Kd, Kd=Kd, exposure=exp, governs=gov, senses={"+": res[+1], "-": res[-1]},
                 warnings=warns)
 

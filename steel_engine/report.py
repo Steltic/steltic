@@ -1447,9 +1447,7 @@ def _wind_section(cfg, cases=None):
                     ["Mean roof height h", "%s ft" % _n(DX['h_ft'])],
                     ["Gust-effect factor, wind along X", g(DX)],
                     ["Gust-effect factor, wind along Y", g(DY)],
-                    ["L/B and leeward C<sub>p</sub> (X / Y)", "%s, %s / %s, %s" % (
-                        _n(DX['L_over_B'], nd=2), _n(DX['Cp_leeward'], nd=2), _n(DY['L_over_B'], nd=2),
-                        _n(DY['Cp_leeward'], nd=2))]]),
+                    ["L/B and leeward C<sub>p</sub> (X / Y)", "%s / %s" % (_lb_cp_txt(DX), _lb_cp_txt(DY))]]),
              "<p><b>Story wind forces, Case 1 (kip):</b></p>",
              _table(["Story", "X (E-W wind)", "Y (N-S wind)"], rows),
              f"<p><b>Wind base shear (frames):</b> X = {_n(VwX)} kip, Y = {_n(VwY)} kip "
@@ -1541,6 +1539,16 @@ def _specified_camber(cfg, pkg, sec):
                 pass
     v = max(vals) if vals else 0.0
     return v if v >= 0.25 else 0.0
+
+
+def _lb_cp_txt(D):
+    """'L/B, Cp' of the plan, and of each higher tier with its own L/B (leeward Cp per height, Fig. 27.3-1)."""
+    base = "%s, %s" % (_n(D.get("L_over_B"), nd=2), _n(D.get("Cp_leeward"), nd=2))
+    tiers = [(lb, cp) for lb, cp in (D.get("Cp_leeward_tiers") or [])
+             if abs(lb - float(D.get("L_over_B") or 0.0)) > 0.01]
+    if not tiers:
+        return base
+    return base + " (plan); " + "; ".join("%s, %s above a setback" % (_n(lb, nd=2), _n(cp, nd=2)) for lb, cp in tiers)
 
 
 def _role_of(mid, inp):
@@ -3508,7 +3516,7 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
         mr += _table(["Story", "ELF shear X (kip)", "scaled MRSA X (kip)", "design X (kip)", "ELF shear Y (kip)",
                       "scaled MRSA Y (kip)", "design Y (kip)"], srows)
     cumX = cumY = 0.0; mrows = []
-    for m in range(min(len(T), 12)):
+    for m in range(len(T)):                         # every mode the analysis uses, so the cumulative mass is the quoted one
         cumX += eX[m]; cumY += eY[m]
         mrows.append([m+1, "%.3f" % T[m], "%.1f" % (eX[m]*100), "%.1f" % (cumX*100), "%.1f" % (eY[m]*100), "%.1f" % (cumY*100)])
     mtab = ("<h4>Modal periods and mass participation (&ge; 90% per &sect;12.9.1.1)</h4>"
@@ -4079,7 +4087,10 @@ def _composite_section(pkg):
     if not cd and not rows:
         return ""
     scope = str((cd or {}).get("scope") or pkg.get("composite_scope") or "") if isinstance(cd, dict) else ""
-    not_relied = bool(re.search(r"not relied|bare[- ]steel|not used for strength|neglected", scope, re.I))
+    # "not relied upon" only where the scope says so and no member is designed composite (a roof-stud note such as
+    # "its strength is checked on the bare steel" must not disclaim the composite floor beams; R24c / R24d)
+    not_relied = bool(re.search(r"composite (?:action )?(?:is )?not relied|not relied upon|designed as bare[- ]steel|"
+                                r"not used for strength|composite action (?:is )?neglected", scope, re.I))
     parts.append("<h3>Composite floor design (AISC 360-22 Ch. I)</h3>")
     if rows:
         parts.append("<p>Per-member composite design values recorded in the calc package (partial-composite ratio, stud "
@@ -4092,7 +4103,7 @@ def _composite_section(pkg):
     numeric = bool(rows) or (isinstance(cd, dict) and any(
         isinstance(v, (int, float)) and not isinstance(v, bool) and v
         for k, v in cd.items() if re.search(r"stud|qn|composite|i_?lb|camber", str(k), re.I)))
-    if not_relied:
+    if not_relied and not rows:
         parts.append("<p class='cnote'>Composite action is not relied upon for strength or deflection (scope above); the "
                      "beams are designed as bare steel.</p>")
     elif numeric:

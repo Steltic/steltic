@@ -76,3 +76,31 @@ def test_getfixeddofs_distinguishes_masters_from_supports():
     ops.fix(1, 1, 1, 1, 1, 1, 1); ops.fix(2, 0, 0, 1, 1, 1, 0)      # a support and a rigid-diaphragm master
     assert 1 in ops.getFixedDOFs(1) and 1 not in ops.getFixedDOFs(2)
     ops.wipe()
+
+
+def test_composite_disclaimer_only_without_composite_members():
+    """R24c / R24d: a roof-stud scope note ('strength checked on the bare steel') printed 'composite action is not
+    relied upon ... designed as bare steel' under composite floor beams. The disclaimer needs an explicit
+    not-relied scope AND no member with composite design values."""
+    pkg = {"composite_design": {"scope": "floors composite; the roof framing is composite for serviceability "
+                                         "(its strength is checked on the bare steel, conservatively)"},
+           "members": [{"id": "floor-W24X55", "inputs": {"section": "W24X55"},
+                        "composite": {"studs_total": 32, "I_LB_in4": 2444.0, "pct": 0.45}}]}
+    html = R._composite_section(pkg) if hasattr(R, "_composite_section") else ""
+    src = SRC[SRC.index("not_relied = bool("):]
+    assert "if not_relied and not rows:" in src
+    assert "bare[- ]steel|not used" not in SRC.split("not_relied = bool(")[1][:200]
+    assert "not relied upon for strength or deflection" not in html
+
+
+def test_modal_table_lists_every_mode_used():
+    """R24e / R24f / R24g: the Chapter 5 table stopped at 12 of the 16 modes, so its cumulative mass disagreed with
+    the quoted modal-mass value."""
+    assert "for m in range(min(len(T), 12)):" not in SRC and "for m in range(len(T)):" in SRC
+
+
+def test_wind_row_names_the_tier_cp():
+    D = {"L_over_B": 0.8, "Cp_leeward": -0.5, "Cp_leeward_tiers": [(0.8, -0.5), (2.0, -0.3)]}
+    t = R._lb_cp_txt(D)
+    assert "0.80, -0.50 (plan)" in t and "2.00, -0.30 above a setback" in t
+    assert R._lb_cp_txt({"L_over_B": 1.0, "Cp_leeward": -0.5, "Cp_leeward_tiers": [(1.0, -0.5)]}) == "1.00, -0.50"

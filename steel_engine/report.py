@@ -2269,7 +2269,12 @@ def _lateral_runs(cfg, Fx, sf=None):
             ops.reactions(); di = 1 if d == "X" else 2; tot = 0.0
             planes = sorted((sf or {}).get("lines", {}).get(d, {}) or {})
             for n in ops.getFixedNodes():
-                c = ops.nodeCoord(n)                      # every support, whatever its elevation (hillside footings)
+                # supports restrained in this translation only (hillside footings at any elevation count); the
+                # rigid-diaphragm masters are fixed in Z and the rotations, and their "reaction" in X / Y is the
+                # applied story force, so they must not enter the base shear
+                if di not in ops.getFixedDOFs(n):
+                    continue
+                c = ops.nodeCoord(n)
                 rx = ops.nodeReaction(n, di); tot += rx
                 pos = c[1] if d == "X" else c[0]
                 p = next((pp for pp in planes if abs(pp - pos) <= 12.0), None)

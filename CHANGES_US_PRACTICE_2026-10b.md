@@ -64,3 +64,10 @@ re-run. Tests: `PYTHONPATH=$PWD:$PWD/steel_engine python -m pytest tests -q` (15
   the column transform type came from the last `engine3d.build()` call, so any Linear (modal) build in
   between turned the second-order static model first-order. The replay now sets the transform it needs.
   Found while adding the modal n1 (the DAM drift ratio fell to exactly 1.00).
+
+## October 28, 2026 (fix-to-A round R24)
+
+- `cfg['ocbf_v_beams'] = False` declares that no OCBF has V / inverted-V bracing (X or single diagonals only):
+  the AISC 341-22 F1.4a(a) beam cases are then not generated or listed.
+- `cfg['grid_names'] = {"x": ["1", "2", ...], "y": ["A", "B", ...]}` names the model grid indices in the base
+  labels of Chapters 9 and 11 (default: the model indices).

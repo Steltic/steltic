@@ -1812,7 +1812,7 @@ def _activity_section(name):
              _esc(_TOOL_NAME.get(r.get("tool", ""), str(r.get("tool", "")).replace("_", " "))),
              _esc(_log_detail(r.get("tool", ""), r.get("detail", "")))[:600],
              _esc(_log_result(r.get("tool", ""), r.get("result", "")))[:300]] for i, r in enumerate(recs)]
-    h.append("<h3>Record (in order; re-logged at the last fill of the calculation package)</h3>"
+    h.append("<h3>Record (in order of the final design pass)</h3>"
              + _table(["#", "entry", "detail", "result"], rows))
     return "".join(h)
 
@@ -3858,8 +3858,8 @@ def _combo_notes(cfg, cases=None, ctx=None):
 
 def _modal_mass_check(eX, eY):
     cx = sum(eX); cy = sum(eY)
-    return (f"<p><b>Modal mass participation:</b> &Sigma;m<sub>X</sub> = {cx*100:.0f}% "
-            f"({'OK' if cx >= 0.90 else 'review &lt; 90%'}), &Sigma;m<sub>Y</sub> = {cy*100:.0f}% "
+    return (f"<p><b>Modal mass participation:</b> &Sigma;m<sub>X</sub> = {cx*100:.1f}% "
+            f"({'OK' if cx >= 0.90 else 'review &lt; 90%'}), &Sigma;m<sub>Y</sub> = {cy*100:.1f}% "
             f"({'OK' if cy >= 0.90 else 'review &lt; 90%'}); ASCE 7-22 &sect;12.9.1.1 requires &ge; 90% in each "
             "direction. Periods are listed in Chapter 3.</p>")
 
@@ -4612,14 +4612,26 @@ def _base_reactions(pkg):
     return out
 
 
+def _grid_name(i, axis):
+    """The drawing grid name of model grid index i along 'x' / 'y' (cfg['grid_names']); the index itself if none."""
+    names = (_QA.get("grid_names") or {}).get(axis)
+    try:
+        return str(names[int(i)]) if names and 0 <= int(i) < len(names) else str(i)
+    except (TypeError, ValueError):
+        return str(i)
+
+
 def _grid_txt(node, r=None):
     g = (r or {}).get("grid")
     if isinstance(g, (list, tuple)) and len(g) == 2:
+        if _QA.get("grid_names") and all(isinstance(x, int) for x in g):
+            return "(%s, %s)" % (_grid_name(g[0], "x"), _grid_name(g[1], "y"))
         return "(%s, %s)" % (g[0], g[1])
     try:
         n = int(node)
         k = n // 100000
-        return "(%d, %d)" % ((n % 100000) // 100, n % 100) + ((" at level %d" % k) if 0 < k < 100 else "")
+        return "(%s, %s)" % (_grid_name((n % 100000) // 100, "x"), _grid_name(n % 100, "y")) + (
+            (" at level %d" % k) if 0 < k < 100 else "")
     except Exception:
         return _esc(node)
 
@@ -5933,6 +5945,8 @@ def build_report(name, root=None):
     pkg, pkgsrc = _load_pkg(name, root)
     pkg = pkg if isinstance(pkg, dict) else {}
     _QA.clear()
+    if isinstance(cfg.get("grid_names"), dict):     # drawing grid names for the model grid indices (x, y)
+        _QA["grid_names"] = {k: list(v) for k, v in cfg["grid_names"].items() if k in ("x", "y") and v}
     try: _PKG_RBS[0] = bool(re.search(r"\bRBS\b|reduced[- ]beam[- ]section", json.dumps(pkg or {}), re.I))
     except Exception: _PKG_RBS[0] = False
     figdir = os.path.join(root, "figs"); os.makedirs(figdir, exist_ok=True)

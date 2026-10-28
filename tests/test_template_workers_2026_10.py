@@ -151,3 +151,19 @@ def test_non_sfrs_brace_kind_uses_its_connection_record_and_358_for_spsw():
     assert "not an SFRS brace connection" in SRC
     assert 'any(f in ("SMF", "IMF", "SPSW") for f in _fams)' in SRC
     assert 're.search(r"AISC[\\s_-]*358", _ct)' in SRC
+
+
+def test_modal_mass_one_decimal_and_grid_names():
+    html = R._modal_mass_check([0.7, 0.2, 0.096], [0.8, 0.198])
+    assert "99.6%" in html and "100%" not in html
+    R._QA.clear(); R._QA["grid_names"] = {"x": ["1", "2", "3"], "y": ["A", "B"]}
+    assert R._grid_txt(201) == "(3, B)"
+    R._QA.clear()
+    assert R._grid_txt(201) == "(2, 1)"
+    assert "re-logged at the last fill" not in SRC
+
+
+def test_ocbf_v_beam_cases_can_be_declared_absent():
+    import design_pipeline as DP
+    src = open(DP.__file__, encoding="utf-8").read()
+    assert 'cfg.get("ocbf_v_beams", True) is not False' in src

@@ -120,3 +120,19 @@ def test_single_pair_ratio_on_interaction_named_rows():
 def test_deck_sentence_carries_12335_increase():
     assert "25%% increase of &sect;12.3.3.5 (%s) on the deck connections" in SRC
     assert '_QA["t12335"] = sorted(set(trig["12.3.3.5"])) if sdc in ("D", "E", "F") else []' in SRC
+
+
+def test_deflection_rows_say_which_group(monkeypatch):
+    g1 = dict(sec="W24X62", L=336.0, trib=None, roof=False, dLL=0.30, dTL=0.93, rLL=0.330, rTL=0.664)
+    g2 = dict(sec="W24X62", L=336.0, trib=None, roof=False, dLL=0.30, dTL=0.84, rLL=0.333, rTL=0.600)
+    monkeypatch.setattr(R.E, "beam_serviceability_detail", lambda cfg: {"groups": [g1, g2], "LL": 0.333, "TL": 0.664})
+    html = R._deflection_section({"heights": [168.0], "D_floor": 50.0})
+    assert "W24X62 (worst total)" in html and "W24X62 (worst live)" in html
+
+
+def test_short_list_overflow_prints_in_full():
+    rows = [{"level": i, "V_kip": float(i)} for i in range(41)]
+    html = R._record_html({"rows": rows})
+    assert "further row" not in html
+    html2 = R._record_html({"rows": [{"level": i, "V_kip": float(i)} for i in range(55)]})
+    assert "15 further rows" in html2

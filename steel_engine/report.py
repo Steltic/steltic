@@ -1433,7 +1433,9 @@ def _wind_section(cfg, cases=None):
             else:
                 stxt = _esc(src)
             return ("%s (flexible building, &sect;26.11.5: n<sub>1</sub> = %s Hz &lt; 1 Hz, %s; G<sub>f</sub> by "
-                    "Eq. 26.11-10)" % (_n(D["G"], nd=3), _n(D.get("n1"), nd=3), stxt))
+                    "Eq. 26.11-10%s)" % (_n(D["G"], nd=3), _n(D.get("n1"), nd=3), stxt,
+                                         (" with damping ratio &beta; = %s of critical" % _n(D["beta"], nd=3))
+                                         if D.get("beta") is not None else ""))
         h = ["<p>ASCE 7-22 Ch. 27 directional procedure (MWFRS). q<sub>z</sub> = 0.00256&middot;K<sub>z</sub>K<sub>zt</sub>"
              "K<sub>e</sub>V<sup>2</sup> (Eq. 26.10-1); p = q&middot;K<sub>d</sub>&middot;G&middot;C<sub>p</sub> (Eq. 27.3-1): "
              "windward walls C<sub>p</sub> = +0.8 with q<sub>z</sub> at each height, leeward walls C<sub>p</sub>(L/B) per "
@@ -4014,7 +4016,8 @@ def _record_html(v, depth=0, path=""):
                     lab, unit, _sc = _human_key(k)
                     hdr.append(lab + ((" (%s)" % unit) if unit else ""))
                 body = []
-                for x in v[:40]:
+                cap = len(v) if len(v) <= 50 else 40       # a short overflow prints in full
+                for x in v[:cap]:
                     r = []
                     for k in keys:
                         val = x.get(k)
@@ -4022,7 +4025,7 @@ def _record_html(v, depth=0, path=""):
                         r.append(_n(float(val) * sc) if isinstance(val, (int, float)) and not isinstance(val, bool)
                                  and sc != 1.0 else _n(val))
                     body.append(r)
-                more = ("<p class='cnote'>%d further rows retained in the calc package.</p>" % (len(v) - 40)) if len(v) > 40 else ""
+                more = ("<p class='cnote'>%d further rows retained in the calc package.</p>" % (len(v) - cap)) if len(v) > cap else ""
                 return _table(hdr, body) + more
             return "".join(_record_html(x, depth + 1, path) for x in v[:20])
         if all(isinstance(x, str) for x in v) and any(len(x) > 60 for x in v):
@@ -5347,12 +5350,18 @@ def _deflection_section(cfg, pkg=None):
     for roof, lbl in ((False, "Floor"), (True, "Roof")):
         lst = pick(roof)
         show = [x for x in lst if max(x["rLL"], x["rTL"]) >= 1.0]
+        tag_of = {}
         if not show and lst:                       # the groups behind the worst live and the worst total ratio
             show = [lst[0]]
             for key in ("rLL", "rTL"):
                 g_ = max(lst, key=lambda x: x[key])
                 if g_ not in show:
                     show.append(g_)
+            if len(show) > 1:                      # say which group each row is, so like rows never read as repeats
+                for x in show:
+                    tags = [t for key, t in (("rLL", "worst live"), ("rTL", "worst total"))
+                            if x[key] >= max(y[key] for y in lst) - 1e-9]
+                    tag_of[id(x)] = ", ".join(tags)
         uniq, cnt = [], []
         for x in show:
             L = x["L"]; dD = max(x["dTL"] - x["dLL"], 0.0)
@@ -5369,6 +5378,8 @@ def _deflection_section(cfg, pkg=None):
                  "OK" if max(x["rLL"], x["rTL"]) < 1.0 else ("see justification" if _just0 else "<b class='ng'>NG</b>"),
                  ("none (%s in. specified)" % _n(spec_c, nd=2)) if spec_c else
                  (("%s in." % _n(camber, nd=2)) if camber > 0 else "none")]
+            if tag_of.get(id(x)):
+                r = [r[0] + " (%s)" % tag_of[id(x)]] + r[1:]
             if r in uniq:
                 cnt[uniq.index(r)] += 1
             else:

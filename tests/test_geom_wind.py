@@ -273,3 +273,11 @@ def _frame_builder(variant):
 def test_floor_beam_gaps_follow_collinear_chains(variant, ngaps):
     c = _plate_cfg(NX=2, NY=1, SX=240.0, SY=240.0, custom_build=_frame_builder(variant))
     assert len(E.floor_beam_gaps(c)) == ngaps
+
+
+def test_flexible_gust_reports_its_damping_ratio():
+    c = base_cfg(heights=[156.0] * 30, wind=dict(V=115.0, exposure="C", Kd=0.85, G=0.85, Kzt=1.0, Ke=1.0,
+                                                  n1=0.25, beta=0.02))
+    d = E.wind_detail(c, "X")
+    assert not d["rigid"] and d["beta"] == pytest.approx(0.02)
+    assert E.wind_detail(base_cfg(), "X")["beta"] is None

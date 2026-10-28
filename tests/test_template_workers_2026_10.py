@@ -57,3 +57,22 @@ def test_source_wording_and_rules():
     assert "Ponding is addressed under the rain basis." not in SRC
     assert "headed studs or end plate with" not in SRC
     assert "cantilever action of" in SRC and "&rho;V" in SRC
+
+
+def test_base_shear_shares_count_only_translational_supports():
+    """R24g B1: the rigid-diaphragm masters (fixed in Z and the rotations) carry minus the story force as a
+    'reaction'; counting them doubled the total and halved every printed share. Only supports restrained in the
+    direction's translation enter the base shear (hillside footings at any elevation still do)."""
+    i = SRC.index("planes = sorted((sf or {}).get(\"lines\", {}).get(d, {}) or {})")
+    body = SRC[i:i + 900]
+    assert "for n in ops.getFixedNodes():" in body and "if di not in ops.getFixedDOFs(n):" in body
+    assert body.index("getFixedDOFs") < body.index("share[p] = share.get(p, 0.0) + rx")
+
+
+def test_getfixeddofs_distinguishes_masters_from_supports():
+    import openseespy.opensees as ops
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 120.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1); ops.fix(2, 0, 0, 1, 1, 1, 0)      # a support and a rigid-diaphragm master
+    assert 1 in ops.getFixedDOFs(1) and 1 not in ops.getFixedDOFs(2)
+    ops.wipe()

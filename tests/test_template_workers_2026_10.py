@@ -104,3 +104,19 @@ def test_wind_row_names_the_tier_cp():
     t = R._lb_cp_txt(D)
     assert "0.80, -0.50 (plan)" in t and "2.00, -0.30 above a setback" in t
     assert R._lb_cp_txt({"L_over_B": 1.0, "Cp_leeward": -0.5, "Cp_leeward_tiers": [(1.0, -0.5)]}) == "1.00, -0.50"
+
+
+def test_single_pair_ratio_on_interaction_named_rows():
+    import consistency as C
+    k = {"limit_state": "construction stage, wet concrete + deck + 20 psf construction live; flexure",
+         "cited": "AISC 360-22 F2.1", "Mu_kipft": 102.8, "phiMn_kipft": 249.4, "DC": 0.412}
+    html = R._checks_table([k], C)
+    assert "0.412" in html and html.count("&mdash;") == 0 and "reconcile" not in html
+    k2 = dict(k, DC=0.70)                      # an interaction whose D/C is not this pair's ratio stays a dash
+    html2 = R._checks_table([k2], C)
+    assert "&mdash;" in html2 and "reconcile" not in html2
+
+
+def test_deck_sentence_carries_12335_increase():
+    assert "25%% increase of &sect;12.3.3.5 (%s) on the deck connections" in SRC
+    assert '_QA["t12335"] = sorted(set(trig["12.3.3.5"])) if sdc in ("D", "E", "F") else []' in SRC

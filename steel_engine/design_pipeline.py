@@ -209,7 +209,9 @@ def combos(cfg):
                                        % (tg, vt, LL, _sS, clause), 1.2+Ev, Lf, fS, {}, True, kind="ecl", ecl=ec))
                         cases.append(C("(0.9-0.2SDS)D+Ecl[%s]%s [capacity-limited, AISC 341-22 %s]"
                                        % (tg, vt, clause), 0.9-Ev, 0.0, _rf(cfg), {}, True, kind="ecl", ecl=ec))
-        if "OCBF" in systems:
+        if "OCBF" in systems and cfg.get("ocbf_v_beams", True) is not False:
+            # cfg['ocbf_v_beams'] = False declares that no OCBF has V / inverted-V bracing (X or single
+            # diagonals only), so the F1.4a(a) beam cases do not apply and are not generated
             for sx in (1, -1):
                 for sy in (1, -1):
                     tg = "X%sY%s" % ('+' if sx > 0 else '-', '+' if sy > 0 else '-')

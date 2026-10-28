@@ -136,3 +136,18 @@ def test_short_list_overflow_prints_in_full():
     assert "further row" not in html
     html2 = R._record_html({"rows": [{"level": i, "V_kip": float(i)} for i in range(55)]})
     assert "15 further rows" in html2
+
+
+def test_single_angle_member_states_its_r_basis():
+    m = {"id": "vessel-leg-diagonal-L4X4X1/2", "section": "L4X4X1/2",
+         "inputs": {"kind": "brace", "role": "floor", "section": "L4X4X1/2", "length_in": 92.5},
+         "checks": [{"limit_state": "compression, single angle", "cited": "AISC 360-22 E5 (Eq. E5-1)",
+                     "Pu_kip": 30.0, "phiPn_kip": 40.0, "DC": 0.75}], "DC": 0.75}
+    html = R._member_calc_block(m)
+    assert "not found in the AISC Shapes Database" not in html and "single angle" in html and "E5" in html
+
+
+def test_non_sfrs_brace_kind_uses_its_connection_record_and_358_for_spsw():
+    assert "not an SFRS brace connection" in SRC
+    assert 'any(f in ("SMF", "IMF", "SPSW") for f in _fams)' in SRC
+    assert 're.search(r"AISC[\\s_-]*358", _ct)' in SRC

@@ -147,6 +147,10 @@ def test_irregularity_section_prints_numbers_or_not_evaluated():
     assert "WEAK STORY: YES" not in html4 and "Not present: lowest story strength ratio" in html4
     # SDC E/F: Type 4a at >= 80 % is permitted by the 12.3.3.1 Exception, below 80 % it is prohibited
     assert "12.3.3.1 applies in SDC E and F" in html3 or "12.3.3.1 Exception" in html3
+    # both directions weaker than the story above are named, the governing (lowest) one first
+    cfg5 = _b05(story_strength={"X": [860, 1000, 1000, 1000], "Y": [850, 1000, 1000, 1000]})
+    html5 = R._irregularity_section(cfg5, runs, R._sfrs(cfg5))
+    assert "Y story 1 strength = 85%, X story 1 strength = 86% of the story above" in html5
 
 
 def test_soft_story_ratio_uses_story_stiffness():

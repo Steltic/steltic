@@ -245,6 +245,16 @@ def test_ch10_lists_joint_records_and_notch_clauses():
     assert "(AISC 360-22 A3.1d, A3.1e)" in SRC and "A3.1c, A3.1d" not in SRC
 
 
-def test_type4_cites_12_10_1_1_only_and_4a_tie_names_both():
+def test_type4_cites_12_10_1_1_only_and_4a_names_every_direction():
     assert "12.10.1.1/12.10.3.3" not in SRC
-    assert "Type %s STORY: YES &mdash; %s story %d and %s story %d strength" in SRC
+    assert "every direction with a story weaker than the story above" in SRC
+
+
+def test_spsw_ch10_basis_and_splice_system_clause_and_ecl_scope():
+    # SPSW web strips (brace elements) print the web-to-boundary record and the F5.6c basis, not "Ch. J"
+    assert '"SPSW" in fams and _bre and re.search(r"web plate", _bty, re.I)' in SRC
+    assert "web expected tension R<sub>y</sub>F<sub>y</sub>t at &alpha; (AISC 341-22 F5.6c)" in SRC
+    # Ch. 10 splice rows name the system splice clause of the record (E3.6g / F2.6d / F3.6d / F4.6d)
+    assert r'E3\.6g|F2\.6d|F3\.6d|F4\.6d' in SRC
+    # capacity-limited cases are not described as governing columns only
+    assert "other SFRS members, connections and bases by their capacity-design records" in SRC

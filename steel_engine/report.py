@@ -3090,7 +3090,7 @@ def _irregularity_section(cfg, runs, sf=None):
             lst = "; ".join("%s terminates at story %d" % (_plane(d, p), s_) for d, p, s_ in term[:6])
             h4 = ("Type 4 OUT-OF-PLANE OFFSET: YES &mdash; %s (no lateral element of that plane in the story below; its "
                   "shear transfers through the diaphragm to other planes &mdash; Table 12.3-1 Type 4, transfer forces "
-                  "&times; &Omega;<sub>0</sub> per &sect;12.10.1.1/12.10.3.3)" % lst)
+                  "&times; &Omega;<sub>0</sub> per &sect;12.10.1.1)" % lst)
             trig["12.3.3.4"].append("H4"); trig["12.3.3.5"].append("H4"); trig["12.7.3 (3D model)"].append("H4")
         else:
             h4 = "Not present: every SFRS plane is continuous to the base (checked in the analysis model)"
@@ -3226,8 +3226,12 @@ def _irregularity_section(cfg, runs, sf=None):
         if rr:
             dmin = min(rr, key=lambda t: t[2])
             typ = "4b EXTREME WEAK" if dmin[2] < 0.65 else "4a WEAK"
+            # both directions where they reach the same lowest ratio (as printed)
+            _tie = [t for t in rr if t[0] != dmin[0] and round(100 * t[2]) == round(100 * dmin[2])]
             v4 = ("Type %s STORY: YES &mdash; %s story %d strength = %.0f%% of the story above "
-                  "(declared story strengths)" % (typ, dmin[0], dmin[1], 100 * dmin[2]))
+                  "(declared story strengths)" % (typ, dmin[0], dmin[1], 100 * dmin[2])) if not _tie else (
+                 "Type %s STORY: YES &mdash; %s story %d and %s story %d strength = %.0f%% of the story above "
+                 "(declared story strengths)" % (typ, dmin[0], dmin[1], _tie[0][0], _tie[0][1], 100 * dmin[2]))
             if dmin[2] < 0.65:
                 if sdc in ("E", "F"): trig["12.3.3.1"].append("V4b")
                 elif sdc == "D": trig["12.3.3.2"].append("V4b")

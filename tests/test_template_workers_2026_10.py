@@ -243,3 +243,8 @@ def test_capacity_dict_labels_design_values():
 def test_ch10_lists_joint_records_and_notch_clauses():
     assert '_mid = "conn-" + str(m.get("id", "")).lower() + "-"' in SRC
     assert "(AISC 360-22 A3.1d, A3.1e)" in SRC and "A3.1c, A3.1d" not in SRC
+
+
+def test_type4_cites_12_10_1_1_only_and_4a_tie_names_both():
+    assert "12.10.1.1/12.10.3.3" not in SRC
+    assert "Type %s STORY: YES &mdash; %s story %d and %s story %d strength" in SRC

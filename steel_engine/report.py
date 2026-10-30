@@ -4866,6 +4866,19 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
         else:
             continue
         rows.append([_esc(f"{sec} {_KIND_LABEL.get(kind, kind)}") + (" (%s)" % _esc(m.get("id"))), typ, dem, basis])
+        # joint-specific records of this member ('conn-<member id>-<joint>', e.g. release joints at given levels)
+        _mid = "conn-" + str(m.get("id", "")).lower() + "-"
+        for _cid, _c in _conn_rec.items():
+            if not _cid.startswith(_mid):
+                continue
+            _d = _c.get("demand") if isinstance(_c.get("demand"), dict) else {}
+            _bits = [("V = %s kip" % _n(_d[k])) for k in ("V_design_kip",) if isinstance(_d.get(k), (int, float))] + \
+                    [("P = %s kip" % _n(_d[k])) for k in ("P_design_kip",) if isinstance(_d.get(k), (int, float))] + \
+                    [("M = %s kip-ft" % _n(_d[k])) for k in ("M_design_kipft",) if isinstance(_d.get(k), (int, float))]
+            rows.append([_esc(f"{sec} {_KIND_LABEL.get(kind, kind)}") + (" (%s)" % _esc(_c.get("id"))),
+                         _esc(re.split(r"[;(]", str(_c.get("type") or "joint record"))[0].strip(" ,")),
+                         ("; ".join(_bits) + " (design forces of the record)") if _bits else _fmt(_d) if _d else "per the record",
+                         _esc(str(_c.get("design_basis") or "AISC 360-22 Ch. J for the record's design forces").split(";")[0])])
     br = _base_reactions(pkg)
     _brecs = [c for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict)
               and str(c.get("id", "")).lower().startswith("conn-base") and isinstance(c.get("demand"), dict)
@@ -5738,7 +5751,7 @@ def _all_sections(cfg, pkg):
 def _cvn_rows(cfg, pkg, secs):
     """Notch-toughness rows for heavy sections: AISC 341-22 A3.3 (SFRS: rolled shapes with flanges >= 1-1/2 in and
     plates >= 2 in in built-up members / inelastic connection plates / BRB cores: CVN 20 ft-lbf at 70 F) and
-    AISC 360-22 A3.1c-d (rolled shapes with flanges > 2 in and built-up plates > 2 in in tension with CJP splices)."""
+    AISC 360-22 A3.1d-e (rolled shapes with flanges > 2 in and built-up plates > 2 in in tension with CJP splices)."""
     heavy, thick, plates = [], [], []
     # only sections that are built: with a calc package, a section must appear as a member section there (analysis
     # stand-ins such as a truss modelled as a W44 are not built); cfg['cvn_exclude'] removes others (e.g. gravity girders)
@@ -5786,7 +5799,7 @@ def _cvn_rows(cfg, pkg, secs):
                         ("; plates &ge; 2 in. in built-up members (" + ", ".join(_esc(x) for x in plates) +
                          "): CVN &ge; 20 ft-lbf at 70&deg;F (ASTM A673, Frequency P)") if plates else "")])
     if thick or plates:
-        rows.append(["Notch toughness, heavy shapes and plates in tension (AISC 360-22 A3.1c, A3.1d)",
+        rows.append(["Notch toughness, heavy shapes and plates in tension (AISC 360-22 A3.1d, A3.1e)",
                      "shapes with flanges over 2 in. and built-up plates over 2 in. thick used as tension members or "
                      "with CJP-welded tension splices: CVN &ge; 20 ft-lbf at 70&deg;F"])
     return rows

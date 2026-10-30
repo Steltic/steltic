@@ -4792,8 +4792,12 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                     dem = ("V = %s kip" % _n(_mV) if _mV is not None else vtxt) + \
                           ((", M = %s kip-ft" % _n(_mM)) if _mM is not None else "") + " (connection design forces of the record)"
                 fams = sf.get("families", [])
-                basis = ("AISC 358-22 prequalified connection; AISC 341-22 %s" %
-                         ("E3" if "SMF" in fams else "E2" if "IMF" in fams else "E1")) if a341 else \
+                _qual = "AISC 358-22 prequalified connection"
+                if re.search(r"qualifying (cyclic )?tests?|E3\.6c\(c\)\(2\)", str((_mrec or {}).get("type") or ""), re.I):
+                    # some joints of this beam are conformed by qualifying tests (AISC 341-22 E3.6c(c)(2)), not prequalified
+                    _qual = "AISC 358-22 prequalified connection and joints conformed by qualifying tests (E3.6c(c)(2))"
+                basis = ("%s; AISC 341-22 %s" % (_qual,
+                         "E3" if "SMF" in fams else "E2" if "IMF" in fams else "E1")) if a341 else \
                         "AISC 360-22 Ch. J fully restrained moment connection (J2 welds, J3 bolts, J10) for the analysis forces"
             else:
                 typ = "simple shear connection" + (" + axial (collector / drag strut)" if ax > 0.5 else "")
@@ -4985,11 +4989,17 @@ def _base_record_row(c, a341=False):
     if ma > 0.5:
         bits.append("M = %s kip-ft" % _n(_f("M_kipft")))
     md, myd = _f("M_design_kipft"), _f("My_design_kipft")
+    # a pinned base records the nominal embedment moment handed to the foundation (ASCE 7-22 12.13.1), not a D2.6c
+    # required moment: label it by the record's own basis
+    _mb = str(d.get("M_design_basis") or "")
+    _pin = _mb.lower().startswith("pinned")
+    _mlab = "nominal embedment moment handed to the foundation" if _pin else "design moment"
+    _mcite = "ASCE 7-22 12.13.1; the base and column carry no moment" if _pin else "AISC 341-22 D2.6c"
     if myd is not None and myd > 0.5:                      # design moments about both axes (as in Chapter 11)
-        bits.append("design moment %s kip-ft strong axis / %s kip-ft weak axis (AISC 341-22 D2.6c)"
-                    % (_n(md) if md is not None else "&mdash;", _n(myd)))
+        bits.append("%s %s kip-ft strong axis / %s kip-ft weak axis (%s)"
+                    % (_mlab, _n(md) if md is not None else "&mdash;", _n(myd), _mcite))
     elif md is not None and md > 1.005 * ma and md > 0.5:
-        bits.append("design moment %s kip-ft (AISC 341-22 D2.6c)" % _n(md))
+        bits.append("%s %s kip-ft (%s)" % (_mlab, _n(md), _mcite))
     nb = d.get("n_bases") or c.get("n_bases")
     if d.get("bases"):
         bits.append("bases %s" % _esc(str(d.get("bases"))))

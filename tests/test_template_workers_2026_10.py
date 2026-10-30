@@ -184,3 +184,19 @@ def test_deflection_tie_tags_each_ratio_once(monkeypatch):
     monkeypatch.setattr(R.E, "beam_serviceability_detail", lambda cfg: {"groups": [g1, g2], "LL": 0.333, "TL": 0.664})
     html = R._deflection_section({"heights": [168.0], "D_floor": 50.0})
     assert html.count("worst live") == 1 + html.count("worst live ratio") and "W24X62 (worst total)" in html
+
+
+def test_identical_deflection_rows_merge(monkeypatch):
+    g1 = dict(sec="W24X55", L=360.0, trib=None, roof=False, dLL=0.40, dTL=0.90, rLL=0.40, rTL=0.60)
+    g2 = dict(g1, rLL=0.40000000001)                       # same printed numbers, another group
+    g3 = dict(sec="W21X44", L=300.0, trib=None, roof=False, dLL=0.10, dTL=0.30, rLL=0.12, rTL=0.24)
+    monkeypatch.setattr(R.E, "beam_serviceability_detail", lambda cfg: {"groups": [g1, g2, g3], "LL": 0.4, "TL": 0.6})
+    html = R._deflection_section({"heights": [168.0], "D_floor": 50.0})
+    assert html.count("<td>W24X55") == 1
+
+
+def test_ch10_brace_branches_and_ch6_governing_text():
+    assert 'transfer[- ]truss|truss diagonal' in SRC
+    assert '_brole not in ("brace", "sfrs") or re.search(r"plan bracing|horizontal truss", _bty, re.I)' in SRC
+    assert 'f"{cx:.1f}% / {cy:.1f}%"' in SRC and '"%.1f%%" % (100.0 * float(q.get("mass", 0) or 0))' in SRC
+    assert 'ls_txt = gchk.get("limit_state")' in SRC

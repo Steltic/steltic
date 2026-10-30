@@ -1610,12 +1610,15 @@ def _member_rows(members):
     rows = []
     for m in members:
         inp = m.get("inputs", {}) or {}
-        dcv = _governing_dc(m, C)[0] if C else (m.get("DC") if isinstance(m.get("DC"), (int, float)) else None)
+        dcv, gchk, _lim = _governing_dc(m, C) if C else (
+            m.get("DC") if isinstance(m.get("DC"), (int, float)) else None, None, False)
         issues = C.entry_findings("member", m, _COMBO_LABELS[0]) if C else []
         mid = str(m.get("id", ""))
+        # the limit state named is the one behind the D/C printed (never a dimensional limit row)
+        ls_txt = gchk.get("limit_state") if isinstance(gchk, dict) and gchk.get("limit_state") else m.get("limit_state")
         rows.append(["<a href='#m-%s'>%s</a>" % (_esc(re.sub(r"[^A-Za-z0-9_-]", "_", mid)), _esc(mid)),
                      _esc(inp.get("section", "")), _envelope_txt(inp), _combo_label(inp.get("governing_combo")),
-                     _n(m.get("limit_state")) if m.get("limit_state") else "&mdash;",
+                     _n(ls_txt) if ls_txt else "&mdash;",
                      _n(dcv, dc=True) if dcv is not None else "&mdash;",
                      _dc_status(dcv, issues, m.get("waived")) if (dcv is not None or issues) else "not recorded"])
     return rows
@@ -3513,7 +3516,7 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs=None, V=None, Tu=None, Ta=None, Fx
             if not q:
                 continue
             rr.append([d, _n(q.get("Vt")), _n(q.get("V")), "%.3f" % float(q.get("force_scale", 1.0)),
-                       "%.3f" % float(q.get("drift_scale", 1.0)), "%.0f%%" % (100.0 * float(q.get("mass", 0) or 0)),
+                       "%.3f" % float(q.get("drift_scale", 1.0)), "%.1f%%" % (100.0 * float(q.get("mass", 0) or 0)),
                        _n(q.get("nmodes"))])
         mr = ("<h4>Modal response spectrum analysis (&sect;12.9.1)</h4>"
               "<p>Design response spectrum: the two-period spectrum of &sect;11.4.5.2 (Fig. 11.4-1) from S<sub>DS</sub>, "
@@ -4801,7 +4804,8 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
             fams = sf.get("families", [])
             _bre = _conn_rec.get("conn-" + str(m.get("id", "")).lower())
             _bty = str((_bre or {}).get("type") or "")
-            if _bre and "truss" in (str(m.get("role_detail") or "") + " " + _bty).lower():
+            _brole = str((m.get("inputs") or {}).get("role") or m.get("role") or "brace").lower()
+            if _bre and re.search(r"transfer[- ]truss|truss diagonal", str(m.get("role_detail") or "") + " " + _bty, re.I):
                 # a transfer-truss diagonal grouped with the braces by element kind: its own joint record governs
                 typ = _esc(re.split(r"[;(]", _bty)[0].strip(" ,")) or "truss diagonal joint"
                 _bd = _bre.get("demand") if isinstance(_bre.get("demand"), dict) else {}
@@ -4811,8 +4815,7 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                               _n(_bd.get("C_design_kip") if _bd.get("C_design_kip") is not None else Pc)))
                 basis = ("AISC 360-22 Ch. J for the joint record's design forces (transfer truss, elastic; ASCE 7-22 "
                          "&sect;12.3.3.4 overstrength); not an SCBF brace connection")
-            elif _bre and _bty and not re.search(r"\b(?:SCBF|OCBF|BRBF|EBF|SFRS)\b|brace[- ]to[- ]gusset|brace connection",
-                                                 _bty, re.I):
+            elif _bre and _bty and (_brole not in ("brace", "sfrs") or re.search(r"plan bracing|horizontal truss", _bty, re.I)):
                 # a member grouped with the braces by element kind that is not an SFRS brace (plan bracing,
                 # equipment-support diagonals and ties): its own connection record governs
                 typ = _esc(re.split(r"[:;(]", _bty)[0].strip(" ,")) or "connection"
@@ -5077,7 +5080,7 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
                      "PASS" if base and abs(abs(Rx)-base)/base < 0.01 else "REVIEW"])
     if eX is not None and eY is not None:
         cx = sum(eX)*100; cy = sum(eY)*100
-        rows.append(["Modal mass &ge; 90% (X / Y, &sect;12.9.1.1)", f"{cx:.0f}% / {cy:.0f}%", "PASS" if min(cx, cy) >= 90 else "REVIEW"])
+        rows.append(["Modal mass &ge; 90% (X / Y, &sect;12.9.1.1)", f"{cx:.1f}% / {cy:.1f}%", "PASS" if min(cx, cy) >= 90 else "REVIEW"])
     if runs:
         try:
             from preflight import relief_active as _ra
@@ -5411,13 +5414,21 @@ def _deflection_section(cfg, pkg=None):
                  "OK" if max(x["rLL"], x["rTL"]) < 1.0 else ("see justification" if _just0 else "<b class='ng'>NG</b>"),
                  ("none (%s in. specified)" % _n(spec_c, nd=2)) if spec_c else
                  (("%s in." % _n(camber, nd=2)) if camber > 0 else "none")]
-            if tag_of.get(id(x)):
-                r = [r[0] + " (%s)" % tag_of[id(x)]] + r[1:]
-            if r in uniq:
-                cnt[uniq.index(r)] += 1
+            core = list(r)                                   # rows equal in every printed number are one row
+            tg = tag_of.get(id(x))
+            hit = next((i for i, (c_, _t) in enumerate(uniq) if c_ == core), None)
+            if hit is None:
+                uniq.append((core, [tg] if tg else [])); cnt.append(1)
             else:
-                uniq.append(r); cnt.append(1)
-        for r, c in list(zip(uniq, cnt))[:8]:
+                if tg:
+                    uniq[hit][1].append(tg)
+                cnt[hit] += 1
+        for (r, tgs), c in list(zip(uniq, cnt))[:8]:
+            tags = []
+            for t_ in ", ".join(tgs).split(", "):
+                if t_ and t_ not in tags:
+                    tags.append(t_)
+            r = ([r[0] + " (%s)" % ", ".join(tags)] + r[1:]) if tags and len(uniq) > 1 else r
             rows.append([lbl + ((" (%d identical groups)" % c) if c > 1 else "")] + r)
     if rows:
         h.append(_table(["Beam", "Section", "Span", "Trib. width", "Live &delta;", "Live / limit", "Total &delta;",

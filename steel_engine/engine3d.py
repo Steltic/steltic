@@ -1911,14 +1911,24 @@ def beam_serviceability(cfg):
 _ROOF_DEFL = {"plaster": (360.0, 240.0), "nonplaster": (240.0, 180.0), "none": (180.0, 120.0), "floor": (360.0, 240.0)}
 
 
-def defl_limits(cfg, roof):
+def defl_limits(cfg, roof, k=None):
     """(live, total) span/deflection limits, IBC 2024 Table 1604.3: floor members L/360 and L/240; roof members
     by cfg['roof_deflection'] = 'plaster' (supporting plaster or stucco ceiling: L/360, L/240, the default),
     'nonplaster' (nonplaster ceiling: L/240, L/180), 'none' (not supporting a ceiling: L/180, L/120) or 'floor'
     (an occupied top tier / platform designed with the floor limits L/360, L/240)."""
     if roof:
-        return _ROOF_DEFL.get(str(cfg.get("roof_deflection") or "plaster").lower(), (360.0, 240.0))
+        return _ROOF_DEFL.get(roof_defl_category(cfg, k), (360.0, 240.0))
     return (360.0, 240.0)
+
+
+def roof_defl_category(cfg, k=None):
+    """Roof deflection category of roof level k: cfg['roof_deflection'] is one category for every roof, or a dict
+    {level: category, ..., 'default': category} where roofs differ (e.g. an office roof below the warehouse roof)."""
+    rd = cfg.get("roof_deflection") or "plaster"
+    if isinstance(rd, dict):
+        v = rd.get(k, rd.get(str(k))) if k is not None else None
+        return str(v or rd.get("default") or "plaster").lower()
+    return str(rd).lower()
 
 
 def beam_serviceability_detail(cfg):
@@ -1969,7 +1979,7 @@ def beam_serviceability_detail(cfg):
         for (k,dd,i,j),v in sorted(sd.items()):
             L=v["L"]
             if L<=0: continue
-            _lL,_lT=defl_limits(cfg,k>=NF)
+            _lL,_lT=defl_limits(cfg,k>=NF,k)
             rL=v["LL"]/(L/_lL); rT=v["TL"]/(L/_lT)
             out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=(k>=NF),dLL=v["LL"],dTL=v["TL"],
                                       rLL=rL,rTL=rT,span=(k,dd,i,j),composite=v.get("composite"),
@@ -2297,12 +2307,22 @@ def build_info_cache(cfg):
 # ---------------------------------------------------------------------------------------------
 def theta_px(cfg):
     """{level: P contribution} for 12.8.7: 1.0D (floor_dead: dead + cladding + extra) + 0.5L with
-    L = 0.4L0, or 0.8L0 where L0 > 100 psf (12.8.6.1), on the ACTUAL floor area; roof live excluded.
+    L = 0.4L0, or 0.8L0 where L0 > 100 psf (12.8.6.1), on the ACTUAL floor area; roof live excluded, except the
+    occupancy live load of an occupied top roof (cfg['occupied_roof_levels']), which is taken like a floor.
     No individual load factor exceeds 1.0 (12.8.7)."""
     NF = len(cfg["heights"]); P = {}
+    try:
+        import static_model as _SM
+        _occ = _SM.occupied_roof_levels(cfg)
+    except Exception:
+        _SM, _occ = None, set()
     for k in range(1, NF + 1):
         if k < NF:
             L0 = float(_Llev(cfg, k) or 0.0)
+            Lk = (0.8 if L0 > 100.0 else 0.4) * L0 * floor_area_ft2(cfg, k) / 1000.0
+        elif k in _occ and _SM is not None:
+            # an occupied roof (terrace, platform deck) carries the live load of its occupancy, like a floor
+            L0 = float(_SM.occupied_roof_live_psf(cfg, k) or 0.0)
             Lk = (0.8 if L0 > 100.0 else 0.4) * L0 * floor_area_ft2(cfg, k) / 1000.0
         else:
             Lk = 0.0

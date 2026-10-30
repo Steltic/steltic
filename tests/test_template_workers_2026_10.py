@@ -272,3 +272,14 @@ def test_r26c_scorecard_record_deflection_chords_uplift_gravity_note():
     assert 'cfg.get("diaphragm_chords")' in SRC
     assert '"net uplift, from the capacity-limited combination," if _ucl else "analysis net uplift"' in SRC
     assert 'cfg.get("design_basis_gravity_note")' in SRC
+
+
+def test_r26bd_pinned_base_moment_label_and_test_qualified_smf_basis():
+    c = {"id": "conn-base-x", "type": "pinned SFRS column base (axial + shear, no moment)", "demand": {
+        "P_comp_kip": 100.0, "M_kipft": 0.0, "M_design_kipft": 22176.0, "My_design_kipft": 22176.0,
+        "M_design_basis": "pinned base: no moment in the column or base design; nominal moment handed to the pile cap"}}
+    row = R._base_record_row(c, True)
+    assert "nominal embedment moment handed to the foundation" in row[2] and "D2.6c" not in row[2]
+    c2 = {"id": "conn-base-y", "type": "embedded moment base", "demand": {"M_kipft": 100.0, "M_design_kipft": 900.0}}
+    assert "design moment 900 kip-ft (AISC 341-22 D2.6c)" in R._base_record_row(c2, True)[2]
+    assert "joints conformed by qualifying tests (E3.6c(c)(2))" in SRC

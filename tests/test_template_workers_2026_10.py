@@ -267,7 +267,7 @@ def test_r26c_scorecard_record_deflection_chords_uplift_gravity_note():
         {"limit_state": "story drift ratio", "DC": 0.95}]}]}
     assert R._record_deflection_max(pkg) == (0.69, "infill-W27X84")
     assert R._record_deflection_max({"members": []}) is None
-    assert "design-record deflection rows up to %.2f (%s)" in SRC
+    assert "design-record deflection rows up to %.2f of each record's own limit (%s)" in SRC
     # rigid-diaphragm chord clause, capacity-limited uplift wording and the design-basis gravity note come from cfg
     assert 'cfg.get("diaphragm_chords")' in SRC
     assert '"net uplift, from the capacity-limited combination," if _ucl else "analysis net uplift"' in SRC
@@ -315,3 +315,8 @@ def test_r28_h1_printed_row_names_the_self_weight_in_the_recorded_check():
     assert "the analysis P excludes the column self-weight, which the recorded H1-1 check below adds" in h
     m2 = dict(m, design_note="K = 1.0")                    # no self-weight stated: no note
     assert "excludes the column self-weight" not in R._member_calc_block(m2)
+
+
+def test_r28_scorecard_deflection_label_names_record_limits():
+    assert '"Beam deflection (IBC Table 1604.3 limits%s)" % ("; design records at their own limits" if _rd else "")' in SRC
+    assert "of each record's own limit" in SRC

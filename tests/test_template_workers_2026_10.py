@@ -299,3 +299,19 @@ def test_r27_record_deflection_skips_ponding_and_reads_serviceability():
 def test_r27_f56d_splice_clause_and_cladding_sentence():
     assert r"F4\.6d|F5\.6d" in SRC
     assert '" and the fa&ccedil;ade cladding" if _clad else ""' in SRC
+
+
+def test_r28_h1_printed_row_names_the_self_weight_in_the_recorded_check():
+    m = {"id": "lateral_col-BOX30X4",
+         "inputs": {"kind": "col", "role": "lateral_col", "section": "BOX30X4", "P_comp_kip": 12174.84,
+                    "Mz_kipin": 27217.6, "My_kipin": 28988.3, "V_kip": 136.75},
+         "capacity": {"phiPn_kip": 18048.7, "phiMn_kipft": 15330.0, "phiVn_kip": 4752.0},
+         "limit_state": "combined axial + biaxial flexure, H1-1a", "DC": 0.966,
+         "design_note": "Pu includes 1.2 x column self-weight (358 kip, full height, conservative)",
+         "checks": [{"limit_state": "combined axial + biaxial flexure, H1-1a", "cited": "AISC 360-22 H1.1 Eq. H1-1a",
+                     "Pu_kip": 12532.4, "phiPn_kip": 18048.7, "Mux_kipft": 2268.1, "phiMnx_kipft": 15330.0,
+                     "Muy_kipft": 2415.7, "phiMny_kipft": 15330.0, "DC": 0.966}]}
+    h = R._member_calc_block(m)
+    assert "the analysis P excludes the column self-weight, which the recorded H1-1 check below adds" in h
+    m2 = dict(m, design_note="K = 1.0")                    # no self-weight stated: no note
+    assert "excludes the column self-weight" not in R._member_calc_block(m2)

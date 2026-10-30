@@ -1083,12 +1083,22 @@ def _member_calc_block(m, a341=None):
         _terms = C.h1_moment_terms(m)[0] if hasattr(C, "h1_moment_terms") else ["Mx", "My"]
         _tl = ", ".join({"Mx": "M<sub>x</sub>", "My": "M<sub>y</sub>"}[a] for a in _terms)
         _miss = [a for a in ("Mx", "My") if a not in _terms and a in C.printed_envelope(m)] if C else []
+        # the recorded H1-1 check can add the column self-weight to the analysis P (stated in the design note); say so
+        # where it reads higher than the printed-envelope ratio, so the two numbers do not look inconsistent
+        _h1rec = [C._dc_num(c.get("DC")) for c in chks if isinstance(c, dict)
+                  and re.search(r"H1-1|H1\.1", str(c.get("cited", "")) + " " + str(c.get("limit_state", "")))]
+        _h1rec = max([x for x in _h1rec if isinstance(x, (int, float))], default=None)
+        _swt = " ".join(str(m.get(k_, "")) for k_ in ("design_note", "note", "limit_state"))
         for q, d_, c_, r in ratios:
             if q == "H1":
-                rr.append((_q_label(q), "H1-1a/b from the printed P, %s and strengths%s" % (
+                _sw = (_h1rec is not None and _h1rec > r + 0.002 and re.search(r"self-weight", _swt, re.I))
+                rr.append((_q_label(q), "H1-1a/b from the printed P, %s and strengths%s%s" % (
                     _tl, ("; no printed strength for %s, so this ratio omits that term (see the limit-state "
                           "checks below)" % " and ".join({"Mx": "M<sub>x</sub>", "My": "M<sub>y</sub>"}[a] for a in _miss))
-                    if _miss else ""), _n(r, dc=True), "AISC 360-22 H1.1"))
+                    if _miss else "",
+                    ("; the analysis P excludes the column self-weight, which the recorded H1-1 check below adds "
+                     "(design note), so that check reads %s" % _n(_h1rec, dc=True)) if _sw else ""),
+                    _n(r, dc=True), "AISC 360-22 H1.1"))
             else:
                 rr.append((_q_label(q), "%s / %s %s" % (_n(d_), _n(c_), _q_unit(q)), _n(r, dc=True), ""))
         h.append(_calc("Printed demand &divide; printed available strength", rr))

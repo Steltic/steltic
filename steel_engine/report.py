@@ -1068,11 +1068,15 @@ def _member_calc_block(m, a341=None):
                 continue
             lab, unit, sc = _human_key(k)
             val = _n(float(v) * sc) if isinstance(v, (int, float)) and not isinstance(v, bool) else _n(v)
-            rows.append((lab, "available strength", val + ((" " + unit) if unit else ""), ""))
+            # strengths are labelled as such; stud counts, cambers and other design quantities are design values
+            _str = bool(re.search(r"phi|_kip|kipft|kipin|[PMVRT]n\b|[PMVRT]n_", str(k))) and \
+                not re.search(r"camber|stud|count|^n_|number", str(k), re.I)
+            rows.append((lab, "available strength" if _str else "design value", val + ((" " + unit) if unit else ""), ""))
     elif cap not in (None, "", {}) and not chks:     # with checks, the governing strength is in the checks table
         rows.append(("available strength of the governing limit state", "", _n(cap), ""))
     if rows:
-        h.append(_calc("Available strength (AISC 360-22, as recorded)", rows))
+        h.append(_calc("Available strength and design values (AISC 360-22, as recorded)"
+                       if any(r[1] == "design value" for r in rows) else "Available strength (AISC 360-22, as recorded)", rows))
     ratios = C.envelope_ratios(m) if C else []
     if ratios:
         rr = []

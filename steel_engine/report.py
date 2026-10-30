@@ -2628,7 +2628,7 @@ def _design_basis_codes(cfg, s, root=None, pkg=None, ctx=None):
                    ("%s / %s g" % (_sa(s.get("SS")), _sa(s.get("S1")))) if s.get("SS") else "%s g" % _sa(s.get("S1", 0))],
                   ["S<sub>DS</sub> / S<sub>D1</sub>", "%s / %s g" % (_sa(s.get("SDS")), _sa(s.get("SD1")))],
                   ["Seismic Design Category (&sect;11.6)", sdct],
-                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub> (Table 12.2-1)", _rcdo_txt(cfg, s)],
+                  ["R / C<sub>d</sub> / &Omega;<sub>0</sub> (%s)" % _r_table(cfg), _rcdo_txt(cfg, s)],
                   ["Redundancy factor &rho;", _rho_txt(cfg, sdc)]]
         try:
             from preflight import drift_relief, relief_active
@@ -3353,7 +3353,12 @@ def _gravity_loads_note(cfg=None, pkg=None):
         _has_r = float(cfg.get("rain") or 0.0) > 0 or any(float(v or 0) > 0 for v in _rbl.values())
     except (TypeError, ValueError):
         _has_r = False
-    rtxt = ("The analysis model carries a uniform roof live load L<sub>r</sub>"
+    try:
+        _has_lr = float(cfg.get("Lr", 20.0) or 0.0) > 0
+    except (TypeError, ValueError):
+        _has_lr = True
+    rtxt = ("The analysis model carries " + ("a uniform roof live load L<sub>r</sub>" if _has_lr else
+                                              "no roof live load (none in the design criteria)")
             + (", the uniform roof snow load S" if snow > 0 else "")
             + (" and the rain load R with its ponding head (rain basis in the load table above)" if _has_r else "") + ".")
     if snow > 0 and _snow_rec:
@@ -4479,6 +4484,14 @@ _DETAIL_CHECKS = {
 }
 
 
+def _r_table(cfg):
+    """The ASCE 7-22 table the seismic coefficients come from: Table 15.4-1 for a nonbuilding structure similar to a
+    building where the cfg declares it, else Table 12.2-1."""
+    blob = " ".join(str(cfg.get(k) or "") for k in ("system", "seis_factor_basis", "system_X", "system_Y")) + " " + \
+        str((cfg.get("height_limit") or {}).get("basis") if isinstance(cfg.get("height_limit"), dict) else "")
+    return "Table 15.4-1" if re.search(r"15\.4-1", blob) else "Table 12.2-1"
+
+
 def _uplift_summary(pkg):
     """One sentence on the net-uplift load path from the base-reaction envelope (19r)."""
     br = _base_reactions(pkg)
@@ -4519,10 +4532,20 @@ def _uplift_summary(pkg):
         parts.append("the existing column bases and footings, whose capacity is established by the evaluation (the base "
                      "records give the required strengths)")
     how = " and ".join(parts) or "the anchor rods of the base-plate design"
-    return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest net uplift is <b>%s kip</b> at "
-            "base %s (%s). It is resisted by %s (Chapter 10) and delivered to the foundations (Chapter 11).</p>"
+    # the base records may design for more than the analysis uplift (AISC 341-22 D2.6a, overstrength): name it
+    def _td(c):
+        d = c.get("demand") if isinstance(c.get("demand"), dict) else {}
+        try:
+            return float(d.get("T_design_kip") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    tmax = max([_td(c) for c in recs] or [0.0])
+    des = ("; the base records design for up to <b>%s kip</b> (the design tension of Chapters 10 and 11)" % _n(tmax)
+           if tmax > float(up[1].get("uplift") or 0.0) * 1.005 else "")
+    return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest analysis net uplift is <b>%s kip</b> "
+            "at base %s (%s)%s. It is resisted by %s (Chapter 10) and delivered to the foundations (Chapter 11).</p>"
             % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is", _n(up[1].get("uplift")),
-               _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo")), how))
+               _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo")), des, how))
 
 
 _NEG_341 = re.compile(r"not appl|does not apply|do not apply|n/a|not required|\bno\b|without", re.I)
@@ -4603,9 +4626,14 @@ def _aisc341_detailing(cfg, pkg, sf=None, ctx=None):
     intro = ("<p>Required AISC 341-22 ductile-detailing and capacity-design checks for each seismic force-resisting "
              "system; the computed values are in the capacity-design record below and in Appendix A.</p>")
     extra = ("<h4>Capacity-design results (calc package record)</h4>" + _record_html(cap)) if cap else ""
-    note = ("<p class='cnote'>Weld inspection (NDT) and the C&amp;C cladding are confirmed on the drawings and the "
-            "connection submittal%s.</p>" % ("; AISC 358 prequalification limits are listed with the moment connections"
-                                           if ctx.get("mf358") else ""))
+    _clad = True
+    try:
+        _clad = float(cfg.get("clad", 1.0) or 0.0) > 0
+    except (TypeError, ValueError):
+        pass
+    note = ("<p class='cnote'>Weld inspection (NDT)%s %s confirmed on the drawings and the connection submittal%s.</p>"
+            % (" and the C&amp;C cladding" if _clad else "", "are" if _clad else "is",
+               "; AISC 358 prequalification limits are listed with the moment connections" if ctx.get("mf358") else ""))
     return intro + "".join(out) + extra + _uplift_summary(pkg) + note
 
 
@@ -5126,7 +5154,7 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
                      "(listed below)" if _bj else ""), "PASS" if bd[0] else ("JUSTIFIED" if _bj else "FAIL")])
     hl = _QA.get("height_limit")
     if hl:
-        rows.append(["Structural height limit (Table 12.2-1)", hl[1], "PASS" if hl[0] else "FAIL"])
+        rows.append(["Structural height limit (%s)" % _r_table(cfg), hl[1], "PASS" if hl[0] else "FAIL"])
     C = _consistency_mod()
     for what, key in (("Member", "members"), ("Connection", "connections")):
         ents = [m for m in ((pkg or {}).get(key) or []) if isinstance(m, dict)] if isinstance(pkg, dict) else []
@@ -5348,6 +5376,28 @@ def _pkg_camber(pkg):
     return out
 
 
+_ROOF_DEFL_WORDS = {"plaster": "supporting a plaster or stucco ceiling", "nonplaster": "supporting a nonplaster ceiling",
+                    "none": "not supporting a ceiling",
+                    "floor": "at the top tier, an occupied platform designed as a floor"}
+
+
+def _roof_defl_txt(cfg):
+    """'; roof members ...: L/a and L/b' -- per roof level where cfg['roof_deflection'] gives levels."""
+    if not hasattr(E, "defl_limits"):
+        return ""
+    rd = cfg.get("roof_deflection")
+    if isinstance(rd, dict):
+        lv = sorted(k for k in rd if str(k) != "default")
+        parts = ["level %s roof %s: L/%d and L/%d" % ((k,) + (_ROOF_DEFL_WORDS.get(E.roof_defl_category(cfg, k), ""),)
+                                                    + tuple(E.defl_limits(cfg, True, k))) for k in lv]
+        parts.append("other roof members %s: L/%d and L/%d" % ((_ROOF_DEFL_WORDS.get(E.roof_defl_category(cfg), ""),)
+                                                              + tuple(E.defl_limits(cfg, True))))
+        return "; " + "; ".join(parts)
+    return "; roof members %s: L/%d and L/%d" % ((_ROOF_DEFL_WORDS.get(E.roof_defl_category(cfg),
+                                                                      _ROOF_DEFL_WORDS["plaster"]),)
+                                                + tuple(E.defl_limits(cfg, True)))
+
+
 def _deflection_section(cfg, pkg=None):
     """Beam deflection table = the engine's beam_deflection GATE (engine3d.beam_serviceability_detail,
     one row per governing group), so the report can never print NG beside a gate PASS or vice versa
@@ -5368,13 +5418,7 @@ def _deflection_section(cfg, pkg=None):
          "least 3/4 in.; it is a suggestion, not a specified camber (any specified camber is stated with the member "
          "design).</p>"
          % (_n(det.get("basis") or "the tributary loads of each beam"),
-            "; roof members %s: L/%d and L/%d" % (
-                {"plaster": "supporting a plaster or stucco ceiling", "nonplaster": "supporting a nonplaster ceiling",
-                 "none": "not supporting a ceiling",
-                 "floor": "at the top tier, an occupied platform designed as a floor"}.get(
-                     str(cfg.get("roof_deflection") or "plaster").lower(),
-                                                         "supporting a plaster or stucco ceiling"),
-                *E.defl_limits(cfg, True)) if hasattr(E, "defl_limits") else "")]
+            _roof_defl_txt(cfg))]
     if det.get("error"):
         h.append(f"<p class='note'><b>Check FAILS &mdash; NOT EVALUATED:</b> {_n(det['error'])}</p>")
     grp = det.get("groups") or []

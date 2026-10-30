@@ -809,9 +809,10 @@ def _finish_model(cfg, model):
         else:
             nonload.append(bm["etag"])
     if nonload:
-        model["warnings"].append("%d beam(s) not on a grid span nor inside a framed bay carry no floor "
-                                 "load (sloped/off-level/diagonal), e.g. %s"
-                                 % (len(nonload), ", ".join(str(t) for t in nonload[:4])))
+        model["warnings"].append("%d sloped, off-level or diagonal beam(s), not on a grid span or inside a framed bay, "
+                                 "carry no floor load in the analysis model"
+                                 % len(nonload))
+        model["nonload_beams"] = list(nonload)
     # beams per parent span
     model["by_span"] = {}
     for bm in model["beams"]:

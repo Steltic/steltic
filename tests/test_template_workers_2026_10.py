@@ -200,3 +200,34 @@ def test_ch10_brace_branches_and_ch6_governing_text():
     assert '_brole not in ("brace", "sfrs") or re.search(r"plan bracing|horizontal truss", _bty, re.I)' in SRC
     assert 'f"{cx:.1f}% / {cy:.1f}%"' in SRC and '"%.1f%%" % (100.0 * float(q.get("mass", 0) or 0))' in SRC
     assert 'ls_txt = gchk.get("limit_state")' in SRC
+
+
+def test_roof_deflection_per_level_and_r_table():
+    cfg = {"roof_deflection": {1: "nonplaster", "default": "plaster"}}
+    assert R.E.defl_limits(cfg, True, 1) == (240.0, 180.0) and R.E.defl_limits(cfg, True, 2) == (360.0, 240.0)
+    assert R.E.defl_limits({"roof_deflection": "none"}, True) == (180.0, 120.0)
+    txt = R._roof_defl_txt(cfg)
+    assert "level 1 roof supporting a nonplaster ceiling: L/240 and L/180" in txt and "other roof members" in txt
+    assert R._r_table({"system": "OCBF, ASCE 7-22 Table 15.4-1 nonbuilding"}) == "Table 15.4-1"
+    assert R._r_table({"system": "SCBF"}) == "Table 12.2-1"
+
+
+def test_occupied_top_roof_live_in_theta_px():
+    import static_model as SM
+    src = open(R.E.__file__, encoding="utf-8").read()
+    assert "_SM.occupied_roof_live_psf(cfg, k)" in src
+    sm = open(SM.__file__, encoding="utf-8").read()
+    assert "e.g. %s" not in sm.split("not on a grid span")[0][-400:] and "carry no floor load in the analysis model" in sm
+
+
+def test_uplift_sentence_names_the_design_tension():
+    pkg = {"connections": [{"id": "conn-base-A1", "type": "exposed base plate, anchor rods",
+                            "demand": {"T_design_kip": 71.6}}]}
+    import types
+    R._base_reactions_orig = R._base_reactions
+    try:
+        R._base_reactions = lambda p: {101: {"uplift": 54.2, "uplift_combo": "0.9D-E"}}
+        html = R._uplift_summary(pkg)
+    finally:
+        R._base_reactions = R._base_reactions_orig
+    assert "54.2" in html and "71.6" in html

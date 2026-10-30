@@ -231,3 +231,10 @@ def test_uplift_sentence_names_the_design_tension():
     finally:
         R._base_reactions = R._base_reactions_orig
     assert "54.2" in html and "71.6" in html
+
+
+def test_capacity_dict_labels_design_values():
+    m = {"id": "floor-W21X50", "inputs": {"kind": "beam", "section": "W21X50"},
+         "capacity": {"phiMn_kipft": 412.0, "n_studs": 24, "camber_in": 0.75}, "DC": 0.8}
+    html = R._member_calc_block(m)
+    assert "design value" in html and "available strength" in html

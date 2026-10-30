@@ -258,3 +258,17 @@ def test_spsw_ch10_basis_and_splice_system_clause_and_ecl_scope():
     assert r'E3\.6g|F2\.6d|F3\.6d|F4\.6d' in SRC
     # capacity-limited cases are not described as governing columns only
     assert "other SFRS members, connections and bases by their capacity-design records" in SRC
+
+
+def test_r26c_scorecard_record_deflection_chords_uplift_gravity_note():
+    # scorecard beam deflection also reports the design-record deflection rows
+    pkg = {"members": [{"id": "infill-W27X84", "checks": [
+        {"limit_state": "total deflection: wet load on the bare beam", "DC": 0.69},
+        {"limit_state": "story drift ratio", "DC": 0.95}]}]}
+    assert R._record_deflection_max(pkg) == (0.69, "infill-W27X84")
+    assert R._record_deflection_max({"members": []}) is None
+    assert "design-record deflection rows up to %.2f (%s)" in SRC
+    # rigid-diaphragm chord clause, capacity-limited uplift wording and the design-basis gravity note come from cfg
+    assert 'cfg.get("diaphragm_chords")' in SRC
+    assert '"net uplift, from the capacity-limited combination," if _ucl else "analysis net uplift"' in SRC
+    assert 'cfg.get("design_basis_gravity_note")' in SRC

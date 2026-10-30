@@ -1979,9 +1979,11 @@ def beam_serviceability_detail(cfg):
         for (k,dd,i,j),v in sorted(sd.items()):
             L=v["L"]
             if L<=0: continue
-            _lL,_lT=defl_limits(cfg,k>=NF,k)
+            _rf=k>=NF or (isinstance(cfg.get("roof_deflection"),dict)
+                          and (k in cfg["roof_deflection"] or str(k) in cfg["roof_deflection"]))
+            _lL,_lT=defl_limits(cfg,_rf,k)
             rL=v["LL"]/(L/_lL); rT=v["TL"]/(L/_lT)
-            out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=(k>=NF),dLL=v["LL"],dTL=v["TL"],
+            out["groups"].append(dict(sec=v.get("sec"),L=L,trib=None,roof=_rf,dLL=v["LL"],dTL=v["TL"],
                                       rLL=rL,rTL=rT,span=(k,dd,i,j),composite=v.get("composite"),
                                       camber=v.get("camber"),pre=v.get("pre"),limL=_lL,limT=_lT))
             wLLr=max(wLLr,rL); wTLr=max(wTLr,rT)

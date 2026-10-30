@@ -5245,9 +5245,12 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
         _bj = len(bd) > 2 and bd[2]
         # the member design records carry their own deflection rows (infill beams, roof members): report the largest
         _rd = _record_deflection_max(pkg)
-        _rd_txt = ("; design-record deflection rows up to %.2f (%s)" % (_rd[0], _esc(_rd[1]))) if _rd else ""
+        _rd_txt = ("; design-record deflection rows up to %.2f of each record's own limit (%s)" % (_rd[0], _esc(_rd[1]))) if _rd else ""
         _ok = bd[0] and not (_rd and _rd[0] > 1.0 + 1e-9)
-        rows.append(["Beam deflection (IBC Table 1604.3 limits)", bd[1] + _rd_txt + ("; addressed by engineering "
+        # a design record can carry a stricter limit than IBC Table 1604.3 (crane runways L/800, DG7), so the label
+        # names both bases when the record rows are quoted
+        rows.append(["Beam deflection (IBC Table 1604.3 limits%s)" % ("; design records at their own limits" if _rd else ""),
+                     bd[1] + _rd_txt + ("; addressed by engineering "
                      "justification (listed below)" if _bj else ""), "PASS" if _ok else ("JUSTIFIED" if _bj else "FAIL")])
     hl = _QA.get("height_limit")
     if hl:

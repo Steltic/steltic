@@ -3380,8 +3380,13 @@ def _gravity_loads_note(cfg=None, pkg=None):
                  "unbalanced or sliding snow is carried.")
     if not _has_r and cfg.get("rain_basis"):
         rtxt += " Rain and ponding: see the rain basis in the load table above."
+    try:
+        _clad = float(cfg.get("clad") or 0.0) > 0.0 or bool(cfg.get("clad_by_level"))
+    except (TypeError, ValueError):
+        _clad = True
     return ("<p class='cnote'>Dead load D is the member self-weight plus the superimposed dead load (MEP, ceilings, "
-            "finishes) and the fa&ccedil;ade cladding. %s%s %s %s</p>" % (ptxt, wtxt, _llr_sentence(cfg, pkg), rtxt))
+            "finishes)%s. %s%s %s %s</p>" % (" and the fa&ccedil;ade cladding" if _clad else "", ptxt, wtxt,
+                                             _llr_sentence(cfg, pkg), rtxt))
 
 
 def _rain_txt(cfg):
@@ -4874,7 +4879,7 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 typ = re.split(r"[:;(]", _crt)[0].strip(" ,") if _crt else ""
                 typ = _esc(typ) if typ and len(typ) <= 90 else "column splice"
                 # the system splice clause the record is designed to (E3.6g SMF, F2.6d SCBF, F3.6d EBF, F4.6d BRBF)
-                _sysc = sorted(set(re.findall(r"\b(E3\.6g|F2\.6d|F3\.6d|F4\.6d)\b",
+                _sysc = sorted(set(re.findall(r"\b(E3\.6g|F2\.6d|F3\.6d|F4\.6d|F5\.6d)\b",
                                               _crt + " " + str((_crec or {}).get("cited") or ""))))
                 _d25 = ("; AISC 341-22 D2.5" + "".join(", " + c_ for c_ in _sysc)) if a341 else ""
                 if any(t_ in _crt.lower() for t_ in ("cjp", "groove")):

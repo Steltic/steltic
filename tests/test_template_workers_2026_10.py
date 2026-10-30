@@ -293,3 +293,9 @@ def test_r27_record_deflection_skips_ponding_and_reads_serviceability():
                                                   "total_ratio": "L/239", "total_limit": "L/180"}}]}
     d, mid = R._record_deflection_max(pkg)
     assert mid == "floor-W16X31" and abs(d - 180.0 / 239.0) < 1e-9
+
+
+
+def test_r27_f56d_splice_clause_and_cladding_sentence():
+    assert r"F4\.6d|F5\.6d" in SRC
+    assert '" and the fa&ccedil;ade cladding" if _clad else ""' in SRC

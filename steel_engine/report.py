@@ -3226,12 +3226,11 @@ def _irregularity_section(cfg, runs, sf=None):
         if rr:
             dmin = min(rr, key=lambda t: t[2])
             typ = "4b EXTREME WEAK" if dmin[2] < 0.65 else "4a WEAK"
-            # both directions where they reach the same lowest ratio (as printed)
-            _tie = [t for t in rr if t[0] != dmin[0] and round(100 * t[2]) == round(100 * dmin[2])]
-            v4 = ("Type %s STORY: YES &mdash; %s story %d strength = %.0f%% of the story above "
-                  "(declared story strengths)" % (typ, dmin[0], dmin[1], 100 * dmin[2])) if not _tie else (
-                 "Type %s STORY: YES &mdash; %s story %d and %s story %d strength = %.0f%% of the story above "
-                 "(declared story strengths)" % (typ, dmin[0], dmin[1], _tie[0][0], _tie[0][1], 100 * dmin[2]))
+            # every direction with a story weaker than the story above, the governing one first (lowest ratio each)
+            _per = [dmin] + [min((t for t in rr if t[0] == d_), key=lambda t: t[2])
+                             for d_ in ("X", "Y") if d_ != dmin[0] and any(t[0] == d_ for t in rr)]
+            v4 = ("Type %s STORY: YES &mdash; %s of the story above (declared story strengths)"
+                  % (typ, ", ".join("%s story %d strength = %.0f%%" % (t[0], t[1], 100 * t[2]) for t in _per)))
             if dmin[2] < 0.65:
                 if sdc in ("E", "F"): trig["12.3.3.1"].append("V4b")
                 elif sdc == "D": trig["12.3.3.2"].append("V4b")
@@ -3623,6 +3622,10 @@ def _combo_table(cases):
         ap = getattr(c, "applies", None)
         if ap:
             return ", ".join({"col": "columns", "beam": "beams", "brace": "braces"}.get(a, a) for a in sorted(ap)) + " only"
+        if co and (_case_kind(c).startswith("ecl") or "Ecl" in str(c[0]) or "capacity-limited" in str(c[0])):
+            # the capacity-limited envelope enters the column design; the other SFRS members, connections and
+            # bases take the same capacity-limited forces in their capacity-design records
+            return "columns (analysis envelope); other SFRS members, connections and bases by their capacity-design records"
         return "columns only" if co else "all members"
     def lf(c):
         f = c[2]; hi = getattr(f, "hi", None)
@@ -4830,10 +4833,14 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 # a splice record names the splice ("SMF column splice, CJP groove welded, ..."): print its first clause
                 typ = re.split(r"[:;(]", _crt)[0].strip(" ,") if _crt else ""
                 typ = _esc(typ) if typ and len(typ) <= 90 else "column splice"
+                # the system splice clause the record is designed to (E3.6g SMF, F2.6d SCBF, F3.6d EBF, F4.6d BRBF)
+                _sysc = sorted(set(re.findall(r"\b(E3\.6g|F2\.6d|F3\.6d|F4\.6d)\b",
+                                              _crt + " " + str((_crec or {}).get("cited") or ""))))
+                _d25 = ("; AISC 341-22 D2.5" + "".join(", " + c_ for c_ in _sysc)) if a341 else ""
                 if any(t_ in _crt.lower() for t_ in ("cjp", "groove")):
-                    basis = "AISC 360-22 J2 (complete-joint-penetration groove welds)" + ("; AISC 341-22 D2.5" if a341 else "")
+                    basis = "AISC 360-22 J2 (complete-joint-penetration groove welds)" + _d25
                 else:
-                    basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + ("; AISC 341-22 D2.5" if a341 else "")
+                    basis = "AISC 360-22 J1.4 (bearing) / J3 splice plates" + _d25
         elif kind == "brace":
             typ = "brace-to-gusset"
             dem = "P = +%s / &minus;%s kip (tension / compression)" % (_n(Pt), _n(Pc))
@@ -4861,6 +4868,10 @@ def _connection_demands(cfg, pkg, reX=None, sf=None, ctx=None):
                 basis = "AISC 360-22 Ch. J for the design forces of its connection record (not an SFRS brace connection)"
             elif not a341:
                 basis = "AISC 360-22 Ch. J / Ch. K for the analysis forces (Whitmore J4, block shear J4.3, welds J2)"
+            elif "SPSW" in fams and _bre and re.search(r"web plate", _bty, re.I):
+                # SPSW web strips are modelled as brace elements; the web is connected to the boundary elements
+                typ = _esc(re.split(r"[:;(]", _bty)[0].strip(" ,"))
+                basis = "web expected tension R<sub>y</sub>F<sub>y</sub>t at &alpha; (AISC 341-22 F5.6c)"
             else:
                 basis = ("adjusted brace strength (AISC 341-22 F4.6c)" if "BRBF" in fams else
                          "capacity-limited by the link (AISC 341-22 F3.6)" if "EBF" in fams else

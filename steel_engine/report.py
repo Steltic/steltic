@@ -3775,7 +3775,7 @@ def _record_deflection_max(pkg):
             continue
         for c in (m.get("checks") or []):
             ls = str((c or {}).get("limit_state") or "") if isinstance(c, dict) else ""
-            if not re.search(r"deflection", ls, re.I) or re.search(r"drift|lateral|sway|story", ls, re.I):
+            if not re.search(r"deflection", ls, re.I) or re.search(r"drift|lateral|sway|story|ponding", ls, re.I):
                 continue
             d = C._dc_num(c.get("DC")) if C else None
             if d is None:
@@ -3785,6 +3785,15 @@ def _record_deflection_max(pkg):
                     continue
             if best is None or d > best[0]:
                 best = (d, str(m.get("id", "")))
+        # member serviceability records (live / total deflection as L/n against an L/n limit)
+        sv = m.get("serviceability") if isinstance(m.get("serviceability"), dict) else {}
+        for ra, li in (("live_ratio", "live_limit"), ("total_ratio", "total_limit")):
+            mr = re.match(r"\s*L\s*/\s*([\d.]+)", str(sv.get(ra) or ""))
+            ml = re.match(r"\s*L\s*/\s*([\d.]+)", str(sv.get(li) or ""))
+            if mr and ml and float(mr.group(1)) > 0:
+                d = float(ml.group(1)) / float(mr.group(1))
+                if best is None or d > best[0]:
+                    best = (d, str(m.get("id", "")))
     return best
 
 

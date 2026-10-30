@@ -2926,8 +2926,9 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None, basis=None):
     just = just or (_lead
             + _rig + (". The roof (bare metal deck) is idealized as a <b>flexible diaphragm</b> (&sect;12.3.1.1): the roof "
                       "force reaches the vertical elements by tributary area" if _mixed else "")
-            + ". Collectors/drag struts deliver the diaphragm shear to the frames; chord "
-            "forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. " + _coll
+            + ". Collectors/drag struts deliver the diaphragm shear to the frames; "
+            + (_esc(str(cfg["diaphragm_chords"])).rstrip(". ") + ". " if cfg.get("diaphragm_chords") else
+               "chord forces (M<sub>diaph</sub>/depth) are resisted by the perimeter beams. ") + _coll
             + ("; the MWFRS wind story forces of Chapter 3 exceed F<sub>px</sub> at %d of the %d levels of this "
                "building and are designed for as well." % (n_wind, NF) if wind_gov else ".") + "</p>")
     hdr = ["Level x", "w<sub>px</sub> (kip)"] + (
@@ -3764,6 +3765,29 @@ def _joint_figure(cfg):
     fig.suptitle("Modelled joint & base fixity", fontweight="bold")
     return _b64(fig)
 
+def _record_deflection_max(pkg):
+    """(largest D/C, member id) of the deflection rows in the member design records (live / total deflection of infill
+    beams, roof members, ...), or None. Drift and lateral-sway rows are not beam deflection."""
+    best = None
+    C = _consistency_mod()
+    for m in ((pkg or {}).get("members") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(m, dict):
+            continue
+        for c in (m.get("checks") or []):
+            ls = str((c or {}).get("limit_state") or "") if isinstance(c, dict) else ""
+            if not re.search(r"deflection", ls, re.I) or re.search(r"drift|lateral|sway|story", ls, re.I):
+                continue
+            d = C._dc_num(c.get("DC")) if C else None
+            if d is None:
+                try:
+                    d = float(c.get("DC"))
+                except (TypeError, ValueError):
+                    continue
+            if best is None or d > best[0]:
+                best = (d, str(m.get("id", "")))
+    return best
+
+
 def _floor_serviceability(pkg):
     """Agent-recorded member serviceability (live / total deflection, camber); empty string when none (the engine
     deflection table follows in the same chapter)."""
@@ -4553,9 +4577,12 @@ def _uplift_summary(pkg):
     tmax = max([_td(c) for c in recs] or [0.0])
     des = ("; the base records design for up to <b>%s kip</b> (the design tension of Chapters 10 and 11)" % _n(tmax)
            if tmax > float(up[1].get("uplift") or 0.0) * 1.005 else "")
-    return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest analysis net uplift is <b>%s kip</b> "
+    _ucl = bool(re.search(r"Ecl|capacity-limited", str(up[1].get("uplift_combo") or "")))
+    return ("<p>Net uplift load path: %d column base%s %s in net tension; the largest %s is <b>%s kip</b> "
             "at base %s (%s)%s. It is resisted by %s (Chapter 10) and delivered to the foundations (Chapter 11).</p>"
-            % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is", _n(up[1].get("uplift")),
+            % (n_up, "s" if n_up > 1 else "", "are" if n_up > 1 else "is",
+               "net uplift, from the capacity-limited combination," if _ucl else "analysis net uplift",
+               _n(up[1].get("uplift")),
                _grid_txt(up[0], up[1]), _combo_label(up[1].get("uplift_combo")), des, how))
 
 
@@ -5182,8 +5209,12 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg=None, root=None, reY=None):
     bd = _QA.get("beam_deflection")
     if bd:
         _bj = len(bd) > 2 and bd[2]
-        rows.append(["Beam deflection (IBC Table 1604.3 limits)", bd[1] + ("; addressed by engineering justification "
-                     "(listed below)" if _bj else ""), "PASS" if bd[0] else ("JUSTIFIED" if _bj else "FAIL")])
+        # the member design records carry their own deflection rows (infill beams, roof members): report the largest
+        _rd = _record_deflection_max(pkg)
+        _rd_txt = ("; design-record deflection rows up to %.2f (%s)" % (_rd[0], _esc(_rd[1]))) if _rd else ""
+        _ok = bd[0] and not (_rd and _rd[0] > 1.0 + 1e-9)
+        rows.append(["Beam deflection (IBC Table 1604.3 limits)", bd[1] + _rd_txt + ("; addressed by engineering "
+                     "justification (listed below)" if _bj else ""), "PASS" if _ok else ("JUSTIFIED" if _bj else "FAIL")])
     hl = _QA.get("height_limit")
     if hl:
         rows.append(["Structural height limit (%s)" % _r_table(cfg), hl[1], "PASS" if hl[0] else "FAIL"])
@@ -5739,7 +5770,9 @@ def _design_basis(cfg):
                          if len(H) > 1 or cfg.get("top_is_floor") else "")      # one-story: roof only
                         + "roof D %s psf, L<sub>r</sub> %s psf%s%s"
                         % (_n(cfg.get("D_roof")), _n(cfg.get("Lr", 20.0)), (", S %s psf" % _n(snow)) if snow > 0 else "",
-                           _rain_txt(cfg))],
+                           _rain_txt(cfg))
+                        + (("; " + _esc(str(cfg["design_basis_gravity_note"]))) if cfg.get("design_basis_gravity_note")
+                           else "")],
       ["Seismic", "S<sub>DS</sub> = %s g, S<sub>D1</sub> = %s g; R / C<sub>d</sub> / &Omega;<sub>0</sub> = %s; I<sub>e</sub> = %s"
                   % (_sa(s.get("SDS")), _sa(s.get("SD1")), _rcdo_txt(cfg, s), _fac(s.get("Ie", 1.0)))],
     ]

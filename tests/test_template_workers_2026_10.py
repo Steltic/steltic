@@ -238,3 +238,8 @@ def test_capacity_dict_labels_design_values():
          "capacity": {"phiMn_kipft": 412.0, "n_studs": 24, "camber_in": 0.75}, "DC": 0.8}
     html = R._member_calc_block(m)
     assert "design value" in html and "available strength" in html
+
+
+def test_ch10_lists_joint_records_and_notch_clauses():
+    assert '_mid = "conn-" + str(m.get("id", "")).lower() + "-"' in SRC
+    assert "(AISC 360-22 A3.1d, A3.1e)" in SRC and "A3.1c, A3.1d" not in SRC

@@ -283,3 +283,13 @@ def test_r26bd_pinned_base_moment_label_and_test_qualified_smf_basis():
     c2 = {"id": "conn-base-y", "type": "embedded moment base", "demand": {"M_kipft": 100.0, "M_design_kipft": 900.0}}
     assert "design moment 900 kip-ft (AISC 341-22 D2.6c)" in R._base_record_row(c2, True)[2]
     assert "joints conformed by qualifying tests (E3.6c(c)(2))" in SRC
+
+
+def test_r27_record_deflection_skips_ponding_and_reads_serviceability():
+    pkg = {"members": [
+        {"id": "infill-L5", "checks": [{"limit_state": "roof ponding stability: b = 0.045 in of deflection per inch", "DC": 0.82},
+                                       {"limit_state": "live-load deflection 0.59 in <= L/240", "DC": 0.39}]},
+        {"id": "floor-W16X31", "serviceability": {"live_ratio": "L/366", "live_limit": "L/240",
+                                                  "total_ratio": "L/239", "total_limit": "L/180"}}]}
+    d, mid = R._record_deflection_max(pkg)
+    assert mid == "floor-W16X31" and abs(d - 180.0 / 239.0) < 1e-9

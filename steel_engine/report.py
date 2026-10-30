@@ -4331,6 +4331,8 @@ def _drift_section(cfg, runs):
                      "%.3f" % (runs["Y"]["dxe"][k-1]*100), "%.3f" % (runs["Y"]["design"][k-1]*100), "OK" if ok else "NG"])
     h.append(_table(["Story", "&delta;<sub>xe</sub>/h X %", "&Delta;/h X %", "&delta;<sub>xe</sub>/h Y %", "&Delta;/h Y %",
                      "&le; limit (X %.2f%% / Y %.2f%%)" % (runs["X"]["limit"]*100, runs["Y"]["limit"]*100)], rows))
+    if cfg.get("drift_table_note"):                 # e.g. stand-in members whose drifts the design records scale
+        h.append("<p class='cnote'>%s</p>" % _esc(str(cfg["drift_table_note"])))
     _db = _demand_basis(cfg)
     if _db == "MRSA":
         h.append("<p class='cnote'>Drift analysis: modal response spectrum analysis (&sect;12.9.1) of the P-&Delta; model "

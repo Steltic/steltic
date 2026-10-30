@@ -320,3 +320,8 @@ def test_r28_h1_printed_row_names_the_self_weight_in_the_recorded_check():
 def test_r28_scorecard_deflection_label_names_record_limits():
     assert '"Beam deflection (IBC Table 1604.3 limits%s)" % ("; design records at their own limits" if _rd else "")' in SRC
     assert "of each record's own limit" in SRC
+
+
+def test_r28_drift_table_note_from_cfg():
+    assert 'if cfg.get("drift_table_note"):' in SRC
+    assert '_esc(str(cfg["drift_table_note"]))' in SRC

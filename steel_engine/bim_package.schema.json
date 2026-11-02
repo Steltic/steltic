@@ -1,0 +1,1044 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Steltic/steltic_openBIM/contracts/bim_package.schema.json",
+  "title": "Steltic physical-data package v1",
+  "$defs": {
+    "point": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "axis": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/point"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "needs_input"
+          ]
+        },
+        "entity_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "severity",
+        "entity_ids"
+      ],
+      "additionalProperties": false
+    },
+    "member": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "recovered",
+            "declared"
+          ]
+        },
+        "axis": {
+          "$ref": "#/$defs/axis"
+        },
+        "local_y": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/point"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "analysis_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "reference_line": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_offsets": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/axis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "axis",
+        "analysis_ids"
+      ],
+      "additionalProperties": true
+    },
+    "panel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "recovered",
+            "declared"
+          ]
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/point"
+          },
+          "minItems": 3
+        },
+        "thickness": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "material_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "vertices"
+      ],
+      "additionalProperties": true
+    },
+    "opening": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/point"
+          },
+          "minItems": 3
+        }
+      },
+      "required": [
+        "id",
+        "host_id",
+        "vertices"
+      ],
+      "additionalProperties": true
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "recovered",
+            "declared"
+          ]
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "profile_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "offset": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "rotation_deg": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "profile_id",
+              "offset",
+              "rotation_deg"
+            ],
+            "additionalProperties": true
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "family",
+        "dimensions"
+      ],
+      "additionalProperties": true
+    },
+    "material": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "specification": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "specification"
+      ],
+      "additionalProperties": true
+    },
+    "joint": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "point": {
+          "$ref": "#/$defs/point"
+        },
+        "member_ends": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "member_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "enum": [
+                  "start",
+                  "end"
+                ]
+              },
+              "joint_offset": {
+                "$ref": "#/$defs/point"
+              }
+            },
+            "required": [
+              "member_id",
+              "end"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "point",
+        "member_ends"
+      ],
+      "additionalProperties": true
+    },
+    "geometry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "box"
+            },
+            "origin": {
+              "$ref": "#/$defs/point"
+            },
+            "size": {
+              "$ref": "#/$defs/point"
+            },
+            "x_axis": {
+              "$ref": "#/$defs/point"
+            },
+            "y_axis": {
+              "$ref": "#/$defs/point"
+            }
+          },
+          "required": [
+            "type",
+            "origin",
+            "size",
+            "x_axis",
+            "y_axis"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "cylinder"
+            },
+            "origin": {
+              "$ref": "#/$defs/point"
+            },
+            "axis": {
+              "$ref": "#/$defs/point"
+            },
+            "length": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "origin",
+            "axis",
+            "length",
+            "radius"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "extruded_profile"
+            },
+            "origin": {
+              "$ref": "#/$defs/point"
+            },
+            "axis": {
+              "$ref": "#/$defs/point"
+            },
+            "local_y": {
+              "$ref": "#/$defs/point"
+            },
+            "profile_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "length": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "origin",
+            "axis",
+            "local_y",
+            "profile_id",
+            "length"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "polyline"
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/point"
+              },
+              "minItems": 2
+            }
+          },
+          "required": [
+            "type",
+            "points"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "connection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "joint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "design_record_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "scope": {
+          "enum": [
+            "designed",
+            "delegated"
+          ]
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "material_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "geometry": {
+                "$ref": "#/$defs/geometry"
+              },
+              "parameters": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "material_id",
+              "geometry"
+            ],
+            "additionalProperties": true
+          },
+          "minItems": 0
+        },
+        "detail_ref": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "revision"
+          ],
+          "additionalProperties": true
+        },
+        "responsible_party": {
+          "type": "string",
+          "minLength": 1
+        },
+        "representation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "joint_id",
+        "design_record_ids",
+        "scope"
+      ],
+      "additionalProperties": true
+    },
+    "interface": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "responsible_party": {
+          "type": "string",
+          "minLength": 1
+        },
+        "representation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail_ref": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "revision"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "responsible_party",
+        "representation",
+        "detail_ref"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "steltic.bim_package"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "building_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "module": {
+      "enum": [
+        "HR",
+        "CFS"
+      ]
+    },
+    "units": {
+      "const": {
+        "length": "in",
+        "force": "kip",
+        "stress": "ksi"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "enum": [
+            "HR",
+            "CFS"
+          ]
+        },
+        "package_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "engine_files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "mode": {
+          "const": "model_only_replay"
+        },
+        "analysis_executed": {
+          "const": false
+        },
+        "exporter_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "producer_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "module",
+        "package_file",
+        "source_files",
+        "engine_files",
+        "mode",
+        "analysis_executed",
+        "producer_revision"
+      ],
+      "additionalProperties": false
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "point": {
+                "$ref": "#/$defs/point"
+              }
+            },
+            "required": [
+              "id",
+              "point"
+            ],
+            "additionalProperties": true
+          },
+          "minItems": 0
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "node_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 2
+              }
+            },
+            "required": [
+              "id",
+              "node_ids"
+            ],
+            "additionalProperties": true
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "nodes",
+        "elements"
+      ],
+      "additionalProperties": true
+    },
+    "physical": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/member"
+          },
+          "minItems": 0
+        },
+        "panels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/panel"
+          },
+          "minItems": 0
+        },
+        "openings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opening"
+          },
+          "minItems": 0
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/profile"
+          },
+          "minItems": 0
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/material"
+          },
+          "minItems": 0
+        },
+        "joints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/joint"
+          },
+          "minItems": 0
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/connection"
+          },
+          "minItems": 0
+        },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/interface"
+          },
+          "minItems": 0
+        },
+        "analysis_only": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "analysis_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "analysis_id",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "record_dispositions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "not_applicable",
+                  "delegated",
+                  "covered_by_assembly"
+                ]
+              },
+              "entity_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0
+              },
+              "interface_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "record_id",
+              "reason",
+              "status"
+            ],
+            "additionalProperties": true
+          },
+          "minItems": 0
+        },
+        "joint_dispositions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "joint_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "joint_id",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "primary_members": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean"
+                },
+                "basis": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "complete",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            "secondary_members": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean"
+                },
+                "basis": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "complete",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            "connections": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean"
+                },
+                "basis": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "complete",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            "openings": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean"
+                },
+                "basis": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "complete",
+                "basis"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "members",
+        "panels",
+        "openings",
+        "profiles",
+        "materials",
+        "joints",
+        "connections",
+        "interfaces",
+        "analysis_only",
+        "record_dispositions",
+        "joint_dispositions",
+        "coverage"
+      ],
+      "additionalProperties": false
+    },
+    "design_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_pointer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "waived": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "table",
+          "source_pointer",
+          "waived",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "design_context": {
+      "type": "object"
+    },
+    "layout_evidence": {
+      "type": "object"
+    },
+    "source_findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      },
+      "minItems": 0
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "readiness": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "schema_version",
+    "building_id",
+    "module",
+    "units",
+    "provenance",
+    "analysis",
+    "physical",
+    "design_records",
+    "design_context",
+    "layout_evidence",
+    "source_findings",
+    "required",
+    "readiness"
+  ],
+  "additionalProperties": false
+}

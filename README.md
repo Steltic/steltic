@@ -204,3 +204,7 @@ build-your-own-RAG starter kit.
 
 MIT — see [LICENSE](LICENSE), [NOTICE](NOTICE) (third-party data notes) and
 [DISCLAIMER.md](DISCLAIMER.md) (engineering disclaimer; also shown in-app at `/terms`).
+
+## Physical data export and legacy replay
+
+New design jobs record a versioned physical-data package for Steltic openBIM. Completed jobs can be replayed without analysis or redesign. See [the export contract and commands](contract/BIM_EXPORT.md). The export reports unresolved legacy geometry explicitly and preserves the source calculations.

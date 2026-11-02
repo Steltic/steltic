@@ -67,6 +67,11 @@ class JobWorkspace:
         self.step = 0
         d = self.jobs / self.building
         d.mkdir(parents=True, exist_ok=True)
+        if not any((d / p).exists() for p in ("cfg.py", "provenance.json", "design/calc_package.json", "design/calc_package_cfs.json")):
+            # New design jobs must produce the physical-data contract. Existing
+            # jobs keep their prior completion rules until explicitly upgraded.
+            from steel_engine.bim_export import atomic_json
+            atomic_json(d / "design" / "bim_request.json", {"required": True})
         try:
             (d / "activity_log.jsonl").unlink()
         except Exception:
@@ -111,11 +116,12 @@ class JobWorkspace:
         if norm.startswith("jobs/"):
             candidates.append(self.jobs / norm[len("jobs/"):])
         candidates += [(self._job_dir() or self.jobs) / norm, self.jobs / norm,
-                       config.STEEL_ENGINE / pathlib.Path(norm).name, config.STEEL_ENGINE / norm]
+                       config.STEEL_ENGINE / pathlib.Path(norm).name, config.STEEL_ENGINE / norm,
+                       config.CONTRACT_DIR / pathlib.Path(norm).name]
         for p in candidates:
             try:
                 p = p.resolve()
-                ok = (self.jobs in p.parents or p == self.jobs or config.STEEL_ENGINE in p.parents)
+                ok = (self.jobs in p.parents or p == self.jobs or config.STEEL_ENGINE in p.parents or config.CONTRACT_DIR in p.parents)
                 if ok and p.exists() and p.is_file():
                     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
                     total = len(lines)

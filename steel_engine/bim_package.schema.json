@@ -119,6 +119,34 @@
               "type": "null"
             }
           ]
+        },
+        "analysis_segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "analysis_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "analysis_id",
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -319,7 +347,32 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 1
+          "minItems": 0
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "member_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "station": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "offset": {
+                "$ref": "#/$defs/point"
+              }
+            },
+            "required": [
+              "member_id",
+              "station"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -1022,6 +1075,64 @@
     },
     "readiness": {
       "type": "object"
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "recipe": {
+          "type": "string"
+        },
+        "recipe_version": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "coordination_required",
+                  "resolved"
+                ]
+              },
+              "entity_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "basis": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "kind",
+              "status",
+              "entity_ids",
+              "basis"
+            ],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "recipe",
+        "recipe_version",
+        "items"
+      ],
+      "additionalProperties": true
     }
   },
   "required": [

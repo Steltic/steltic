@@ -83,6 +83,7 @@ def assemble(root, cfg, pkg, snapshot, provenance):
             physical["coverage"][key] = value
     # Explicit physical members replace recovered candidates representing those elements.
     claimed = {a for m in physical["members"] if m.get("status") == "declared" for a in m.get("analysis_ids", [])}
+    claimed.update(s["analysis_id"] for m in physical["members"] if m.get("status") == "declared" for s in m.get("analysis_segments", []))
     excluded = {a["analysis_id"] for a in physical["analysis_only"]}
     physical["members"] = [m for m in physical["members"] if m.get("status") == "declared" or not (set(m.get("analysis_ids", [])) & (claimed | excluded))]
     records = []
@@ -122,7 +123,24 @@ def assemble(root, cfg, pkg, snapshot, provenance):
 
 def tracked_sources(root):
     """Fingerprint evidence consumed by replay, including local config helper modules."""
-    files = {p for p in root.rglob("*.py") if not any(part in (".git",".venv","__pycache__","rag","figs") or part.startswith(".bim-work-") for part in p.relative_to(root).parts)}
+    ignored = {".git", ".venv", "__pycache__", "rag", "figs", "design", "bim", "exports", "outputs"}
+    # Configs may read data (e.g. schedule.json), not just import Python. Track
+    # local input files outside generated-output folders, including nested data.
+    # Explicit additional inputs inside excluded folders can be listed by the
+    # job in bim_inputs.json. Never interpret paths outside the job directory.
+    files = {p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in (".py", ".json", ".csv", ".tsv", ".txt", ".yaml", ".yml", ".toml", ".xlsx")
+             and not any(part in ignored or part.startswith(".bim-work-") for part in p.relative_to(root).parts)}
+    files.update(p for p in root.rglob("*.py") if not any(part in (".git", ".venv", "__pycache__", "rag", "figs") or part.startswith(".bim-work-") for part in p.relative_to(root).parts))
+    manifest = root / "bim_inputs.json"
+    if manifest.is_file():
+        extra = read_json(manifest)
+        if not isinstance(extra, list) or any(not isinstance(v, str) for v in extra):
+            raise ValueError("bim_inputs.json must be a list of job-relative input paths")
+        for relative in extra:
+            p = (root / relative).resolve()
+            if not p.is_relative_to(root.resolve()) or not p.is_file():
+                raise ValueError("BIM input must be an existing file inside the job: " + relative)
+            files.add(p)
     for rel in ("design/calc_package.json", "design/calc_package_cfs.json", "design/consistency_result.json", "design/member_schedule.csv", "design/bim_request.json", "viewer_3d.html"):
         p=root/rel
         if p.is_file(): files.add(p)

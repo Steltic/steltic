@@ -94,7 +94,7 @@ def validate(package):
     profiles, materials = indexes["profiles"], indexes["materials"]
     profile_dimensions={"i":("d","bf","tf","tw"),"rhs":("h","b","t"),"chs":("d","t"),
                         "channel":("d","b","lip","t","r"),"z":("d","b","lip","t","r"),
-                        "angle":("h","b","t"),"flat":("width","thickness"),"box_envelope":("width","depth")}
+                        "angle":("h","b","t"),"flat":("width","thickness"),"round":("d",),"box_envelope":("width","depth")}
     for p in profiles.values():
         if p.get("status") == "declared":
             dims = p.get("dimensions", {})
@@ -122,6 +122,7 @@ def validate(package):
     for e in analysis_elements:
         if any(n not in node_ids for n in e["node_ids"]): bad("analysis_nodes","Analysis element references missing nodes",[e["id"]])
     represented = {}
+    portions = {}
     candidates = []
     for m in indexes["members"].values():
         mid = m["id"]
@@ -131,6 +132,13 @@ def validate(package):
         for aid in m.get("analysis_ids", []):
             if aid not in analysis_ids: bad("analysis_reference", "Unknown analysis element", [mid, aid])
             represented.setdefault(aid, []).append(mid)
+            portions.setdefault(aid, []).append((0.0, 1.0, mid))
+        for segment in m.get("analysis_segments", []):
+            aid, a, b = segment["analysis_id"], segment["start"], segment["end"]
+            if aid not in analysis_ids: bad("analysis_reference", "Unknown analysis element", [mid, aid])
+            if not (0 <= a < b <= 1): bad("analysis_interval", "Analysis segment must be a nonempty fraction within [0,1]", [mid, aid])
+            represented.setdefault(aid, []).append(mid)
+            portions.setdefault(aid, []).append((a, b, mid))
         if m.get("status") != "declared":
             candidates.append(mid); continue
         direction = [b-a for a,b in zip(*axis)]
@@ -141,8 +149,13 @@ def validate(package):
         if not m.get("reference_line") or not isinstance(m.get("end_offsets"), list) or len(m["end_offsets"]) != 2 or not all(vector(v) for v in m["end_offsets"]):
             bad("member_placement", "Declare reference line and both physical end offsets", [mid])
     if candidates: bad("member_placement", "Confirm physical placement/profile/material of recovered analysis members", candidates, "needs_input")
-    for aid, mids in represented.items():
-        if len(mids) > 1: bad("analysis_overlap", "Multiple physical members claim an analysis element", mids)
+    for aid, rows in portions.items():
+        cursor = 0.0
+        for a, b, mid in sorted(rows):
+            if a < cursor - 1e-7: bad("analysis_overlap", "Physical members claim overlapping analysis intervals", [aid, mid])
+            if a > cursor + 1e-7: bad("analysis_mapping", "Unmapped analysis interval", [aid], "needs_input")
+            cursor = max(cursor, b)
+        if cursor < 1 - 1e-7: bad("analysis_mapping", "Unmapped analysis interval", [aid], "needs_input")
     excluded = {}
     for row in physical.get("analysis_only", []):
         if not isinstance(row, dict) or row.get("analysis_id") not in analysis_ids or not row.get("reason"):
@@ -174,7 +187,7 @@ def validate(package):
                 bad("opening_host", "Unknown opening host", [p["id"]])
     ends = {}
     for j in indexes["joints"].values():
-        if not vector(j.get("point")) or not j.get("member_ends"): bad("joint_geometry", "Joint needs point and member ends", [j["id"]])
+        if not vector(j.get("point")) or not (j.get("member_ends") or j.get("attachments")): bad("joint_geometry", "Joint needs a point and member ends or support attachments", [j["id"]])
         for end in j.get("member_ends", []):
             key = (end.get("member_id"), end.get("end"))
             if key[0] not in indexes["members"] or key[1] not in ("start", "end"): bad("joint_member", "Invalid joint member/end", [j["id"]])
@@ -186,6 +199,15 @@ def validate(package):
                     bad("joint_placement","Joint point must match the member reference end plus its explicit joint_offset",[j["id"],key[0]])
             if key in ends: bad("duplicate_joint_end", "Member end assigned to multiple joints", [j["id"], ends[key]])
             ends[key] = j["id"]
+        for attachment in j.get("attachments", []):
+            mid, t = attachment["member_id"], attachment["station"]
+            if mid not in indexes["members"] or not 0 <= t <= 1:
+                bad("joint_attachment", "Support attachment must lie on a known member", [j["id"], mid]); continue
+            a, b = indexes["members"][mid]["axis"]
+            offset = attachment.get("offset", [0,0,0])
+            expected = [x + t*(y-x) + o for x,y,o in zip(a,b,offset)]
+            if norm([p-q for p,q in zip(j["point"],expected)]) > 1e-6:
+                bad("joint_attachment", "Joint does not match its declared support station and offset", [j["id"], mid])
     records = {r["id"]:r for r in package.get("design_records", [])}
     if len(records)!=len(package["design_records"]): bad("design_record_ids","Duplicate design record IDs")
     linked = set(); joined = set()
@@ -242,6 +264,9 @@ def validate(package):
         if not isinstance(item, dict) or item.get("complete") is not True or not item.get("basis"):
             bad("coverage_"+key, "Declare and substantiate completeness of "+key, severity="needs_input")
     if not indexes["members"] and not indexes["panels"]: bad("empty_model", "No physical members or panels", severity="needs_input")
+    for item in package.get("review", {}).get("items", []):
+        if item["status"] != "resolved":
+            bad("coordination_required", item["title"], item["entity_ids"] or [item["id"]], "needs_input")
     for supplied in package.get("source_findings", []):
         errors.append(supplied)
     combined={}

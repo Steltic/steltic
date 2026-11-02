@@ -1,5 +1,47 @@
 # Physical data export and legacy replay (v1)
 
+## Stage 3 consumer extensions
+
+The openBIM 0.2 consumer and matching HR/CFS contract add optional fields to the
+v1 package. Existing v1 packages remain supported. Older strict validators may
+reject packages using these extensions; upgrade the consumer and shared contract
+together rather than bypassing validation.
+
+- `member.analysis_segments` maps fractions of an analysis element to physical
+  pieces, using `{analysis_id, start, end}` with `0 <= start < end <= 1`. Fractions
+  across pieces must cover the whole element without overlap. `analysis_ids`
+  continues to claim entire elements. This permits real column splices between
+  analysis nodes without inventing a new analysis mesh.
+- `joint.attachments` supports interior attachments using `{member_id, station,
+  offset}`. The station is a fraction of the reference member axis and the offset
+  is a global XYZ vector in inches. Joint coordinates must match that declaration.
+  A joint needs member ends or attachments; all physical member ends must still
+  be accounted for.
+- Profile family `round` has positive diameter `d`, for solid rods.
+- Optional root `review` holds the recipe identity and coordination items. An
+  unresolved item produces a `needs_input` finding independently of the stored
+  readiness value. A question answer alone is not a resolved physical model.
+
+CFS physical wall replay honours `cfg['line_plan_pos_ft']` keyed as `X-LINE` or
+`Y-LINE`, falling back to `WallLine.pos` when no override is supplied. Both the
+physical and original analysis positions are retained in layout evidence. This
+does not change the analysis model or fitted tributary properties.
+
+Replay also fingerprints common job-local data files (`json`, `csv`, `tsv`,
+`txt`, `yaml`, `yml`, `toml`, `xlsx`) outside generated-output folders, in addition
+to Python helpers and the explicitly tracked calculation/schedule files. Put
+additional inputs in `bim_inputs.json` as a JSON array of job-relative paths, e.g.
+`["design/physical_layout.json", "data/section_table.dat"]`. Paths must resolve to
+existing files inside the job. Generated BIM packages are excluded to avoid a
+self-referential fingerprint. Dependencies outside the job must be brought into
+the job or otherwise supplied as explicit provenance; they are not auto-discovered.
+
+Stage 3 review recipes use a physical profile convention: local Y is profile
+width and `(member axis cross local Y)` is depth. They explicitly convert from
+source-engine axes and retain the reference axis plus global end offsets. The
+viewer renders design profile dimensions, not rolled fillets, bend radii or
+unresolved cut polygons. See `docs/stage3` in openBIM for the pinned pilot scope.
+
 This module publishes `design/bim_package.json` for dimensioned design drawings and
 IFC export in Steltic openBIM. The export joins native model geometry with the
 completed calculation package and explicit physical declarations. It does not run

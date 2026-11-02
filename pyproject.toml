@@ -32,6 +32,7 @@ dependencies = [
     "numpy",
     "scipy",
     "matplotlib",
+    "jsonschema>=4.23",
     # build-only mode: the building template (.xlsx) for user-designed buildings
     "openpyxl>=3.1",
 ]
@@ -45,6 +46,7 @@ Homepage = "https://stelticai.com"
 
 [project.scripts]
 steltic = "steltic.cli:main"
+steltic-bim = "steltic.bim_export:main"
 
 # The wheel ships the app package plus its data folders (engine, contract, frontend, example briefs)
 # at site-packages top level; steltic/config.py resolves them relative to the package parent, which

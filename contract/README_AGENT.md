@@ -1,5 +1,22 @@
 # OpenSees Steel Building Design Agent — Guide & Workflow
 
+## Physical data for drawings and IFC
+
+New design jobs must also produce `design/bim_package.json`. Read
+`contract/BIM_EXPORT.md` with `read_file` before composing the model. Author
+`cfg['bim']` (`schema_version: '1.0'`, `required: True`) while selecting physical
+members, profiles, materials, openings, actual secondary framing and placement.
+During connection design, record each real joint occurrence, its located parts or
+controlled detail reference, and its source design-record IDs in the calculation
+package's `bim` block. Cover the full declared scope; do not equate analysis
+elements, equivalent springs or schematic viewer geometry with physical parts.
+
+After structural consistency passes, `consistency.check` automatically exports
+the data without another solve. Resolve its separate BIM findings before ending
+a new job. Do not clear the requirement marker, fabricate missing dimensions,
+edit generated readiness, or claim fabrication detail. Unchanged legacy jobs keep
+their prior completion rules; replay upgrades their evidence without redesign.
+
 **Audience: the LLM agent.** This file tells you what you have, and the exact order
 in which to use it, to design **one** steel building well.
 

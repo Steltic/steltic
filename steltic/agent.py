@@ -457,6 +457,8 @@ def _completion_gate(ws):
         _gate_entries(pkg, probs)
         _gate_sanity(jd, pkg, cfg_sha, probs)
         _gate_consistency(jd, _gate_sha(cp), cfg_sha, pkg, probs)
+        from steel_engine.bim_export import completion_issues as _bim_completion_issues
+        probs.extend(_bim_completion_issues(jd))
     except Exception as e:
         return ["completion gate could not read the design files: %s" % e]
     if len(probs) > 12:

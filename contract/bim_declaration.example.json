@@ -1,0 +1,168 @@
+{
+  "note": "Synthetic one-member data-contract example only; not a structural design.",
+  "cfg_bim": {
+    "schema_version": "1.0",
+    "required": true,
+    "profiles": [
+      {
+        "id": "TEST",
+        "family": "i",
+        "dimensions": {
+          "d": 8,
+          "bf": 4,
+          "tf": 0.4,
+          "tw": 0.25
+        }
+      }
+    ],
+    "materials": [
+      {
+        "id": "steel",
+        "specification": "Synthetic fixture material; not a design"
+      }
+    ],
+    "members": [
+      {
+        "id": "beam",
+        "kind": "beam",
+        "axis": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            120,
+            0,
+            0
+          ]
+        ],
+        "local_y": [
+          0,
+          1,
+          0
+        ],
+        "profile_id": "TEST",
+        "material_id": "steel",
+        "reference_line": "centroid",
+        "end_offsets": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "analysis_ids": [
+          "hr:element:1"
+        ]
+      }
+    ],
+    "joints": [
+      {
+        "id": "support",
+        "point": [
+          0,
+          0,
+          0
+        ],
+        "member_ends": [
+          {
+            "member_id": "beam",
+            "end": "start"
+          }
+        ]
+      },
+      {
+        "id": "free",
+        "point": [
+          120,
+          0,
+          0
+        ],
+        "member_ends": [
+          {
+            "member_id": "beam",
+            "end": "end"
+          }
+        ]
+      }
+    ],
+    "joint_dispositions": [
+      {
+        "joint_id": "free",
+        "reason": "Synthetic free end"
+      }
+    ],
+    "coverage": {
+      "primary_members": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "secondary_members": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "openings": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "connections": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      }
+    }
+  },
+  "calculation_package_bim": {
+    "schema_version": "1.0",
+    "connections": [
+      {
+        "id": "support-detail",
+        "joint_id": "support",
+        "scope": "designed",
+        "design_record_ids": [
+          "connections/c1"
+        ],
+        "parts": [
+          {
+            "id": "plate",
+            "kind": "plate",
+            "material_id": "steel",
+            "geometry": {
+              "type": "box",
+              "origin": [
+                0,
+                0,
+                0
+              ],
+              "size": [
+                0.5,
+                4,
+                6
+              ],
+              "x_axis": [
+                1,
+                0,
+                0
+              ],
+              "y_axis": [
+                0,
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "source_connection_row": {
+    "id": "c1",
+    "selection": "Synthetic fixture only",
+    "DC": 0.5
+  }
+}

@@ -1373,6 +1373,13 @@ def check(name, root=None, pkg=None, verbose=True):
         _record_result(_root, name, issues)
     if verbose:
         _print(name, issues)
+    if _same:
+        import bim_export
+        bim_issues = bim_export.after_consistency(_root, _dcfg, issues)
+        if verbose:
+            for message in bim_issues:
+                print("[BIM] " + message)
+        issues = issues + bim_issues
     return issues
 
 

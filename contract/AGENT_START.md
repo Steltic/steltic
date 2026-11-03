@@ -11,6 +11,14 @@ controlled detail reference, and its source design-record IDs in the calculation
 package's `bim` block. Cover the full declared scope; do not equate analysis
 elements, equivalent springs or schematic viewer geometry with physical parts.
 
+Create one member for each real occurrence, with its storey and actual axis.
+Never assign parallel members or an entire section group to a prototype or
+catch-all `analysis_ids` list. Only collinear subdivisions along that same
+physical reference axis may be combined. Map each connection to its real
+joint; a representative detail at the origin is not a building-wide layout.
+Use replay candidates to generate these records programmatically, retaining
+the selected physical offsets, orientation, materials and source references.
+
 After structural consistency passes, `consistency.check` automatically exports
 the data without another solve. Resolve its separate BIM findings before ending
 a new job. Do not clear the requirement marker, fabricate missing dimensions,

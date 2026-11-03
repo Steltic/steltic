@@ -231,3 +231,21 @@ current replay engine. Repeated runs on unchanged inputs/code are deterministic.
 
 See `bim_declaration.example.json` for a synthetic one-member contract example.
 Its values demonstrate the data shape and must not be used as a structural design.
+
+## Occurrence validation and stable inputs (0.7.1 consumer)
+
+Mapped analysis intervals must form the actual physical reference axis. The
+validator rejects section-group and catch-all geometry as incomplete, even
+when every analysis ID has been accounted for. Parallel occurrences, branches,
+overlaps and gaps cannot be combined into one physical member. Collinear
+subdivisions and explicit physical splice intervals remain supported. Record
+storeys and actual joint locations while constructing occurrence records.
+
+Runner scratch files under `.run` and root conversation/run logs are excluded
+from automatic input fingerprints. They change after a normal completed run.
+Configuration helpers and job-local data remain tracked; explicit entries in
+`bim_inputs.json` can include an otherwise excluded file when actually used.
+
+A drawing consumer can show captured HR worklines provisionally when physical
+declarations are incomplete. This does not resolve the producer findings or
+authorize invented physical dimensions, connection geometry or a ready flag.

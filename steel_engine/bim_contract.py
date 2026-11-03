@@ -373,6 +373,40 @@ def architectural_input_findings(package):
     return findings
 
 
+def member_record_findings(package):
+    """Check explicit rolled/HSS section labels on directly linked member records.
+
+    This is a data-link check, not capacity validation. Arbitrary profile IDs,
+    constituent designs of built-up sections and records without an explicit
+    section are not inferred from their names or dimensions.
+    """
+    def section(value):
+        if not isinstance(value,str):return None
+        value=re.sub(r'\s+','',value.upper()).replace('\u00d7','X')
+        return value if re.fullmatch(r'(?:W|WT|S|HP|C|MC|L|HSS)\d+(?:\.\d+)?(?:X\d+(?:[./]\d+)?){1,3}',value) else None
+    physical=package.get('physical',{})
+    profiles={p['id']:p for p in physical.get('profiles',[])}
+    records={r['id']:r for r in package.get('design_records',[])}
+    mismatches=[]
+    for member in physical.get('members',[]):
+        profile=profiles.get(member.get('profile_id'),{})
+        selected=section(profile.get('id'))
+        if not selected or profile.get('family')=='built_up':continue
+        for ref in member.get('design_record_ids',[]):
+            record=records.get(ref,{})
+            if record.get('table')!='members':continue
+            data=record.get('data',{});inputs=data.get('inputs',{})
+            if not isinstance(inputs,dict):continue
+            checked=section(inputs.get('section'))
+            if checked and checked!=selected:
+                mismatches.append(dict(member_id=member['id'],profile_id=profile['id'],record_id=ref,record_section=inputs['section']))
+    if not mismatches:return []
+    finding=issue('member_design_section','A physical member links to a calculation for a different section; bind the actual matching member design record',
+                  sorted({m['member_id'] for m in mismatches}|{m['record_id'] for m in mismatches}),'needs_input')
+    finding.update(count=len(mismatches),examples=mismatches[:100])
+    return [finding]
+
+
 def validate(package):
     """Validate finite geometry, references, coverage and readiness independently.
 
@@ -525,6 +559,7 @@ def validate(package):
                 bad("joint_attachment", "Joint does not match its declared support station and offset", [j["id"], mid])
     records = {r["id"]:r for r in package.get("design_records", [])}
     if len(records)!=len(package["design_records"]): bad("design_record_ids","Duplicate design record IDs")
+    errors.extend(member_record_findings(package))
     linked = set(); joined = set()
     for collection in COLLECTIONS:
         if collection=="connections": continue

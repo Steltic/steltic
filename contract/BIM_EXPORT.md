@@ -249,3 +249,15 @@ Configuration helpers and job-local data remain tracked; explicit entries in
 A drawing consumer can show captured HR worklines provisionally when physical
 declarations are incomplete. This does not resolve the producer findings or
 authorize invented physical dimensions, connection geometry or a ready flag.
+
+## Physical consistency screens
+
+The shared validator independently checks explicit built-up section count labels
+(e.g. 6xCHANNEL must contain six CHANNEL constituents), opening vertices outside
+panel-host bounds, and explicitly sized connection box parts more than 72 inches
+from their assigned joint. Box distance uses transformed bounds, not only the
+origin. Findings are `needs_input`, even when an older package says `ready`.
+Resolve the source declaration before completing a required new job. No section,
+coordinate or calculation record is automatically repaired. Legacy replay and
+coordination export may retain these findings for review. These limited screens
+do not establish capacity, architectural agreement, complete framing or fit.

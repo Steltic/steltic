@@ -36,3 +36,18 @@ def test_interior_support_attachment_and_bad_station():
     assert not validate(p)
     p['physical']['joints'][-1]['attachments'][0]['station']=.6
     assert any(f['code']=='joint_attachment' for f in validate(p))
+
+
+def test_physical_contradictions_are_needs_input_despite_stored_ready_flag():
+    p=json.loads((Path(__file__).parent/'fixtures/synthetic_bim_package.json').read_text())
+    physical=p['physical'];p['readiness']['status']='ready'
+    physical['profiles'].append(dict(id='2xTEST',family='built_up',dimensions={},status='declared',
+        components=[dict(profile_id='TEST',offset=[0,0],rotation_deg=0)]))
+    physical['connections'][0]['parts'][0]['geometry']['origin']=[1000,0,0]
+    physical['panels']=[dict(id='wall',kind='wall',status='declared',material_id='steel',thickness=.5,
+        vertices=[[0,0,0],[120,0,0],[120,0,120],[0,0,120]])]
+    physical['openings']=[dict(id='door',host_id='wall',vertices=[[150,0,0],[180,0,0],[180,0,84],[150,0,84]])]
+    before=copy.deepcopy(p);findings=validate(p)
+    assert {'physical_ply_count','physical_opening_host','physical_remote_part'}<={f['code'] for f in findings}
+    assert all(f['severity']=='needs_input' for f in findings)
+    assert p==before

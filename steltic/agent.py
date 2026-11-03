@@ -824,6 +824,8 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
     rparam = _reasoning_param(reasoning, base_url)
     cache_on = any(x in (model or "").lower() for x in ("claude", "anthropic"))   # Anthropic prompt caching via OpenRouter
     ws.building = building
+    if not resume:
+        ws.prepare_new_design()              # required export cannot depend on an LLM tool choice
     if resume and brief:                       # re-design (Continue WITH a new instruction) -> keep the prior report
         _archive_report(ws, building)
     conv_path = ws.jobs / building / "conversation.json"

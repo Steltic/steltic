@@ -597,7 +597,7 @@ def _detect_quirk(body):
         return "no_temperature"
     if "stream_options" in b and ("unsupported" in b or "not supported" in b):
         return "no_stream_options"
-    if "tool_choice" in b and "required" in b and any(term in b for term in ("unsupported", "not supported", "does not support")):
+    if "tool_choice" in b and "required" in b and any(term in b for term in ("unsupported", "not supported", "not currently supported", "does not support")):
         return "no_required_tool_choice"
     return None
 

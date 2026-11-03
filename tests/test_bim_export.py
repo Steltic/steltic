@@ -189,6 +189,31 @@ def test_new_job_cannot_skip_bim_declaration(tmp_path):
     assert "declaration missing" in B.after_consistency(root,{},[])[0]
 
 
+def test_new_run_requires_export_before_model_can_skip_logging(tmp_path):
+    from types import SimpleNamespace
+    from steltic import agent
+    from steltic.job_tools import JobWorkspace
+    ws=JobWorkspace(tmp_path/"jobs")
+    stream=agent.run_design(ws,SimpleNamespace(name="test"),"https://example.invalid","unused",
+                            "test-model","fresh","Fictional office")
+    try:
+        assert next(stream)["type"]=="status"  # no network/model call has occurred
+        assert B.read_json(tmp_path/"jobs/fresh/design/bim_request.json")["required"]
+        assert B.completion_issues(tmp_path/"jobs/fresh")
+    finally:
+        stream.close()
+
+
+def test_startup_preserves_existing_and_build_only_rules(tmp_path):
+    from steltic.job_tools import JobWorkspace
+    for filename in ("cfg.py","provenance.json","design/calc_package.json","design/calc_package_cfs.json"):
+        ws=JobWorkspace(tmp_path/filename.replace("/","_"))
+        ws.building="existing";d=ws.jobs/"existing";(d/filename).parent.mkdir(parents=True)
+        (d/filename).write_text("{}")
+        ws.prepare_new_design()
+        assert not (d/"design/bim_request.json").exists()
+
+
 def test_required_request_enforces_readiness_even_without_cfg_flag(tmp_path):
     root=job(tmp_path,"cfg['bim']['required']=False\ncfg['bim']['coverage']={}\n")
     stamp=B.read_json(root/"design/consistency_result.json")

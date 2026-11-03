@@ -62,16 +62,20 @@ class JobWorkspace:
         return rec
 
     # ---------------- tools ----------------
+    def prepare_new_design(self):
+        """Require BIM for a fresh design before the first model call; preserve legacy/build-only jobs."""
+        d = self._job_dir()
+        if d is not None and not any((d / p).exists() for p in
+                ("cfg.py", "provenance.json", "design/calc_package.json", "design/calc_package_cfs.json")):
+            from steel_engine.bim_export import atomic_json
+            atomic_json(d / "design" / "bim_request.json", {"required": True})
+
     def new_activity_log(self, building: str = "") -> dict:
         self.building = _clean_name(building)
         self.step = 0
         d = self.jobs / self.building
         d.mkdir(parents=True, exist_ok=True)
-        if not any((d / p).exists() for p in ("cfg.py", "provenance.json", "design/calc_package.json", "design/calc_package_cfs.json")):
-            # New design jobs must produce the physical-data contract. Existing
-            # jobs keep their prior completion rules until explicitly upgraded.
-            from steel_engine.bim_export import atomic_json
-            atomic_json(d / "design" / "bim_request.json", {"required": True})
+        self.prepare_new_design()
         try:
             (d / "activity_log.jsonl").unlink()
         except Exception:

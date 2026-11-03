@@ -21,6 +21,16 @@ joint; a representative detail at the origin is not a building-wide layout.
 Use replay candidates to generate these records programmatically, retaining
 the selected physical offsets, orientation, materials and source references.
 
+At each shared joint, reconcile every attached member with its applicable
+connection design. A column base plate does not cover a brace gusset, and a
+brace connection does not cover the beam shear connection at the same joint.
+Continuous purlins/girts need attachment joints and their actual scheduled
+fasteners at every intermediate frame, not only the two member ends. Selected
+plates, bolts, screws, anchors and welds require their actual locations and
+counts (explicit design reference groups are supported). Keep paired top/bottom
+parts distinct; never emit both at identical coordinates. A member or generic
+coverage note cannot stand in for its selected connection hardware.
+
 After structural consistency passes, `consistency.check` automatically exports
 the data without another solve. Resolve its separate BIM findings before ending
 a new job. Do not clear the requirement marker, fabricate missing dimensions,

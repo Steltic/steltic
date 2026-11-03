@@ -207,6 +207,42 @@ def connection_component_findings(package):
         # Recognize explicit exclusions without turning them into requirements.
         text=re.sub(r'\b(?:no|without)\s+(?:(?:field|shop|additional|anchor|CJP|PJP)\s+)*(?:bolts?|screws?|welds?|anchors?|rods?)\b','',text,flags=re.I)
         return re.sub(r'\b(?:anchor\s+rods?|bolts?|screws?|welds?|anchors?)\s+(?:are\s+)?(?:not required|not used|omitted|unnecessary)\b','',text,flags=re.I)
+    def selection_text(value):
+        if isinstance(value,str): return [positive(value)]
+        if isinstance(value,list): return [text for item in value for text in selection_text(item)]
+        if isinstance(value,dict):
+            texts=[]; counts=[]
+            for key,item in value.items():
+                if key.lower() in ('cited','basis','note','notes','limit_state'): continue
+                texts.extend(selection_text(item))
+                match=re.fullmatch(r'(?:n_|num_|number_of_)(bolts|screws|anchors|welds)',key,re.I)
+                if match and number(item,True): counts.append(match[1].lower())
+            # HR's n_bolts also stores the count of explicitly selected anchor
+            # rods; it must not require a second, unrelated bolt assembly.
+            for category in counts:
+                if category=='bolts' and any(re.search(patterns['anchor'],text,re.I) for text in texts): continue
+                texts.append(category)
+            return texts
+        return []
+    def part_label(part):
+        label=part.get('kind','').replace('_',' ').replace('-',' ')
+        if re.search(r'\b(?:bolts?|rods?|fasteners?|anchors?)\b',label,re.I):
+            metadata=json.dumps([part.get('id',''),part.get('parameters',{}),materials.get(part.get('material_id'),{})])
+            if re.search(r'anchor|F1554',metadata,re.I):label+=' anchor'
+            if re.search(r'screw|C1513',metadata,re.I):label+=' screw'
+        return label
+    def selected_text(record):
+        data=record.get('data',{});texts=[]
+        for key in ('components','selection'):texts.extend(selection_text(data.get(key)))
+        capacity=data.get('capacity')
+        if isinstance(capacity,str) and re.search(r'(?:\d|#).{0,45}\b(?:bolts?|screws?|anchor(?:s| rods?)?)\b',capacity,re.I):texts.append(positive(capacity))
+        return ' '.join(texts)
+    def missing_categories(selected,kinds):
+        missing=[]
+        for kind,pattern in patterns.items():
+            text=re.sub(patterns['anchor'],'',selected,flags=re.I) if kind=='bolt' else selected
+            if re.search(pattern,text,re.I) and not re.search(pattern,kinds,re.I):missing.append(kind)
+        return missing
     findings=[]
     local_parts={}
     for c in package['physical'].get('connections',[]):
@@ -215,36 +251,66 @@ def connection_component_findings(package):
         if connection.get('scope')=='delegated': continue
         for rid in connection.get('design_record_ids',[]):
             record=records.get(rid,{})
-            if record.get('table') not in ('connections','anchorage','holddowns','bases'): continue
-            data=record.get('data',{}); texts=[]
-            labels=[]
-            for part in local_parts.get((connection.get('joint_id'),rid),[]):
-                label=part.get('kind','').replace('_',' ').replace('-',' ')
-                # An explicitly identified anchor bolt remains an anchor even
-                # if its broad kind is 'bolt'. Plate metadata never counts as
-                # a separately located fastener or weld.
-                if re.search(r'\b(?:bolts?|rods?|fasteners?|anchors?)\b',label,re.I):
-                    metadata=json.dumps([part.get('id',''),part.get('parameters',{}),materials.get(part.get('material_id'),{})])
-                    if re.search(r'anchor|F1554',metadata,re.I):label+=' anchor'
-                    if re.search(r'screw|C1513',metadata,re.I):label+=' screw'
-                labels.append(label)
-            kinds=' '.join(labels)
-            for key in ('components','selection'):
-                if isinstance(data.get(key),str):texts.append(positive(data[key]))
-            # Some native schedules put an explicit selected group in capacity.
-            capacity=data.get('capacity')
-            if isinstance(capacity,str) and re.search(r'(?:\d|#).{0,45}\b(?:bolts?|screws?|anchor(?:s| rods?)?)\b',capacity,re.I):texts.append(positive(capacity))
-            selected=' '.join(texts);missing=[]
-            for kind,pattern in patterns.items():
-                text=selected
-                if kind=='bolt':text=re.sub(patterns['anchor'],'',text,flags=re.I)
-                if re.search(pattern,text,re.I) and not re.search(pattern,kinds,re.I):
-                    missing.append(kind)
+            if record.get('waived') or record.get('table') not in ('connections','anchorage','holddowns','bases','schedules'): continue
+            kinds=' '.join(part_label(part) for part in local_parts.get((connection.get('joint_id'),rid),[]))
+            selected=selected_text(record);missing=missing_categories(selected,kinds)
             if missing:findings.append(dict(connection_id=connection['id'],design_record_id=rid,missing_component_categories=missing,selected_components=selected[:1200],returned_part_kinds=kinds))
-    if not findings:return []
-    finding=issue('connection_selected_components','Located connection parts omit component categories explicitly selected in the linked design; export the actual parts/reference groups without relabelling an unrelated solid',
-                  [f['connection_id'] for f in findings],'needs_input')
-    finding.update(count=len(findings),examples=findings[:100])
+    # A member/assembly coverage note must not hide an entirely absent selected
+    # fastener family. Real rods represented as members remain valid; ordinary
+    # columns or straps do not also stand for their selected bolts or anchors.
+    physical=package['physical'];dispositions={d.get('record_id'):d for d in physical.get('record_dispositions',[])}
+    linked_records={rid for c in physical.get('connections',[]) for rid in c.get('design_record_ids',[])}
+    entities={e['id']:e for key in ('members','connections','panels') for e in physical.get(key,[])}
+    absent_families=[]
+    for rid,record in records.items():
+        if rid in linked_records or record.get('waived') or record.get('table') not in ('connections','anchorage','holddowns','bases','schedules'):continue
+        disposition=dispositions.get(rid,{})
+        if disposition.get('status') in ('delegated','not_applicable'):continue
+        selected=selected_text(record)
+        bound=[e for e in entities.values() if rid in e.get('design_record_ids',[])]
+        bound += [entities[eid] for eid in disposition.get('entity_ids',[]) if eid in entities]
+        parts=[part for e in bound for part in e.get('parts',[e])]
+        kinds=' '.join(part_label(part) for part in parts)
+        missing=missing_categories(selected,kinds)
+        if missing:absent_families.append(dict(design_record_id=rid,missing_component_categories=missing,selected_components=selected[:1200],returned_part_kinds=kinds,bound_entity_ids=sorted({e['id'] for e in bound})))
+    result=[]
+    if findings:
+        finding=issue('connection_selected_components','Located connection parts omit component categories explicitly selected in the linked design; export the actual parts/reference groups without relabelling an unrelated solid',[f['connection_id'] for f in findings])
+        finding.update(count=len(findings),examples=findings[:100]);result.append(finding)
+    if absent_families:
+        finding=issue('connection_selected_family','A selected connection family has no corresponding located component categories in its bound entities; a typical coverage note alone does not place its hardware',[f['design_record_id'] for f in absent_families])
+        finding.update(count=len(absent_families),examples=absent_families[:100]);result.append(finding)
+    return result
+
+
+def duplicate_connection_part_findings(package):
+    """Reject exact repeated solid components inside one designed assembly.
+
+    Two differently named top/bottom plates or welds at identical coordinates
+    are duplicate geometry. This bounded check does not test general clashes
+    or infer the correct replacement position. Explicit groups and reference
+    curves remain supported; a group must not be copied onto itself either.
+    """
+    if not package.get('require_connection_parts'): return []
+    duplicates=[]
+    for connection in package['physical'].get('connections',[]):
+        if connection.get('scope')=='delegated': continue
+        seen={}
+        for part in connection.get('parts',[]):
+            geometry=part.get('geometry',{})
+            if geometry.get('type') not in ('box','cylinder','extruded_profile'): continue
+            # Numeric JSON values compare equally (1 versus 1.0), so use a
+            # recursive tuple rather than string serialisation for geometry.
+            def frozen(value):
+                if isinstance(value,dict): return tuple((k,frozen(v)) for k,v in sorted(value.items()))
+                if isinstance(value,list): return tuple(frozen(v) for v in value)
+                return value
+            token=frozen([part.get('kind','').lower(),part.get('material_id'),geometry,part.get('parameters',{})])
+            if token in seen:duplicates.append(dict(connection_id=connection['id'],part_ids=[seen[token],part['id']],kind=part.get('kind')))
+            else:seen[token]=part['id']
+    if not duplicates:return []
+    finding=issue('connection_duplicate_parts','Distinct component IDs repeat identical solid geometry inside the same assembly; resolve actual placement or duplicate emission, without dropping a required component',[d['connection_id'] for d in duplicates])
+    finding.update(count=len(duplicates),examples=duplicates[:100])
     return [finding]
 
 
@@ -808,6 +874,7 @@ def validate(package):
     if free_joints: bad("joint_connection", "Provide connections or free/continuous-joint reasons", free_joints, "needs_input")
     errors.extend(joint_disposition_findings(package))
     errors.extend(connection_component_findings(package))
+    errors.extend(duplicate_connection_part_findings(package))
     coverage = physical.get("coverage", {})
     for key in COVERAGE:
         item = coverage.get(key, {})

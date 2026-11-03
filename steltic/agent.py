@@ -497,6 +497,11 @@ _PHASE_HINTS = (
 def dispatch(tool, args, ws, executor):
     if tool == "run_python":
         code = args.get("code", "")
+        if not isinstance(code, str) or not code.strip():
+            ws.log("run_python", "missing or empty code", "not run")
+            return {"error": "run_python requires a non-empty code string. No code was run. "
+                    "If the previous response hit the token limit, split the calculation into smaller saved steps "
+                    "and retry the next short code block."}
         blocked = is_blocked(code)
         if blocked:
             ws.log("run_python", " ".join(code.split())[:120], "refused")

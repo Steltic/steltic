@@ -420,3 +420,20 @@ connections required by its schedule. Model interior joints with attachments
 and locate the real hardware at each frame. At a shared beam/brace/column
 joint, provide every applicable connection family; one base plate or one brace
 gusset does not represent all other attached members' connections.
+
+
+## Declared fastener quantities (openBIM 0.8.28)
+
+For jobs requiring connection parts, a `count`/`quantity` on one solid does not
+create an array. Emit the actual distinct located bolt, screw or anchor solids
+for the selected pattern. The validator compares explicit part counts with
+distinct solids of that category in the same local design assembly; split
+assemblies may share the same joint and design record. Washer/head solids and
+coincident copies do not supply extra shafts. Keep the actual selected count;
+do not lower or remove metadata to conceal missing hardware. A fastener-group
+bounding box is not a collection of physical bolts or rods.
+
+Existing reference-only and delegated scope retain their contract. This check
+is a lower-bound data consistency screen, not a free-text schedule parser,
+spacing/edge-distance check or fastening-capacity certification. Independently
+reconcile each repeated family with its own selected quantities and spacings.

@@ -492,3 +492,6 @@ D/C; the headline D/C equals its worst limit-state check **and** demand÷capacit
 and the **same quantity carries one value everywhere** (a plate thickness or D/C quoted in your prose
 must equal the structured value — if two scripts produced different numbers, reconcile them, don't
 report both). Report Chapter 13 renders the result.
+
+
+Physical fastener quantities: a count label on one cylinder or bounding box does not create the selected bolt/anchor/screw pattern. Export the distinct located occurrences, preserving the actual checked count, sizes, spacing, supporting faces and load path. Do not remove or lower count metadata to hide missing hardware; reconcile any true metadata error against the actual completed connection calculation.

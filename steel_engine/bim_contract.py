@@ -180,6 +180,63 @@ def _constituent_overlaps(profiles):
     return findings
 
 
+def _opening_workline_clashes(physical):
+    """Screen actual member axes against convex, planar opening reservations.
+
+    Clip against the opening's own edge planes, never its enclosing rectangle.
+    A five-millimetre jamb/head/sill tolerance avoids boundary contacts. The
+    declared host thickness defines the normal slab. This is a limited axis
+    check: absence of a finding does not establish full section/part clearance.
+    Unsupported concave/nonplanar boundaries are left for geometry review.
+    """
+    def dot(a,b):return sum(x*y for x,y in zip(a,b))
+    def sub(a,b):return [x-y for x,y in zip(a,b)]
+    def cross(a,b):return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
+    members=[];findings=[];tolerance=.005/.0254
+    for member in physical.get('members',[]):
+        if member.get('status')!='declared':continue
+        axis=member.get('axis',[]);offsets=member.get('end_offsets',[])
+        if not isinstance(axis,list) or not isinstance(offsets,list) or len(axis)!=2 or len(offsets)!=2 or not all(vector(v) for v in axis+offsets):continue
+        a,b=[[v+off for v,off in zip(p,o)] for p,o in zip(axis,offsets)]
+        members.append((member['id'],a,b,sub(b,a),[(min(x,y),max(x,y)) for x,y in zip(a,b)]))
+    panels={p['id']:p for p in physical.get('panels',[])}
+    for opening in physical.get('openings',[]):
+        points=opening.get('vertices',[]);host=panels.get(opening.get('host_id'),{})
+        if len(points)<3 or not all(vector(p) for p in points) or not number(host.get('thickness'),True):continue
+        if points[-1]==points[0]:points=points[:-1]
+        normal=[0.,0.,0.]
+        for p,q in zip(points,points[1:]+points[:1]):
+            normal=[x+y for x,y in zip(normal,cross(sub(p,points[0]),sub(q,points[0])))]
+        length=norm(normal)
+        if length<1e-10:continue
+        normal=[v/length for v in normal]
+        if any(abs(dot(normal,sub(p,points[0])))>1e-5 for p in points):continue
+        half=host['thickness']/2
+        planes=[(normal,dot(normal,points[0])-half),([-v for v in normal],-dot(normal,points[0])-half)]
+        convex=True
+        for p,q in zip(points,points[1:]+points[:1]):
+            inward=cross(normal,sub(q,p));length=norm(inward)
+            if length<1e-10:continue
+            inward=[v/length for v in inward]
+            if any(dot(inward,sub(v,p)) < -1e-6 for v in points):convex=False;break
+            planes.append((inward,dot(inward,p)+tolerance))
+        if not convex or len(planes)<5:continue
+        bounds=[(min(p[k] for p in points)-abs(normal[k])*half,max(p[k] for p in points)+abs(normal[k])*half) for k in range(3)]
+        for member_id,a,b,delta,member_bounds in members:
+            if any(hi<lo2 or hi2<lo for (lo,hi),(lo2,hi2) in zip(bounds,member_bounds)):continue
+            lo,hi=0.,1.
+            for inward,minimum in planes:
+                start=dot(inward,a)-minimum;rate=dot(inward,delta)
+                if abs(rate)<1e-12:
+                    if start < -1e-10:lo,hi=1.,0.;break
+                elif rate>0:lo=max(lo,-start/rate)
+                else:hi=min(hi,-start/rate)
+                if hi<lo:break
+            if (hi-lo)*norm(delta)>1e-5:
+                findings.append(dict(opening_id=opening['id'],host_id=host['id'],member_id=member_id))
+    return findings
+
+
 def physical_screens(physical):
     """Limited geometry screens; no source data is changed or approved."""
     findings=[]
@@ -212,6 +269,7 @@ def physical_screens(physical):
             break
     add('physical_opening_host','Opening boundaries extend outside their declared host bounds',outside)
     add('physical_opening_host_plane','Opening boundaries must lie in their declared panel plane to form an actual opening',off_plane)
+    add('physical_opening_workline','Member worklines cross a declared opening; coordinate the framing and then check full section and connection clearance',_opening_workline_clashes(physical))
     joints={j['id']:j for j in physical.get('joints',[])};remote=[]
     for connection in physical.get('connections',[]):
         point=joints.get(connection.get('joint_id'),{}).get('point')

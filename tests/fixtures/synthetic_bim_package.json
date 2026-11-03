@@ -108,7 +108,8 @@
     "joint_dispositions": [
       {
         "joint_id": "free",
-        "reason": "Synthetic free end"
+        "reason": "Synthetic free end",
+        "kind": "free_end"
       }
     ],
     "coverage": {

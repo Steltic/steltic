@@ -998,6 +998,24 @@
               "reason": {
                 "type": "string",
                 "minLength": 1
+              },
+              "kind": {
+                "enum": ["free_end", "continuous_member", "bearing_interface", "shared_connection"]
+              },
+              "connection_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
+              },
+              "design_record_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
+              },
+              "supporting_entity_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
               }
             },
             "required": [

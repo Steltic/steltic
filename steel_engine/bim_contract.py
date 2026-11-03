@@ -59,6 +59,49 @@ def geometry_errors(g, profiles):
     return errors
 
 
+def mapping_geometry_findings(package):
+    """A physical line may join collinear segments, never stand for a section group.
+
+    IDs alone prove accounting, not occurrence geometry. Compare each claimed
+    interval with the declared reference axis (physical cutbacks are separate).
+    Keep mismatches as missing physical information so coordination can proceed.
+    """
+    nodes = {n['id']: n['point'] for n in package['analysis']['nodes']}
+    elements = {e['id']: e for e in package['analysis']['elements']}
+    findings = []
+    for member in package['physical']['members']:
+        if member.get('status') != 'declared': continue
+        claims = [(aid, 0, 1) for aid in member.get('analysis_ids', [])]
+        claims += [(s['analysis_id'], s['start'], s['end']) for s in member.get('analysis_segments', [])]
+        if not claims: continue
+        a, b = member['axis']; direction = [y-x for x,y in zip(a,b)]
+        length = norm(direction)
+        if length < 1e-9: continue
+        direction = [v/length for v in direction]; intervals = []; mismatch = False
+        for aid, start, end in claims:
+            element = elements.get(aid, {}); ids = element.get('node_ids', [])
+            if len(ids) != 2 or any(n not in nodes for n in ids):
+                mismatch = True; continue
+            p, q = [nodes[n] for n in ids]; stations = []
+            for t in (start, end):
+                point = [x+t*(y-x) for x,y in zip(p,q)]
+                station = sum((x-y)*d for x,y,d in zip(point,a,direction))
+                residual = norm([x-y-station*d for x,y,d in zip(point,a,direction)])
+                if residual > 1e-5 or station < -1e-5 or station > length+1e-5: mismatch = True
+                stations.append(station)
+            intervals.append(sorted(stations))
+        cursor = 0.0
+        for lo, hi in sorted(intervals):
+            if lo > cursor+1e-5 or lo < cursor-1e-5: mismatch = True
+            cursor = max(cursor,hi)
+        if abs(cursor-length) > 1e-5: mismatch = True
+        if mismatch:
+            findings.append(issue('analysis_occurrence_geometry',
+                'Mapped analysis intervals must form the actual physical reference axis; a section group or catch-all is not a located member',
+                [member['id']]+[c[0] for c in claims]))
+    return findings
+
+
 def validate(package):
     """Validate finite geometry, references, coverage and readiness independently.
 
@@ -165,6 +208,7 @@ def validate(package):
         excluded[aid] = row
     missing_analysis = analysis_ids - set(represented) - set(excluded)
     if missing_analysis: bad("analysis_mapping", "Map or explicitly classify every analysis element", missing_analysis, "needs_input")
+    errors.extend(mapping_geometry_findings(package))
     panel_ids = indexes["panels"]
     for group in ("panels", "openings"):
         for p in indexes[group].values():

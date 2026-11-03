@@ -114,6 +114,18 @@ def test_stale_source_fails_completion_gate(exported):
     assert "stale" in B.completion_issues(root)[0]
 
 
+def test_section_group_cannot_claim_parallel_members_or_pass_completion(exported):
+    root,_,p=exported;p=copy.deepcopy(p)
+    a,b=p['physical']['members'][0]['axis']
+    p['analysis']={'nodes':[{'id':name,'point':point} for name,point in
+        [('a',a),('b',b),('c',[a[0],a[1]+120,a[2]]),('d',[b[0],b[1]+120,b[2]])]],
+        'elements':[{'id':'one','node_ids':['a','b']},{'id':'two','node_ids':['c','d']}]}
+    p['physical']['members'][0]['analysis_ids']=['one','two']
+    assert 'analysis_occurrence_geometry' in {f['code'] for f in B.validate(p)}
+    B.atomic_json(root/'design/bim_package.json',p)
+    assert any('analysis_occurrence_geometry' in f for f in B.completion_issues(root))
+
+
 def test_required_missing_export_cannot_pass(tmp_path):
     root=job(tmp_path)
     B.atomic_json(root/"design/bim_request.json",{"required":True})

@@ -123,14 +123,16 @@ def assemble(root, cfg, pkg, snapshot, provenance):
 
 def tracked_sources(root):
     """Fingerprint evidence consumed by replay, including local config helper modules."""
-    ignored = {".git", ".venv", "__pycache__", "rag", "figs", "design", "bim", "exports", "outputs"}
+    ignored = {".git", ".venv", "__pycache__", ".run", "rag", "figs", "design", "bim", "exports", "outputs"}
+    volatile = {"conversation.json", "activity_log.jsonl", "run_log.jsonl", "hub_runs.jsonl"}
     # Configs may read data (e.g. schedule.json), not just import Python. Track
     # local input files outside generated-output folders, including nested data.
     # Explicit additional inputs inside excluded folders can be listed by the
     # job in bim_inputs.json. Never interpret paths outside the job directory.
     files = {p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in (".py", ".json", ".csv", ".tsv", ".txt", ".yaml", ".yml", ".toml", ".xlsx")
+             and p.relative_to(root).as_posix() not in volatile
              and not any(part in ignored or part.startswith(".bim-work-") for part in p.relative_to(root).parts)}
-    files.update(p for p in root.rglob("*.py") if not any(part in (".git", ".venv", "__pycache__", "rag", "figs") or part.startswith(".bim-work-") for part in p.relative_to(root).parts))
+    files.update(p for p in root.rglob("*.py") if not any(part in (".git", ".venv", "__pycache__", ".run", "rag", "figs") or part.startswith(".bim-work-") for part in p.relative_to(root).parts))
     manifest = root / "bim_inputs.json"
     if manifest.is_file():
         extra = read_json(manifest)

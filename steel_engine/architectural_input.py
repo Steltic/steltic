@@ -15,6 +15,10 @@ NOTICE = ('[architectural input] The original IFC handoff is saved as architectu
           'The full original brief, floor/roof surfaces and walls remain in architectural_handoff.txt. '
           'Copy its reference_system into cfg["bim"]["reference_system"] and use its level IDs. '
           'Preserve each opening with source_ifc_guid, its full bounds and an explicit physical host. '
+          'Lay out trial framing and bracing around the supplied openings BEFORE detailed capacity calculations. '
+          'Check full trial-section extents, then connection-part footprints as they are selected; clear worklines alone are insufficient. '
+          'Coordinate actual wall host planes and all floor/roof patches and voids with the original evidence. '
+          'After relocating supports, check for unused nodes with free DOFs and verify the revised load path before sizing. '
           'Do not edit this framework-owned input or replace the SHA256 by hand. '
           'Physical completeness is checked against this input, not only your coverage statement.')
 

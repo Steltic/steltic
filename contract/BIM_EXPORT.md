@@ -406,3 +406,17 @@ are acceptable at design coordination level; retain actual counts, sizes and
 locations from the checked design. This limited absence screen does not verify
 quantities, contact, capacity or fabrication detail. Generic code citations do
 not create new component selections. Do not relabel unrelated solids to pass.
+
+Selected-component checks also read nested component dictionaries and explicit
+fastener selections in schedules (openBIM 0.8.27). A covered-by-assembly note must
+point to actual selected hardware: ordinary framing does not represent its
+bolts/anchors. Explicitly waived/delegated records retain their scope. Exact
+duplicate solids inside an assembly also prevent readiness; top/bottom plates
+and welds need their actual separate locations. These are bounded absence and
+duplicate-emission checks, not a general clash, quantity or fabrication test.
+
+Continuous secondary framing still needs all actual intermediate support
+connections required by its schedule. Model interior joints with attachments
+and locate the real hardware at each frame. At a shared beam/brace/column
+joint, provide every applicable connection family; one base plate or one brace
+gusset does not represent all other attached members' connections.

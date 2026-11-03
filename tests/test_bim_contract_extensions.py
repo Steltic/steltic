@@ -51,3 +51,28 @@ def test_physical_contradictions_are_needs_input_despite_stored_ready_flag():
     assert {'physical_ply_count','physical_opening_host','physical_remote_part'}<={f['code'] for f in findings}
     assert all(f['severity']=='needs_input' for f in findings)
     assert p==before
+
+
+def test_opening_inside_host_bounds_but_off_host_plane_is_not_ready():
+    p=json.loads((Path(__file__).parent/'fixtures/synthetic_bim_package.json').read_text())
+    # A mistaken diagonal strip has the right bounding box but cannot host
+    # the vertical end-wall window. This occurred in a fresh CFS IFC return.
+    p['physical']['panels']=[dict(id='wall',kind='wall',status='declared',material_id='steel',thickness=6,
+        vertices=[[-3,0,0],[3,0,0],[3,744,128],[-3,744,128]])]
+    p['physical']['openings']=[dict(id='window',host_id='wall',vertices=[[0,132,36],[0,204,36],[0,204,84],[0,132,84]])]
+    before=copy.deepcopy(p);findings=validate(p)
+    assert any(f['code']=='physical_opening_host_plane' and f['severity']=='needs_input' for f in findings)
+    assert not any(f['code']=='physical_opening_host' for f in findings)
+    assert p==before
+    p['physical']['panels'][0]['vertices']=[[0,0,0],[0,744,0],[0,744,128],[0,0,128]]
+    assert not validate(p)
+
+
+def test_sloped_host_accepts_only_coplanar_opening():
+    p=json.loads((Path(__file__).parent/'fixtures/synthetic_bim_package.json').read_text())
+    p['physical']['panels']=[dict(id='roof',kind='roof',status='declared',material_id='steel',thickness=.1,
+        vertices=[[0,0,0],[120,0,60],[120,120,60],[0,120,0]])]
+    p['physical']['openings']=[dict(id='opening',host_id='roof',vertices=[[20,20,10],[40,20,20],[40,40,20],[20,40,10]])]
+    assert not validate(p)
+    for point in p['physical']['openings'][0]['vertices']:point[2]+=1
+    assert any(f['code']=='physical_opening_host_plane' for f in validate(p))

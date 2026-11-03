@@ -194,6 +194,12 @@ edge distances, weld sizes and assembly notes in part `parameters` as applicable
 to the design drawing. Their detailed fabrication semantics are not validated in
 v1. No weld or fastener capacity is recalculated by this exporter.
 
+A hosted opening's boundary must lie in its declared panel plane as well as
+within its bounds. A diagonal strip with the correct bounding box is not a
+vertical wall host. Non-coplanar boundaries produce
+`physical_opening_host_plane`; they cannot be treated as resolved openings
+merely because a boundary reference can be exported.
+
 A `detail_ref` has `id` and `revision` and must name an actual controlled design
 detail. V1 preserves the reference but does not fetch or render a detail library;
 openBIM's future renderer must resolve it before issuing that sheet. Delegated

@@ -60,6 +60,133 @@ def geometry_errors(g, profiles):
     return errors
 
 
+def _simple_boundary(points, normal):
+    """Test a planar ring without repairing or reordering its vertices."""
+    if points[-1] == points[0]: points = points[:-1]
+    drop = max(range(3), key=lambda k: abs(normal[k]))
+    ring = [[v[k] for k in range(3) if k != drop] for v in points]
+    if len(ring) < 3 or _polygon_area(ring) <= 1e-10: return False
+    def cross(a, b, c): return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
+    def on(a, b, p):
+        return abs(cross(a,b,p)) < 1e-8 and all(min(a[k],b[k])-1e-8 <= p[k] <= max(a[k],b[k])+1e-8 for k in (0,1))
+    edges = list(zip(ring, ring[1:]+ring[:1]))
+    for i, (a,b) in enumerate(edges):
+        if norm([x-y for x,y in zip(a,b)]) < 1e-8: return False
+        # Adjacent collinear edges may continue straight, but cannot backtrack.
+        c = edges[(i+1) % len(edges)][1]
+        if abs(cross(a,b,c)) < 1e-8 and sum((x-y)*(z-y) for x,y,z in zip(a,b,c)) > 1e-8: return False
+        for j in range(i+1,len(edges)):
+            if j == i+1 or (i == 0 and j == len(edges)-1): continue
+            c,d = edges[j]
+            if (cross(a,b,c)*cross(a,b,d) < 0 and cross(c,d,a)*cross(c,d,b) < 0) or any((on(a,b,c),on(a,b,d),on(c,d,a),on(c,d,b))): return False
+    return True
+
+
+def _profile_bound_radius(profile_id, profiles):
+    """Conservative section envelope for absence checks, not contact/fit proof."""
+    profile = profiles.get(profile_id,{})
+    if profile.get('family') == 'built_up':
+        return max((norm(c['offset']) + _profile_bound_radius(c['profile_id'],profiles)
+                    for c in profile.get('components',[]) if profiles.get(c['profile_id'],{}).get('family') != 'built_up'), default=0.)
+    return sum(abs(v) for v in profile.get('dimensions',{}).values() if number(v))
+
+
+def _part_bounds(geometry, profiles):
+    """Conservative world bounds for supported solid and reference parts."""
+    if geometry_errors(geometry,profiles): return None
+    kind = geometry['type']
+    if kind == 'polyline': points = geometry['points']; radius = 0.
+    elif kind == 'box':
+        x,y = geometry['x_axis'],geometry['y_axis']
+        z = [x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]]
+        points = [[geometry['origin'][k]+sum(t*s*v[k] for t,s,v in zip((a,b,c),geometry['size'],(x,y,z))) for k in range(3)] for a in (0,1) for b in (0,1) for c in (0,1)]
+        radius = 0.
+    else:
+        points = [geometry['origin'],[p+geometry['length']*d for p,d in zip(geometry['origin'],geometry['axis'])]]
+        radius = geometry['radius'] if kind == 'cylinder' else _profile_bound_radius(geometry['profile_id'],profiles)
+    return [(min(p[k] for p in points)-radius,max(p[k] for p in points)+radius) for k in range(3)]
+
+
+def joint_disposition_findings(package):
+    """Require explicit, traceable exceptions for jobs requesting located parts.
+
+    Legacy reason-only declarations remain readable. These checks establish
+    topology and references, not bearing capacity or connection fit/approval.
+    """
+    if not package.get('require_connection_parts'): return []
+    physical = package['physical']
+    members = {m['id']:m for m in physical.get('members',[])}
+    panels = {p['id']:p for p in physical.get('panels',[])}
+    profiles = {p['id']:p for p in physical.get('profiles',[])}
+    joints = {j['id']:j for j in physical.get('joints',[])}
+    connections = {c['id']:c for c in physical.get('connections',[])}
+    joined = {c.get('joint_id') for c in connections.values()}
+    records = {r['id']:r for r in package.get('design_records',[])}
+    bounds = {}; findings = []
+    def bad(code, message, jid): findings.append(issue(code,message,[jid]))
+    def distance(point, box): return norm([max(lo-p,p-hi,0.) for p,(lo,hi) in zip(point,box)])
+    for declaration in physical.get('joint_dispositions',[]):
+        jid = declaration.get('joint_id'); joint = joints.get(jid)
+        if not joint or jid in joined: continue
+        kind = declaration.get('kind'); point = joint.get('point')
+        if not vector(point): continue
+        ends = joint.get('member_ends',[]); attachments = joint.get('attachments',[])
+        if kind not in ('free_end','continuous_member','bearing_interface','shared_connection'):
+            bad('joint_disposition_kind','Classify this unconnected joint as free_end, continuous_member, bearing_interface or shared_connection; a typical-detail note is not a located occurrence',jid)
+        elif kind == 'free_end':
+            if len(ends) != 1 or attachments:
+                bad('joint_free_end','A free-end exception needs exactly one physical member end and no support attachments',jid)
+        elif kind == 'continuous_member':
+            directions = []; invalid = False
+            for end in ends:
+                member = members.get(end.get('member_id'),{}); axis = member.get('axis',[])
+                if len(axis) != 2 or not all(vector(p) for p in axis) or end.get('end') not in ('start','end'):
+                    invalid = True; continue
+                i = 0 if end['end'] == 'start' else 1
+                offsets = member.get('end_offsets',[[0,0,0],[0,0,0]])
+                actual = [p+o for p,o in zip(axis[i],offsets[i])]
+                delta = [p+o-q for p,o,q in zip(axis[1-i],offsets[1-i],point)]
+                length = norm(delta)
+                if distance(point,[(v,v) for v in actual]) > 1e-5 or length < 1e-8: invalid = True
+                elif length: directions.append([v/length for v in delta])
+            # A lone interior station on an uninterrupted member is also valid.
+            interior = not ends and len(attachments) == 1 and 0 < attachments[0].get('station',0) < 1
+            dots = [sum(a*b for a,b in zip(directions[0],v)) for v in directions[1:]] if directions else []
+            through = len(directions) == 2 and not attachments and all(abs(d) > .9999 for d in dots) and any(d < -.9999 for d in dots)
+            if invalid or not (interior or through):
+                bad('joint_continuity','A continuous-member exception needs two opposing collinear physical ends at the joint, or one interior attachment with no other member ends; connected branches and cutback gaps need their actual connection',jid)
+        elif kind == 'bearing_interface':
+            refs = declaration.get('design_record_ids',[])
+            supports = declaration.get('supporting_entity_ids',[])
+            if not refs or any(r not in records or records[r].get('waived') for r in refs):
+                bad('joint_bearing_design','A hardware-free bearing interface needs its actual completed, non-waived design record references',jid)
+            valid_support = False
+            lone_end = ends[0].get('member_id') if len(ends) == 1 else None
+            for sid in supports:
+                support = members.get(sid) or panels.get(sid)
+                if not support or sid == lone_end: continue
+                if sid in members:
+                    pts = [[v+o for v,o in zip(p,off)] for p,off in zip(support['axis'],support.get('end_offsets',[[0,0,0],[0,0,0]]))]
+                    radius = _profile_bound_radius(support.get('profile_id'),profiles)
+                else: pts = support.get('vertices',[]); radius = support.get('thickness',0)
+                if not pts: continue
+                box = [(min(p[k] for p in pts)-radius,max(p[k] for p in pts)+radius) for k in range(3)]
+                if distance(point,box) <= .25: valid_support = True
+            if not supports or any(s not in members and s not in panels for s in supports) or not valid_support:
+                bad('joint_bearing_support','Identify the actual supporting member/panel at a bearing interface; the loaded member cannot support its own lone end',jid)
+        elif kind == 'shared_connection':
+            refs = declaration.get('connection_ids',[])
+            if not refs or any(r not in connections for r in refs):
+                bad('joint_shared_connection','Reference the existing located connection IDs that actually serve this joint; do not duplicate hardware or cite a representative detail',jid)
+                continue
+            for cid in refs:
+                if cid not in bounds:
+                    bounds[cid] = [box for p in connections[cid].get('parts',[]) if (box := _part_bounds(p.get('geometry',{}),profiles)) is not None]
+                if not bounds[cid] or min(distance(point,box) for box in bounds[cid]) > 72:
+                    bad('joint_shared_connection','The referenced assembly has no connection-part bounds within six feet of this joint; reference the actual local assembly (nearness alone does not prove fit)',jid)
+    return findings
+
+
 def mapping_geometry_findings(package):
     """A physical line may join collinear segments, never stand for a section group.
 
@@ -529,6 +656,7 @@ def validate(package):
                     if norm(normal)>1e-8: normals.append(normal)
                 if not normals: bad("panel_geometry","Collinear boundary",[p["id"]])
                 elif any(abs(sum(n*(x-y) for n,x,y in zip(normals[0],v,points[0])))/norm(normals[0])>1e-6 for v in points): bad("panel_geometry","Nonplanar boundary",[p["id"]])
+                elif not _simple_boundary(points,normals[0]): bad("panel_geometry","Boundary must be a simple, non-self-intersecting ring in perimeter order",[p["id"]])
             if group == "panels":
                 if p.get("status") != "declared": bad("panel_placement", "Confirm recovered panel assembly and placement", [p["id"]], "needs_input")
                 elif not number(p.get("thickness"), True) or p.get("material_id") not in materials: bad("panel_specification", "Panel thickness/material missing", [p["id"]])
@@ -590,6 +718,10 @@ def validate(package):
             part_ids.add(part["id"])
             if not part.get("kind") or part.get("material_id") not in materials: bad("connection_part", "Part kind/material missing", [cid, part["id"]])
             for msg in geometry_errors(part.get("geometry"), profiles): bad("connection_geometry", msg, [cid, part["id"]])
+    for d in physical.get('joint_dispositions',[]):
+        refs=d.get('design_record_ids',[])
+        if any(ref not in records for ref in refs): bad('joint_disposition_design','Joint disposition references unknown design records',[d.get('joint_id')])
+        elif d.get('kind')=='bearing_interface': linked.update(refs)
     dispositions = {}
     for d in physical.get("record_dispositions", []):
         rid = d.get("record_id")
@@ -606,10 +738,14 @@ def validate(package):
     if unjoined: bad("member_end_mapping", "Assign physical member ends to joints", unjoined, "needs_input")
     free_joints = set(indexes["joints"]) - joined
     exemptions = physical.get("joint_dispositions", [])
+    exempt_ids=set()
     for d in exemptions:
         if d.get("joint_id") not in indexes["joints"] or not d.get("reason"): bad("joint_disposition", "Invalid free/continuous joint declaration")
+        if d.get('joint_id') in exempt_ids: bad('joint_disposition','Duplicate joint disposition',[d.get('joint_id')])
+        exempt_ids.add(d.get('joint_id'))
         free_joints.discard(d.get("joint_id"))
     if free_joints: bad("joint_connection", "Provide connections or free/continuous-joint reasons", free_joints, "needs_input")
+    errors.extend(joint_disposition_findings(package))
     coverage = physical.get("coverage", {})
     for key in COVERAGE:
         item = coverage.get(key, {})

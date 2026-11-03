@@ -29,7 +29,7 @@ def declarations():
                     "reference_line":"centroid","end_offsets":[[0,0,0],[0,0,0]],"analysis_ids":["hr:element:1"] if MODULE=="HR" else []}],
         "joints":[{"id":"support","point":[0,0,0],"member_ends":[{"member_id":"beam","end":"start"}]},
                   {"id":"free","point":[120,0,0],"member_ends":[{"member_id":"beam","end":"end"}]}],
-        "joint_dispositions":[{"joint_id":"free","reason":"Synthetic free end"}],
+        "joint_dispositions":[{"joint_id":"free","kind":"free_end","reason":"Synthetic free end"}],
         "coverage":{k:{"complete":True,"basis":"Complete synthetic one-member fixture; no other geometry"} for k in B.COVERAGE}}
 
 
@@ -391,3 +391,11 @@ def test_replay_detects_orientation_difference_from_gold(tmp_path):
     assert p["readiness"]["status"]=="invalid"
     assert p["analysis"]["comparison"]["status"]=="mismatch"
     assert any("orientation/offsets 1" in f["entity_ids"] for f in p["readiness"]["findings"])
+
+
+def test_required_reason_only_joint_cannot_pass_completion(exported):
+    root,_,p=exported;p=copy.deepcopy(p)
+    p['require_connection_parts']=True
+    p['physical']['joint_dispositions'][0].pop('kind')
+    B.atomic_json(root/'design/bim_package.json',p)
+    assert any('joint_disposition_kind' in f for f in B.completion_issues(root))

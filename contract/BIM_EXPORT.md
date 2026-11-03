@@ -208,6 +208,15 @@ boundaries require separate geometry review. Resolve reported framing clashes
 before claiming readiness. This limited check does not establish clearance of
 full profiles or connection parts, which still need coordination.
 
+`physical_part_dimensions` reports contradictions between explicitly labelled
+inch-valued dimensions and supported part solids. For plate/gusset/stiffener/
+washer/strap/sheet boxes, `thickness_in` or `plate_thickness_in` must match a
+local box dimension. For cylindrical shafts, `diameter_in` must match twice
+the radius; heads, nuts and washers are excluded from this diameter screen.
+Tolerance is the larger of 0.005 in and 2%. Non-numeric labels are not inferred.
+Reconcile both geometry and metadata with the actual completed design; changing
+a label alone does not establish that the solid matches the calculation.
+
 A `detail_ref` has `id` and `revision` and must name an actual controlled design
 detail. V1 preserves the reference but does not fetch or render a detail library;
 openBIM's future renderer must resolve it before issuing that sheet. Delegated

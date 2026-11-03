@@ -1050,6 +1050,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     "last result/error and change approach: fix the SPECIFIC problem, or move on to the next step.")
             yield {"type": "tool", "step": step, "name": nm, "title": _tool_title(nm, args),
                    "code": ((args.get("code", "") or "")[:200] if nm == "run_python" else "")}
+            _artifacts_before = _artifact_state(ws) if nm in ("run_python", "write_file") else {}
             _t0 = time.time()
             try:
                 if tc["id"] in malformed:        # never run a call whose arguments the model did not finish
@@ -1085,7 +1086,8 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     fired_hints.add(_hid)
                     pending_nudges.append("[phase hint] " + _hmsg)
                     break
-            for _mk in _milestones(nm, args, result):
+            for _mk in _milestones(nm, args, result, _artifacts_before,
+                                   _artifact_state(ws) if nm in ("run_python", "write_file") else {}):
                 yield {"type": "milestone", "text": _mk}
             _payload = json.dumps(result)
             _cap = config.RAG_OUT_CAP if (isinstance(result, dict) and result.get("saved")) else config.TOOL_OUT_CAP
@@ -1200,21 +1202,44 @@ def _result_preview(name, result):
         return "read " + str(result.get("shown_lines", ""))
     return json.dumps(result)[:200]
 
-def _milestones(name, args, result):
-    out = []
-    if not isinstance(result, dict):
-        return out
-    if name == "write_file":
-        p = (args.get("path") or "").lower()
-        if p.endswith("cfg.py"): out.append("cfg.py saved")
-        elif p.endswith("calc_package.json"): out.append("Capacities written to calc_package.json")
-    if name == "run_python" and result.get("returncode") == 0:
-        c = args.get("code", "")
-        if "design_and_report" in c: out.append("Model analysed — demands + figures + report generated")
-        elif "build_and_preview" in c: out.append("Preview model built")
-        elif "build_report" in c: out.append("Report re-rendered")
-        if "consistency" in c: out.append("Consistency check run")
-    return out
+def _artifact_state(ws):
+    """Small file-stat snapshot for progress messages, never an acceptance gate."""
+    from pathlib import Path
+    try:
+        root = ws._job_dir() if hasattr(ws, "_job_dir") else None
+        if not root: return {}
+        result = {}
+        for relative in ("cfg.py", "design/calc_package.json", "design/calc_package_cfs.json",
+                         "design/pipeline_results.json", "design/consistency_result.json",
+                         "design/bim_package.json", "report.html", "viewer_3d.html"):
+            path = Path(root) / relative
+            if path.is_file():
+                stat = path.stat()
+                result[relative] = (stat.st_mtime_ns, stat.st_size)
+        return result
+    except Exception:
+        return {}  # Reporting must not interrupt a paid design run.
+
+
+def _milestones(name, args, result, before=None, after=None):
+    """Describe saved artifacts; merely mentioning a function proves no execution."""
+    if not isinstance(result, dict): return []
+    succeeded = (name == "run_python" and result.get("returncode") == 0
+                 or name == "write_file" and result.get("ok") is True)
+    if not succeeded or result.get("error") or result.get("timed_out"): return []
+    before, after = before or {}, after or {}
+    labels = {
+        "cfg.py": "cfg.py saved",
+        "design/calc_package.json": "Calculation package updated",
+        "design/calc_package_cfs.json": "Calculation package updated",
+        "design/pipeline_results.json": "Analysis results updated",
+        "design/consistency_result.json": "Consistency result updated",
+        "design/bim_package.json": "Physical export updated",
+        "report.html": "Report updated",
+        "viewer_3d.html": "Preview model updated",
+    }
+    return list(dict.fromkeys(label for path, label in labels.items()
+                             if path in after and after[path] != before.get(path)))
 
 
 # ---------------- MOCK design (offline pipe test) ----------------

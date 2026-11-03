@@ -45,6 +45,16 @@ class _Sandbox:
     name = "none"
 
 
+@pytest.mark.parametrize('args', [{}, {'code': ''}, {'code': ' \n\t'}, {'code': None}, {'code': 123}])
+def test_empty_python_arguments_cannot_report_a_successful_calculation(tmp_path, args):
+    # Valid JSON {} can still be an incomplete tool call at the output limit.
+    # _Sandbox deliberately has no run method: no subprocess may be invoked.
+    result = agent.dispatch('run_python', args, JobWorkspace(tmp_path/'jobs'), _Sandbox())
+    assert 'No code was run' in result['error']
+    assert 'smaller saved steps' in result['error']
+    assert 'returncode' not in result
+
+
 def _scripted(turns, seen):
     """agent._chat_with_retry stand-in: records the messages of every call, plays `turns` in order."""
     def fake(base_url, api_key, model, messages, max_tok, reasoning=None, cache=False, provider="", cancel=None):

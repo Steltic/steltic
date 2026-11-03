@@ -68,7 +68,7 @@ class JobWorkspace:
         if d is not None and not any((d / p).exists() for p in
                 ("cfg.py", "provenance.json", "design/calc_package.json", "design/calc_package_cfs.json")):
             from steel_engine.bim_export import atomic_json
-            atomic_json(d / "design" / "bim_request.json", {"required": True})
+            atomic_json(d / "design" / "bim_request.json", {"required": True, "require_connection_parts": True})
 
     def new_activity_log(self, building: str = "") -> dict:
         self.building = _clean_name(building)

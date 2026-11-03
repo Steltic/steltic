@@ -315,6 +315,8 @@ def validate(package):
                 bad("delegated_interface", "Delegated connection needs party, versioned detail and representation", [cid])
         elif not parts and not (detail.get("id") and detail.get("revision")):
             bad("connection_geometry", "Connection needs parts or a versioned design-detail reference", [cid])
+        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not any(p.get('geometry',{}).get('type')!='polyline' for p in parts):
+            bad('connection_parts_required','This job requires located physical parts for designed connections; a detail reference alone is incomplete',[cid],'needs_input')
         part_ids = set()
         for part in parts:
             if not isinstance(part, dict) or not part.get("id") or part["id"] in part_ids:
@@ -348,6 +350,16 @@ def validate(package):
         if not isinstance(item, dict) or item.get("complete") is not True or not item.get("basis"):
             bad("coverage_"+key, "Declare and substantiate completeness of "+key, severity="needs_input")
     if not indexes["members"] and not indexes["panels"]: bad("empty_model", "No physical members or panels", severity="needs_input")
+    reference=package.get('reference_system',{})
+    levels=[row['level'] for row in reference.get('levels',[])]
+    if len(levels)!=len(set(levels)):bad('reference_levels','Duplicate physical reference level IDs')
+    grid_ids=[row['id'] for row in reference.get('grids',[])]
+    if len(grid_ids)!=len(set(grid_ids)):bad('reference_grids','Duplicate physical reference grid IDs')
+    if grid_ids and not {'U','V'}.issubset({row['direction'] for row in reference['grids']}):
+        bad('reference_grids','An IFC reference grid needs both U and V axis families')
+    for grid in reference.get('grids',[]):
+        if all(norm([a-b for a,b in zip(p,grid['points_in'][0])])<1e-8 for p in grid['points_in'][1:]):
+            bad('reference_grids','Grid polyline has zero length',[grid['id']])
     for item in package.get("review", {}).get("items", []):
         if item["status"] != "resolved":
             bad("coordination_required", item["title"], item["entity_ids"] or [item["id"]], "needs_input")

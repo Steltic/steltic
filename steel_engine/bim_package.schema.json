@@ -1133,6 +1133,87 @@
         "items"
       ],
       "additionalProperties": true
+    },
+    "require_connection_parts": {
+      "type": "boolean"
+    },
+    "reference_system": {
+      "type": "object",
+      "required": [
+        "basis",
+        "levels",
+        "grids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ifc_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "level",
+              "elevation_in"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "level": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "elevation_in": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "grids": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "direction",
+              "points_in"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "direction": {
+                "enum": [
+                  "U",
+                  "V",
+                  "W"
+                ]
+              },
+              "points_in": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "$ref": "#/$defs/point"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "required": [

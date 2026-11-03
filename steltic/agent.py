@@ -771,6 +771,22 @@ def _sig(nm, args):
     return (nm, json.dumps(args, sort_keys=True)[:120])
 
 
+def _loop_design_state(ws):
+    """Content evidence for new cfg/calculation work, not an acceptance gate.
+
+    Rewriting a report/consistency timestamp or merely touching an input must
+    not reset repeated-call counts. A saved calculation edit permits rechecking.
+    """
+    from pathlib import Path
+    try:
+        root = Path(ws._job_dir())
+        return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                for name in ("cfg.py", "design/calc_package.json", "design/calc_package_cfs.json")
+                if (root / name).is_file()}
+    except (OSError, AttributeError, TypeError):
+        return None  # Keep the existing guard when evidence cannot be read.
+
+
 def _resume_preamble(ws, building):
     """If a prior cfg.py exists for this building, hand it to the model so a fresh resume continues it."""
     try:
@@ -932,6 +948,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
             messages.append({"role":"user","content":_architecture_notice})
     stuck = 0
     sig_counts = {}
+    loop_design_state = _loop_design_state(ws)
     fired_hints = set()              # hardening #7: one-shot phase hints keyed by trigger id
     nudged_sigs = set()              # signatures already soft-nudged (REPEAT_NUDGE)
     seen_paths = set()               # write_file paths seen so far (a progress signal)
@@ -1058,6 +1075,11 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                 args = json.loads(tc["function"]["arguments"] or "{}")
             except Exception:
                 args = {}
+            current_design_state = _loop_design_state(ws)
+            if current_design_state is not None:
+                if loop_design_state is not None and current_design_state != loop_design_state:
+                    sig_counts.clear(); nudged_sigs.clear()
+                loop_design_state = current_design_state
             sig = _sig(nm, args); sig_counts[sig] = sig_counts.get(sig, 0) + 1; n = sig_counts[sig]
             if n >= config.REPEAT_LIMIT:                       # PAUSE -- but keep the conversation valid for Continue
                 pause = (nm, n)
@@ -1130,9 +1152,8 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
         if pause is not None:
             _save_conv(conv_path, messages)
             yield {"type": "paused", "reason": f"'{pause[0]}' repeated {pause[1]}x with no progress",
-                   "detail": "This is typically a symptom of less intelligent LLMs. Check what the agent spun its "
-                             "wheels on -- you may be able to provide some advice in the input box. Otherwise, just "
-                             "hit Continue and see if it self-fixes."}
+                   "detail": "No saved cfg/calculation changes were detected between repeated calls. "
+                             "Review the last result and Continue with the specific correction."}
             return
         if progressed:                                         # progress tracker: stall = no file/run/search advancing
             no_progress = 0; stall_nudged = False

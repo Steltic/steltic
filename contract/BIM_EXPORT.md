@@ -173,6 +173,19 @@ Supported profile families/dimensions:
 - `box_envelope`: `width,depth`, only with `scope: 'delegated'` and a documented
   `basis`; it represents a declared envelope, not supplier internals.
 
+Section coordinates use local Y for width and local Z for depth. I, RHS, CHS
+and flat sections are centred; channel/Z sections use the web mid-depth centre,
+with channel flanges opening toward positive local Y. Angles use the outside
+corner. These are profile reference points, not automatically computed section
+centroids. `reference_line` describes the supplied axis; use explicit offsets
+where the intended physical profile reference point differs from that axis.
+For a built-up channel box, place the two web reference points at their actual
+separation; do not apply offsets as if each channel were centred on its bounding
+box. Every ply must occupy separate steel volume. Gross overlap of straight
+web/flange cores is reported as `physical_constituent_overlap` and prevents a
+`ready` result. This limited check excludes lips, fillets and unsupported curved
+cores; a clean result is not a complete interference or fabrication-fit check.
+
 Connection `parts` each carry ID, kind, material ID and geometry. Geometry supports
 oriented `box` (origin is its minimum local corner), `cylinder` (origin is base
 centre), `extruded_profile` (origin is profile reference point) and `polyline`.

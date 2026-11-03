@@ -194,14 +194,24 @@ def physical_screens(physical):
             plies.append(dict(profile_id=profile['id'],named_count=int(match[1]),component_count=len(components),constituent=match[2]))
     add('physical_ply_count','Built-up section labels disagree with constituent counts',plies)
     add('physical_constituent_overlap','Built-up constituents substantially overlap; channel offsets use the web centre, not a bounding-box centre',_constituent_overlaps(profiles))
-    panels={p['id']:p for p in physical.get('panels',[])};outside=[]
+    panels={p['id']:p for p in physical.get('panels',[])};outside=[];off_plane=[]
     for opening in physical.get('openings',[]):
         host=panels.get(opening.get('host_id'),{});vertices=host.get('vertices',[])
         if len(vertices)<3 or not all(vector(v) for v in vertices):continue
         bounds=[(min(v[k] for v in vertices),max(v[k] for v in vertices)) for k in range(3)]
         excess=max((max(lo-v[k],v[k]-hi,0.) for v in opening.get('vertices',[]) for k,(lo,hi) in enumerate(bounds)),default=0.)
         if excess>1e-5:outside.append(dict(opening_id=opening['id'],host_id=host['id'],outside_distance_in=excess))
+        a=[v-u for u,v in zip(vertices[0],vertices[1])]
+        for vertex in vertices[2:]:
+            b=[v-u for u,v in zip(vertices[0],vertex)]
+            normal=[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
+            length=norm(normal)
+            if length<=1e-10:continue
+            distance=max((abs(sum((v-u)*n for u,v,n in zip(vertices[0],point,normal)))/length for point in opening.get('vertices',[])),default=0.)
+            if distance>1e-5:off_plane.append(dict(opening_id=opening['id'],host_id=host['id'],distance_to_host_plane_in=distance))
+            break
     add('physical_opening_host','Opening boundaries extend outside their declared host bounds',outside)
+    add('physical_opening_host_plane','Opening boundaries must lie in their declared panel plane to form an actual opening',off_plane)
     joints={j['id']:j for j in physical.get('joints',[])};remote=[]
     for connection in physical.get('connections',[]):
         point=joints.get(connection.get('joint_id'),{}).get('point')

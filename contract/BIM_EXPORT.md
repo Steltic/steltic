@@ -299,3 +299,31 @@ invented supplier geometry. Older jobs without this requirement retain the prior
 controlled-reference contract. A job may explicitly opt in with
 `cfg['bim']['require_connection_parts'] = True`. This is design coordination
 geometry, not fabrication approval.
+
+## Bound architectural inputs
+
+When a design starts or resumes with an openBIM architectural handoff, the
+framework saves its original grids, named levels, IFC fingerprint and every
+door/window as `architectural_input.json`. This file is an input to the design
+and is fingerprinted by physical replay. The complete original brief, wall and
+floor/roof evidence stays in `architectural_handoff.txt`. `new_activity_log` preserves this
+binding. A later complete handoff can revise it, retaining the previous input
+in `architectural_input_history`.
+
+Read this file and copy its `reference_system` into `cfg['bim']`; use the supplied
+numeric level IDs consistently. Every architectural opening needs one physical
+opening with the exact `source_ifc_guid`, retained bounds and an explicit host.
+The exporter copies the source fingerprint directly from the saved input.
+If no reference system was declared, it carries the original architectural
+reference system without assigning any member to a storey.
+
+Coverage statements are checked against this bound input. Missing or moved
+openings, changed/missing grids or named datums, duplicate opening mappings,
+and coincident identical physical members prevent readiness. Edit the physical
+declarations to resolve these findings. The framework-owned input and its
+request marker cannot be changed with `write_file`.
+
+The optional package `architectural_input` field is supported by openBIM 0.8.17
+and later. Update the consumer together with the producers. Legacy jobs without
+a bound IFC input keep their existing contract. These checks preserve supplied
+data; they do not infer framing, connection design or omitted architectural data.

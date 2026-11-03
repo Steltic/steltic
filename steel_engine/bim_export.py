@@ -7,6 +7,7 @@ isolation, not a security sandbox for untrusted Python.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -125,6 +126,18 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     requirements=read_json(request) if request.is_file() else {}
     if requirements.get('require_connection_parts') or cfg.get('bim',{}).get('require_connection_parts'):
         result['require_connection_parts']=True
+    if requirements.get('architectural_input_sha256'):
+        source=root/'architectural_input.json'
+        handoff=root/'architectural_handoff.txt';handoff_hash=requirements.get('architectural_handoff_sha256')
+        handoff_changed=bool(handoff_hash and (not handoff.is_file() or digest(handoff)!=handoff_hash))
+        if not source.is_file() or digest(source)!=requirements['architectural_input_sha256'] or handoff_changed:
+            findings.append(issue('architectural_input_changed','The saved architectural input is missing or changed; restore the original handoff through the design interface'))
+        else:
+            result['architectural_input']=read_json(source)
+            if reference_system is None:reference_system=copy.deepcopy(result['architectural_input']['reference_system'])
+            else:reference_system=copy.deepcopy(reference_system)
+            # Identity is copied from the original input, never retyped by the model.
+            reference_system['source_ifc_sha256']=result['architectural_input']['source_ifc_sha256']
     if reference_system is not None:result['reference_system']=reference_system
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),

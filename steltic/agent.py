@@ -900,6 +900,15 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
             user_content = user
         messages = [{"role": "system", "content": sys_content}, {"role": "user", "content": user_content}]
         yield {"type": "status", "text": f"model={model} | contract={len(system)} chars | sandbox={executor.name}"}
+    if not _BO.is_build_only(ws.jobs / building):
+        from steel_engine.architectural_input import capture as _capture_architecture, NOTICE as _architecture_notice
+        try:
+            bound=_capture_architecture(ws.jobs / building,messages)
+        except (ValueError,OSError) as exc:
+            yield {"type":"error","text":"Architectural IFC handoff could not be preserved: "+str(exc)}
+            return
+        if bound and not any(m.get('role')=='user' and m.get('content')==_architecture_notice for m in messages):
+            messages.append({"role":"user","content":_architecture_notice})
     stuck = 0
     sig_counts = {}
     fired_hints = set()              # hardening #7: one-shot phase hints keyed by trigger id
@@ -1002,9 +1011,14 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     "waived), re-run consistency.check, then finish."})
                 continue
             if _gate_probs:
-                final_text += ("\n\n[completion gate] NOTE: finishing with %d unresolved package "
-                               "problem(s) after 2 forced continuations:\n- " % len(_gate_probs)
-                               + "\n- ".join(_gate_probs))
+                notice = ("The design has saved progress but has not passed completion checks.\n\n- "
+                          + "\n- ".join(_gate_probs))
+                messages.append({"role":"user","content":"COMPLETION GATE: still incomplete. Resolve these before finishing:\n- " + "\n- ".join(_gate_probs)})
+                _save_conv(conv_path, messages)
+                yield {"type":"assistant","text":notice}
+                yield {"type":"paused","reason":"completion checks remain unresolved",
+                       "detail":"Progress is saved. Continue after addressing the listed checks.","problems":_gate_probs}
+                return
             yield {"type": "assistant", "text": final_text}
             _evict_all_rag(messages)                  # design complete -> drop raw spec-RAG chunks to file pointers before saving
             _save_conv(conv_path, messages)

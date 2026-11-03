@@ -565,6 +565,17 @@ _MODEL_QUIRKS: dict = {}
 
 def _build_chat_payload(model, messages, max_tok, reasoning, provider, base_url, quirks):
     p = {"model": model, "messages": messages, "tools": TOOL_SPECS, "tool_choice": "auto", "stream": True}
+    # A rejected final answer must lead to an actual tool step, not another
+    # promise to edit. Only the immediately following enforced gate turn is
+    # constrained; normal answers and the existing bounded pause remain intact.
+    last = messages[-1] if messages else {}
+    content = last.get("content", "")
+    if isinstance(content, list):  # Anthropic's rolling text-cache breakpoint
+        content = "".join(p.get("text", "") for p in content if p.get("type") == "text")
+    if (last.get("role") == "user" and isinstance(content, str)
+            and content.startswith("COMPLETION GATE (enforced):")
+            and "no_required_tool_choice" not in quirks):
+        p["tool_choice"] = "required"
     p["max_completion_tokens" if "max_completion_tokens" in quirks else "max_tokens"] = max_tok
     if config.TEMPERATURE is not None and "no_temperature" not in quirks:
         p["temperature"] = config.TEMPERATURE
@@ -586,6 +597,8 @@ def _detect_quirk(body):
         return "no_temperature"
     if "stream_options" in b and ("unsupported" in b or "not supported" in b):
         return "no_stream_options"
+    if "tool_choice" in b and "required" in b and any(term in b for term in ("unsupported", "not supported", "does not support")):
+        return "no_required_tool_choice"
     return None
 
 

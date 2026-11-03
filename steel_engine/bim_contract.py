@@ -283,6 +283,56 @@ def connection_component_findings(package):
     return result
 
 
+def fastener_quantity_findings(package):
+    """A count label cannot multiply one solid into several fasteners.
+
+    Compare explicit part-level counts with distinct solid occurrences in the
+    same local design assembly. This is a conservative lower-bound check, not
+    an interpretation of free-text schedules or a fabrication quantity audit.
+    """
+    if not package.get('require_connection_parts'): return []
+    connections=package['physical'].get('connections',[])
+    solids={'box','cylinder','extruded_profile'}
+    def category(part):
+        label=part.get('kind','').lower().replace('_',' ').replace('-',' ')
+        if re.search(r'\b(?:plates?|washers?|nuts?|heads?)\b',label):return None
+        if re.search(r'\banchors?\b',label):return 'anchor'
+        if re.search(r'\bscrews?\b',label):return 'screw'
+        if re.search(r'\bbolts?\b',label):return 'bolt'
+        return None
+    def frozen(value):
+        if isinstance(value,dict):return tuple((k,frozen(v)) for k,v in sorted(value.items()))
+        if isinstance(value,list):return tuple(frozen(v) for v in value)
+        return value
+    local={}
+    for connection in connections:
+        if connection.get('scope')=='delegated':continue
+        for rid in connection.get('design_record_ids',[]):
+            local.setdefault((connection.get('joint_id'),rid),[]).extend(connection.get('parts',[]))
+    findings=[]
+    for connection in connections:
+        if connection.get('scope')=='delegated':continue
+        pool=list(connection.get('parts',[]))
+        for rid in connection.get('design_record_ids',[]):pool.extend(local.get((connection.get('joint_id'),rid),[]))
+        for part in connection.get('parts',[]):
+            kind=category(part)
+            if not kind or part.get('geometry',{}).get('type') not in solids:continue
+            counts=[value for key,value in part.get('parameters',{}).items()
+                    if key in ('count','quantity','n_bolts','n_anchors','n_screws')
+                    and number(value,True) and value>1 and int(value)==value]
+            if not counts:continue
+            required=int(max(counts))
+            actual=len({frozen([p.get('material_id'),p['geometry']]) for p in pool
+                        if category(p)==kind and p.get('geometry',{}).get('type') in solids})
+            if actual<required:
+                findings.append(dict(connection_id=connection['id'],part_id=part['id'],
+                    category=kind,declared_count=required,actual_distinct_solids=actual))
+    if not findings:return []
+    finding=issue('connection_fastener_quantity','A solid fastener count exceeds the distinct located fastener solids in its local design assembly; instantiate the actual checked pattern instead of multiplying a representative solid by a count label',[f['connection_id'] for f in findings])
+    finding.update(count=len(findings),examples=findings[:100])
+    return [finding]
+
+
 def duplicate_connection_part_findings(package):
     """Reject exact repeated solid components inside one designed assembly.
 
@@ -874,6 +924,7 @@ def validate(package):
     if free_joints: bad("joint_connection", "Provide connections or free/continuous-joint reasons", free_joints, "needs_input")
     errors.extend(joint_disposition_findings(package))
     errors.extend(connection_component_findings(package))
+    errors.extend(fastener_quantity_findings(package))
     errors.extend(duplicate_connection_part_findings(package))
     coverage = physical.get("coverage", {})
     for key in COVERAGE:

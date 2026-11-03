@@ -774,3 +774,6 @@ P-Delta + per-member DEMAND envelope + figures + report). It computes **NO AISC 
 `engine3d.CFG["B07"]` (schema to copy), `sections.props("W24X55")` (properties), `design_post.run_case(...)`
 (quick one-combo demands; the OFFICIAL envelope is the distributed static model, girder moment per
 `cfg['floor_system']` = "one-way" default / "two-way").
+
+
+Physical fastener quantities: a count label on one cylinder or bounding box does not create the selected bolt/anchor/screw pattern. Export the distinct located occurrences, preserving the actual checked count, sizes, spacing, supporting faces and load path. Do not remove or lower count metadata to hide missing hardware; reconcile any true metadata error against the actual completed connection calculation.

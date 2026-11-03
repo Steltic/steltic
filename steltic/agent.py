@@ -17,10 +17,36 @@ from .sandbox import is_blocked
 
 class LLMHTTPError(RuntimeError):
     """An HTTP error from the LLM endpoint. `retryable` is False for 4xx client/config errors (a bad
-    request won't succeed on retry); True for 408/429/5xx transient errors."""
-    def __init__(self, msg, retryable=True):
+    request won't succeed on retry); True for 408/429/5xx and explicitly temporary
+    in-flight reservation limits. Account credit exhaustion remains non-retryable."""
+    def __init__(self, msg, retryable=True, retry_after=None):
         super().__init__(msg)
         self.retryable = retryable
+        self.retry_after = retry_after
+
+
+def _http_retry_policy(status, headers, body):
+    """Distinguish a temporary reservation limit from exhausted account credit."""
+    try:metadata=json.loads(body).get('error',{}).get('metadata',{})
+    except (ValueError,AttributeError):metadata={}
+    if not isinstance(metadata,dict):metadata={}
+    temporary_budget=status==402 and metadata.get('reason')=='in_flight_budget_exhausted'
+    retryable=status in (408,429) or status>=500 or temporary_budget
+    nested=metadata.get('headers',{})
+    delay=headers.get('Retry-After') or (nested.get('Retry-After') if isinstance(nested,dict) else None)
+    try:delay=float(delay)
+    except (TypeError,ValueError):delay=120.0 if temporary_budget else None
+    if delay is not None and not 0<=delay<=600:delay=120.0 if temporary_budget else None
+    return retryable,delay,temporary_budget
+
+
+def _retry_wait(seconds,cancel=None):
+    # Stop stays responsive during the provider's longer reservation cooldown.
+    remaining=float(seconds)
+    while remaining>0:
+        if cancel and cancel():raise UserStop()
+        step=min(.25,remaining);time.sleep(step);remaining-=step
+    if cancel and cancel():raise UserStop()
 
 
 class _ThinkSplitter:
@@ -633,8 +659,9 @@ def _stream_chat(base_url, api_key, model, messages, max_tok, reasoning=None, ca
                 quirks.add(q)
                 continue
             # 4xx (except 408/429) is a client/config error -> fail fast; 408/429/5xx are transient -> retryable.
-            retryable = resp.status_code in (408, 429) or resp.status_code >= 500
-            raise LLMHTTPError(f"LLM API {resp.status_code}: {body}", retryable=retryable)
+            retryable,retry_after,temporary_budget=_http_retry_policy(resp.status_code,getattr(resp,'headers',{}),body)
+            message='temporary in-flight credit reservation limit; waiting for existing requests to settle' if temporary_budget else body
+            raise LLMHTTPError(f"LLM API {resp.status_code}: {message}", retryable=retryable,retry_after=retry_after)
         if r is None:
             raise LLMHTTPError("LLM API 400: could not satisfy the model's parameter requirements", retryable=False)
         # Stop watchdog (2026-08-12): the per-line cancel check below only runs when the provider
@@ -728,6 +755,7 @@ def _stream_chat(base_url, api_key, model, messages, max_tok, reasoning=None, ca
 def _chat_with_retry(base_url, api_key, model, messages, max_tok, reasoning=None, cache=False, provider="", cancel=None):
     last = None
     for attempt in range(1, config.RETRIES + 1):
+        if cancel and cancel():raise UserStop()
         try:
             out = yield from _stream_chat(base_url, api_key, model, messages, max_tok, reasoning, cache, provider, cancel=cancel)
             return out
@@ -737,8 +765,9 @@ def _chat_with_retry(base_url, api_key, model, messages, max_tok, reasoning=None
                 break
             if attempt < config.RETRIES:
                 wait = min(6 * attempt, config.RETRY_BACKOFF_CAP)
+                if getattr(e,'retry_after',None) is not None:wait=max(wait,e.retry_after)
                 yield {"type": "status", "text": f"LLM call failed ({e}); retry {attempt}/{config.RETRIES} in {wait}s"}
-                time.sleep(wait)
+                _retry_wait(wait,cancel)
     raise RuntimeError(f"LLM call failed: {last}")
 
 

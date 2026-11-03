@@ -396,3 +396,13 @@ Reason-only legacy declarations remain readable for jobs without the located-par
 requirement. Upgrade producers and consumer together for these optional v1 fields.
 Panel and opening vertices must follow a simple perimeter, including gable peaks;
 self-intersection/backtracking blocks readiness before IFC export.
+
+
+Selected connection components are also checked in required jobs (openBIM 0.8.26):
+explicit bolt, screw, anchor and weld selections in connection/anchorage/base
+records need corresponding located part categories. A plate alone does not
+represent its selected anchors or welds. Solids or explicit reference groups
+are acceptable at design coordination level; retain actual counts, sizes and
+locations from the checked design. This limited absence screen does not verify
+quantities, contact, capacity or fabrication detail. Generic code citations do
+not create new component selections. Do not relabel unrelated solids to pass.

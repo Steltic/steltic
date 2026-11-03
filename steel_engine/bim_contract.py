@@ -187,6 +187,67 @@ def joint_disposition_findings(package):
     return findings
 
 
+def connection_component_findings(package):
+    """Detect absent component categories explicitly selected by this design.
+
+    This is a bounded data contradiction check, not a parts catalogue, NLP
+    engineering decision, quantity check or fabrication acceptance. Located
+    reference groups are supported alongside solids for design coordination.
+    """
+    if not package.get('require_connection_parts'): return []
+    records={r['id']:r for r in package.get('design_records',[])}
+    materials={m['id']:m for m in package['physical'].get('materials',[])}
+    patterns={
+        'anchor': r'\banchor(?:s|[- _]+(?:rod|bolt)s?)?\b|\bF1554\b.{0,35}\brods?\b|\brods?\b.{0,35}\bF1554\b',
+        'bolt': r'\bbolts?\b|\bbolted\b',
+        'screw': r'\bscrews?\b|\bscrewed\b',
+        'weld': r'\bwelds?\b|\bwelded\b|\b(?:CJP|PJP)\b',
+    }
+    def positive(text):
+        # Recognize explicit exclusions without turning them into requirements.
+        text=re.sub(r'\b(?:no|without)\s+(?:(?:field|shop|additional|anchor|CJP|PJP)\s+)*(?:bolts?|screws?|welds?|anchors?|rods?)\b','',text,flags=re.I)
+        return re.sub(r'\b(?:anchor\s+rods?|bolts?|screws?|welds?|anchors?)\s+(?:are\s+)?(?:not required|not used|omitted|unnecessary)\b','',text,flags=re.I)
+    findings=[]
+    local_parts={}
+    for c in package['physical'].get('connections',[]):
+        for rid in c.get('design_record_ids',[]):local_parts.setdefault((c.get('joint_id'),rid),[]).extend(c.get('parts',[]))
+    for connection in package['physical'].get('connections',[]):
+        if connection.get('scope')=='delegated': continue
+        for rid in connection.get('design_record_ids',[]):
+            record=records.get(rid,{})
+            if record.get('table') not in ('connections','anchorage','holddowns','bases'): continue
+            data=record.get('data',{}); texts=[]
+            labels=[]
+            for part in local_parts.get((connection.get('joint_id'),rid),[]):
+                label=part.get('kind','').replace('_',' ').replace('-',' ')
+                # An explicitly identified anchor bolt remains an anchor even
+                # if its broad kind is 'bolt'. Plate metadata never counts as
+                # a separately located fastener or weld.
+                if re.search(r'\b(?:bolts?|rods?|fasteners?|anchors?)\b',label,re.I):
+                    metadata=json.dumps([part.get('id',''),part.get('parameters',{}),materials.get(part.get('material_id'),{})])
+                    if re.search(r'anchor|F1554',metadata,re.I):label+=' anchor'
+                    if re.search(r'screw|C1513',metadata,re.I):label+=' screw'
+                labels.append(label)
+            kinds=' '.join(labels)
+            for key in ('components','selection'):
+                if isinstance(data.get(key),str):texts.append(positive(data[key]))
+            # Some native schedules put an explicit selected group in capacity.
+            capacity=data.get('capacity')
+            if isinstance(capacity,str) and re.search(r'(?:\d|#).{0,45}\b(?:bolts?|screws?|anchor(?:s| rods?)?)\b',capacity,re.I):texts.append(positive(capacity))
+            selected=' '.join(texts);missing=[]
+            for kind,pattern in patterns.items():
+                text=selected
+                if kind=='bolt':text=re.sub(patterns['anchor'],'',text,flags=re.I)
+                if re.search(pattern,text,re.I) and not re.search(pattern,kinds,re.I):
+                    missing.append(kind)
+            if missing:findings.append(dict(connection_id=connection['id'],design_record_id=rid,missing_component_categories=missing,selected_components=selected[:1200],returned_part_kinds=kinds))
+    if not findings:return []
+    finding=issue('connection_selected_components','Located connection parts omit component categories explicitly selected in the linked design; export the actual parts/reference groups without relabelling an unrelated solid',
+                  [f['connection_id'] for f in findings],'needs_input')
+    finding.update(count=len(findings),examples=findings[:100])
+    return [finding]
+
+
 def mapping_geometry_findings(package):
     """A physical line may join collinear segments, never stand for a section group.
 
@@ -746,6 +807,7 @@ def validate(package):
         free_joints.discard(d.get("joint_id"))
     if free_joints: bad("joint_connection", "Provide connections or free/continuous-joint reasons", free_joints, "needs_input")
     errors.extend(joint_disposition_findings(package))
+    errors.extend(connection_component_findings(package))
     coverage = physical.get("coverage", {})
     for key in COVERAGE:
         item = coverage.get(key, {})

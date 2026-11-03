@@ -237,6 +237,29 @@ def _opening_workline_clashes(physical):
     return findings
 
 
+def _part_dimension_mismatches(physical):
+    """Detect contradictory explicit inch labels on supported part solids.
+
+    This compares declared data, not engineering capacities. Plate thickness
+    may lie on any local box axis. Cylindrical heads/nuts/washers are excluded
+    because their nominal fastener diameter need not equal the outer solid.
+    """
+    findings=[]
+    for connection in physical.get('connections',[]):
+        for part in connection.get('parts',[]):
+            geometry=part.get('geometry',{});parameters=part.get('parameters',{});kind=part.get('kind','').lower()
+            tests=[]
+            if geometry.get('type')=='box' and vector(geometry.get('size')) and any(word in kind for word in ('plate','gusset','stiffener','washer','strap','sheet')):
+                tests=[(key,geometry['size']) for key in ('thickness_in','plate_thickness_in') if key in parameters]
+            elif geometry.get('type')=='cylinder' and number(geometry.get('radius'),True) and not any(word in kind for word in ('head','nut','washer')):
+                tests=[('diameter_in',[2*geometry['radius']])] if 'diameter_in' in parameters else []
+            for key,dimensions in tests:
+                expected=parameters[key]
+                if number(expected,True) and min(abs(value-expected) for value in dimensions)>max(.005,.02*expected):
+                    findings.append(dict(connection_id=connection['id'],part_id=part['id'],parameter=key,declared_value_in=expected,geometry_dimensions_in=dimensions))
+    return findings
+
+
 def physical_screens(physical):
     """Limited geometry screens; no source data is changed or approved."""
     findings=[]
@@ -270,6 +293,7 @@ def physical_screens(physical):
     add('physical_opening_host','Opening boundaries extend outside their declared host bounds',outside)
     add('physical_opening_host_plane','Opening boundaries must lie in their declared panel plane to form an actual opening',off_plane)
     add('physical_opening_workline','Member worklines cross a declared opening; coordinate the framing and then check full section and connection clearance',_opening_workline_clashes(physical))
+    add('physical_part_dimensions','Connection solid dimensions contradict explicit thickness/diameter parameters; reconcile both with the completed design',_part_dimension_mismatches(physical))
     joints={j['id']:j for j in physical.get('joints',[])};remote=[]
     for connection in physical.get('connections',[]):
         point=joints.get(connection.get('joint_id'),{}).get('point')

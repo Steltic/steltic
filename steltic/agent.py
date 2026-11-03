@@ -183,7 +183,15 @@ _R21_TABLE = ("R21 - the OpenSees docs RAG exists for exactly this. error -> cau
 
 def _r21_track(ws, result):
     """Update the consecutive-OpenSees-error streak on the workspace; annotate erroring results."""
-    txt = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+    # Successful inspection commands can print entire source/test files. Their
+    # quoted diagnostics are not solver failures. OpenSees emits live warnings
+    # on stderr; failed processes can also report an exception on stdout.
+    if isinstance(result, dict):
+        txt = str(result.get("stderr") or "")
+        if result.get("returncode") != 0:
+            txt += "\n" + str(result.get("stdout") or "")
+    else:
+        txt = str(result)
     if _OS_ERR.search(txt or ""):
         ws._os_err_streak = getattr(ws, "_os_err_streak", 0) + 1
         ws._os_docs_since_err = False

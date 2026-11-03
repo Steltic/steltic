@@ -200,6 +200,14 @@ vertical wall host. Non-coplanar boundaries produce
 `physical_opening_host_plane`; they cannot be treated as resolved openings
 merely because a boundary reference can be exported.
 
+`physical_opening_workline` reports declared member axes (including end offsets)
+crossing convex planar opening reservations within the host thickness. It uses
+the actual opening edges, with a 5 mm tolerance at the jambs, head and sill;
+rotated walls and reversed boundary winding are supported. Concave/nonplanar
+boundaries require separate geometry review. Resolve reported framing clashes
+before claiming readiness. This limited check does not establish clearance of
+full profiles or connection parts, which still need coordination.
+
 A `detail_ref` has `id` and `revision` and must name an actual controlled design
 detail. V1 preserves the reference but does not fetch or render a detail library;
 openBIM's future renderer must resolve it before issuing that sheet. Delegated

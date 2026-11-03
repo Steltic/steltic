@@ -84,6 +84,30 @@ def test_complete_declared_package_round_trip_and_no_source_changes(exported,tmp
     assert not (root/"design/bim_package.json").exists()
 
 
+def test_replay_stages_relative_helpers_data_and_file_relative_writes(tmp_path):
+    tail='''
+import runpy
+from pathlib import Path
+assert Path(__file__).parent.name == 'job'
+assert runpy.run_path('helpers/layout.py')['length'] == 120
+assert Path('design/local-input.json').read_text() == '{"verified": true}'
+assert Path('design/PACKAGE_FILE').is_file()
+Path(__file__).with_name('scratch-output.txt').write_text('scratch only')
+'''
+    root=job(tmp_path,cfg_tail=tail.replace('PACKAGE_FILE',PACKAGE))
+    (root/'helpers').mkdir();(root/'data').mkdir()
+    (root/'helpers/layout.py').write_text("from pathlib import Path\nimport json\nlength=json.loads(Path('data/layout.json').read_text())['length']\n")
+    (root/'data/layout.json').write_text('{"length": 120}')
+    (root/'design/local-input.json').write_text('{"verified": true}')
+    (root/'bim_inputs.json').write_text('["design/local-input.json"]')
+    before=B.tracked_sources(root)
+    package=B.replay(root,tmp_path/'out/bim_package.json',20)
+    assert package['readiness']['status']=='ready',package['readiness']
+    assert package['provenance']['source_files']==before==B.tracked_sources(root)
+    assert not (root/'scratch-output.txt').exists()
+    assert not list((tmp_path/'out').glob('.bim-work-*'))
+
+
 @pytest.mark.parametrize("mutation,code",[
     (lambda p:p["units"].update(length="ft"),"schema"),
     (lambda p:p["physical"]["members"][0].update(local_y=[1,0,0]),"member_axes"),

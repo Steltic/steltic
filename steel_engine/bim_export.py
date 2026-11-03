@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -204,17 +205,30 @@ def worker(job, output):
     root=Path(job).resolve()
     source_files=tracked_sources(root)
     adapter.disable_analysis()
-    # Local helpers can be imported, but relative output goes to the temporary cwd.
-    sys.path.insert(1, str(root))
+    # Execute a staged job tree. A mere sys.path entry cannot resolve ordinary
+    # relative data reads or runpy.run_path('helper.py'), and __file__-relative
+    # writes must not land in the completed source job.
+    staged=Path(output).resolve().parent/'inputs'/root.name
+    staged.mkdir(parents=True)
+    for relative,expected in source_files.items():
+        source=(root/relative).resolve();target=(staged/relative).resolve()
+        if not source.is_relative_to(root) or not target.is_relative_to(staged):
+            raise ValueError('Replay input must stay inside the job: '+relative)
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,target)
+        if digest(target)!=expected:raise RuntimeError('Replay input changed while staging: '+relative)
+    os.chdir(staged)
+    os.environ['STEEL_BUILDER_JOBS']=str(staged.parent)
+    sys.path.insert(1, str(staged))
     package_file=adapter.PACKAGE
     pkg=read_json(root/"design"/package_file)
     try:
-        cfg=runpy.run_path(str(root/"cfg.py"))["cfg"]
+        cfg=runpy.run_path(str(staged/"cfg.py"))["cfg"]
     except ModuleNotFoundError as ex:
         if not hasattr(adapter,"capture_saved"): raise
-        cfg,snapshot=adapter.capture_saved(root,pkg,str(ex))
+        cfg,snapshot=adapter.capture_saved(staged,pkg,str(ex))
     else:
-        snapshot=adapter.capture(cfg, pkg, root)
+        snapshot=adapter.capture(cfg, pkg, staged)
     snapshot["layout_evidence"]=evidence_json(snapshot.get("layout_evidence",{}))
     provenance={"module":adapter.MODULE,"package_file":package_file,"source_files":source_files,
                 "exporter_revision":os.environ.get("STELTIC_BIM_REVISION"),"producer_revision":None,

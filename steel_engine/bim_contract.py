@@ -103,6 +103,83 @@ def mapping_geometry_findings(package):
     return findings
 
 
+def _section_core(profile):
+    """Non-overlapping straight web/flange strips; omit lips/fillets/radii.
+
+    Coordinates match the physical profile reference points used by openBIM.
+    A reduced core gives a conservative gross-interpenetration screen without
+    adding a geometry dependency to HR/CFS. Unsupported shapes are not screened.
+    """
+    d=profile.get('dimensions',{});family=profile.get('family')
+    def rect(x0,y0,x1,y1):return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]
+    try:
+        if family in ('channel','z'):
+            h,b,t=(d[k] for k in ('d','b','t'))
+            if min(h,b,t)<=0 or h<=2*t or b<=t:return []
+            result=[rect(-t/2,-h/2+t,t/2,h/2-t)]
+            for sign in (-1,1):
+                direction=1 if family=='channel' else sign
+                x0,x1=sorted((-direction*t/2,direction*(b-t/2)))
+                y0,y1=sorted((sign*(h/2-t),sign*h/2))
+                result.append(rect(x0,y0,x1,y1))
+            return result
+        if family=='i':
+            h,b,tf,tw=(d[k] for k in ('d','bf','tf','tw'))
+            if min(h,b,tf,tw)<=0 or h<=2*tf or b<=tw:return []
+            return [rect(-b/2,-h/2,b/2,-h/2+tf),rect(-tw/2,-h/2+tf,tw/2,h/2-tf),rect(-b/2,h/2-tf,b/2,h/2)]
+        if family=='rhs':
+            h,b,t=(d[k] for k in ('h','b','t'))
+            if min(h,b,t)<=0 or min(h,b)<=2*t:return []
+            return [rect(-b/2,-h/2,b/2,-h/2+t),rect(-b/2,h/2-t,b/2,h/2),rect(-b/2,-h/2+t,-b/2+t,h/2-t),rect(b/2-t,-h/2+t,b/2,h/2-t)]
+        if family=='flat':
+            b,t=d['width'],d['thickness']
+            if min(b,t)>0:return [rect(-b/2,-t/2,b/2,t/2)]
+        if family=='angle':
+            h,b,t=(d[k] for k in ('h','b','t'))
+            if min(h,b,t)>0 and min(h,b)>t:return [rect(0,0,b,t),rect(0,t,t,h)]
+    except (KeyError,TypeError,ValueError):pass
+    return []
+
+
+def _polygon_area(points):
+    return abs(sum(a[0]*b[1]-a[1]*b[0] for a,b in zip(points,points[1:]+points[:1])))/2
+
+
+def _convex_overlap(first,second):
+    """Sutherland-Hodgman clipping of counterclockwise convex polygons."""
+    points=first
+    for a,b in zip(second,second[1:]+second[:1]):
+        if not points:return 0.
+        def side(p):return (b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0])
+        clipped=[]
+        for p,q in zip(points,points[1:]+points[:1]):
+            dp,dq=side(p),side(q);inside_p,inside_q=dp>=-1e-10,dq>=-1e-10
+            if inside_p:clipped.append(p)
+            if inside_p!=inside_q and abs(dp-dq)>1e-12:
+                t=dp/(dp-dq);clipped.append([x+t*(y-x) for x,y in zip(p,q)])
+        points=clipped
+    return _polygon_area(points)
+
+
+def _constituent_overlaps(profiles):
+    findings=[]
+    for profile in profiles.values():
+        if profile.get('family')!='built_up':continue
+        components=[]
+        for component in profile.get('components',[]):
+            polygons=_section_core(profiles.get(component.get('profile_id'),{}))
+            angle=math.radians(component['rotation_deg']);co,si=math.cos(angle),math.sin(angle);u,v=component['offset']
+            components.append([[[co*x-si*y+u,si*x+co*y+v] for x,y in poly] for poly in polygons])
+        for i,first in enumerate(components):
+            for j in range(i+1,len(components)):
+                second=components[j];area=min(sum(map(_polygon_area,first)),sum(map(_polygon_area,second)))
+                if area<=0:continue
+                overlap=sum(_convex_overlap(a,b) for a in first for b in second)
+                if overlap>.005 and overlap/area>.05:
+                    findings.append(dict(profile_id=profile['id'],components=[i,j],overlap_area_in2=round(overlap,6),overlap_fraction=round(overlap/area,6)))
+    return findings
+
+
 def physical_screens(physical):
     """Limited geometry screens; no source data is changed or approved."""
     findings=[]
@@ -116,6 +193,7 @@ def physical_screens(physical):
         if match and components and all(c['profile_id']==match[2] for c in components) and len(components)!=int(match[1]):
             plies.append(dict(profile_id=profile['id'],named_count=int(match[1]),component_count=len(components),constituent=match[2]))
     add('physical_ply_count','Built-up section labels disagree with constituent counts',plies)
+    add('physical_constituent_overlap','Built-up constituents substantially overlap; channel offsets use the web centre, not a bounding-box centre',_constituent_overlaps(profiles))
     panels={p['id']:p for p in physical.get('panels',[])};outside=[]
     for opening in physical.get('openings',[]):
         host=panels.get(opening.get('host_id'),{});vertices=host.get('vertices',[])

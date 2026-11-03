@@ -50,7 +50,8 @@ Fabrication/shop detailing and IFC import are later work.
 
 ## New design jobs
 
-`new_activity_log` creates `design/bim_request.json` with `required: true` for a new
+`new_activity_log` creates `design/bim_request.json` with `required: true` and
+`require_connection_parts: true` for a new
 design job. Existing jobs and the separate HR build-only workflow retain their
 previous completion rules. For a new job:
 
@@ -58,7 +59,7 @@ previous completion rules. For a new job:
    and `required: True`. Record physical member axes, orientation, profiles,
    materials, panels, openings, and real secondary framing as these are selected.
 2. Run the normal design pipeline and complete its engineering checks. Put
-   connection occurrences, located parts or versioned design-detail references,
+   connection occurrences and located physical parts,
    and source-record mappings in the calculation package's top-level `bim` object.
    Both declaration objects have the same collection names. Declare a given ID in
    only one place; conflicting duplicates fail.
@@ -265,3 +266,36 @@ Resolve the source declaration before completing a required new job. No section,
 coordinate or calculation record is automatically repaired. Legacy replay and
 coordination export may retain these findings for review. These limited screens
 do not establish capacity, architectural agreement, complete framing or fit.
+
+## Reference systems and connection geometry requirements
+
+Optional `bim.reference_system` is carried unchanged to the package root. It
+records explicit coordination datums and grid polylines in inches, independently
+of physical member offsets or simplified analysis coordinates:
+
+```json
+{
+  "basis": "Architectural reference coordinates; physical post offsets are separate",
+  "levels": [{"level": 0, "name": "Ground", "elevation_in": 0},
+             {"level": 1, "name": "Platform", "elevation_in": 144}],
+  "grids": [{"id": "A", "label": "A", "direction": "U", "points_in": [[0,0,0],[120,120,0]]},
+            {"id": "1", "label": "1", "direction": "V", "points_in": [[0,120,0],[120,0,0]]}]
+}
+```
+
+An optional `source_ifc_sha256` links the declared reference system to its IFC
+input. Grid IDs and integer level IDs must be unique; grid curves must have
+length and include both U and V families. Do not infer architectural grids from
+member bounds. Record each member/panel/joint's numeric `level` separately where
+known; grid and datum declarations do not invent object assignments. Optional
+entity `source_ifc_guid` retains the corresponding architectural source identity.
+
+The new-job request marker's `require_connection_parts` is preserved through
+consistency and replay, and copied to the package root. When true, every designed
+connection needs physical parts; detail references and reference polylines alone
+produce `connection_parts_required`. Explicit delegated interfaces still require
+a named responsible party, versioned detail and representation, and do not require
+invented supplier geometry. Older jobs without this requirement retain the prior
+controlled-reference contract. A job may explicitly opt in with
+`cfg['bim']['require_connection_parts'] = True`. This is design coordination
+geometry, not fabrication approval.

@@ -6,9 +6,11 @@ New design jobs must also produce `design/bim_package.json`. Read
 `contract/BIM_EXPORT.md` with `read_file` before composing the model. Author
 `cfg['bim']` (`schema_version: '1.0'`, `required: True`) while selecting physical
 members, profiles, materials, openings, actual secondary framing and placement.
-During connection design, record each real joint occurrence, its located parts or
-controlled detail reference, and its source design-record IDs in the calculation
-package's `bim` block. Cover the full declared scope; do not equate analysis
+During connection design, record each real joint occurrence, its located physical
+parts, and its source design-record IDs in the calculation package's `bim` block.
+New jobs require physical connection parts: a versioned detail reference alone
+does not satisfy completion. Explicit supplier/delegated interfaces remain
+references with their responsible party and scope. Cover the full declared scope; do not equate analysis
 elements, equivalent springs or schematic viewer geometry with physical parts.
 
 Create one member for each real occurrence, with its storey and actual axis.

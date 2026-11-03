@@ -63,9 +63,14 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     physical = {key:list(model.get(key, [])) for key in COLLECTIONS}
     physical.update(analysis_only=list(model.get("analysis_only", [])), record_dispositions=[], joint_dispositions=[], coverage={})
     findings = list(snapshot.get("findings", []))
+    reference_system=None
     for origin, declaration in (("cfg.py#/bim", cfg.get("bim", {})), ("calculation package#/bim", pkg.get("bim", {}))):
         if not isinstance(declaration, dict): raise ValueError(origin+" must be an object")
         if declaration and declaration.get("schema_version") != VERSION: raise ValueError(origin+" requires schema_version "+VERSION)
+        if 'reference_system' in declaration:
+            value=declaration['reference_system']
+            if reference_system is not None and reference_system!=value:raise ValueError('Conflicting physical reference systems')
+            reference_system=value
         for key in COLLECTIONS:
             supplied = declaration.get(key, [])
             if not isinstance(supplied, list): raise ValueError(origin+" "+key+" must be a list")
@@ -116,6 +121,11 @@ def assemble(root, cfg, pkg, snapshot, provenance):
               "physical":physical, "design_records":records, "design_context":context,
               "layout_evidence":snapshot.get("layout_evidence", {}), "source_findings":findings,
               "required":bool(cfg.get("bim", {}).get("required") or ((root/"design/bim_request.json").is_file() and read_json(root/"design/bim_request.json").get("required"))), "readiness":{}}
+    request=root/'design/bim_request.json'
+    requirements=read_json(request) if request.is_file() else {}
+    if requirements.get('require_connection_parts') or cfg.get('bim',{}).get('require_connection_parts'):
+        result['require_connection_parts']=True
+    if reference_system is not None:result['reference_system']=reference_system
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),
                            "findings":found, "counts":{"analysis_elements":len(result["analysis"]["elements"]), "members":len(physical["members"]), "panels":len(physical["panels"]), "design_records":len(records)}}
@@ -250,7 +260,10 @@ def after_consistency(root, cfg, design_issues):
     if not isinstance(cfg, dict) or not isinstance(cfg.get("bim"), dict):
         return ["BIM declaration missing: new jobs require cfg['bim']; see contract/BIM_EXPORT.md"] if required else []
     if cfg["bim"].get("required"):
-        atomic_json(Path(root)/"design"/"bim_request.json",{"required":True,"cfg_sha256":digest(Path(root)/"cfg.py")})
+        marker=read_json(request) if request.is_file() else {}
+        marker.update(required=True,cfg_sha256=digest(Path(root)/"cfg.py"))
+        if cfg['bim'].get('require_connection_parts'):marker['require_connection_parts']=True
+        atomic_json(request,marker)
     if design_issues: return []
     try:
         exported=replay(root)

@@ -54,8 +54,10 @@ analysis/design scripts; drive the framework instead.
 > Spot-checks may use `engine3d` / `design_post.run_case` / `sections.props`; the deliverables come from the
 > pipeline.
 >
-> 🆕 **Design FRESH under the user's exact building name.** `jobs/` is normally EMPTY — do NOT look for an
-> example or prior-job cfg; there is none. Compose a new `cfg` from the user's description (optionally adapting
+> 🆕 **Design FRESH under the user's exact building name.** Older local jobs may exist, but are not inputs.
+> Do not list, read, import or copy sibling jobs, their conversations, configurations, calculations or physical
+> layouts unless the user explicitly names a prior job to reuse. This applies to file tools and `run_python`.
+> Compose a new `cfg` from the user's description (optionally adapting
 > an `engine3d.CFG["B02"]`..`["B40"]` archetype), register it, pass THIS name to `design_and_report`.
 
 You have these tools: a RAG search (the AISC specs), a Python runner (the OpenSees analysis
@@ -179,7 +181,7 @@ where `<name>` is the name the user gave the building (verbatim); if they gave n
 sensible name and tell the user what you chose. The pipeline writes `design/`, `figs/`, `report.html`
 and the activity log into this same `jobs/<name>/` folder, so every artifact for a job lives in one
 place. Do **NOT** write job files to the repo root or the workspace root — only under `jobs/<name>/`. (The workspace now ENFORCES this: after `new_activity_log(<name>)`, `run_python` runs with its **cwd = `jobs/<name>/`**, and any bare relative write — `write_file("model.py", …)` or `open("model.py","w")` in `run_python` — lands in that job folder automatically; temp run scripts are auto-cleaned to `.scratch/`. So you never need absolute paths for job files and nothing leaks into the work root.) **Write `jobs/<name>/cfg.py` FIRST** (a top-level `cfg = dict(...)` plus your `custom_build` function) and build your model FROM it, so your cfg is always saved and in sync — the figure-complete final report imports it, so you never reconstruct it at the end.
-(The operator wipes `jobs/` between jobs, so a fresh agent never sees prior work. If the user names a
+(Existing local jobs are retained; do not inspect them for a fresh design. If the user names a
 spec file such as `fema4smf.txt`, read it FIRST with `read_file`; if it is empty or missing, STOP and
 say so rather than guessing.)
 

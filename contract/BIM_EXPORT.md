@@ -98,7 +98,11 @@ failed workers always return nonzero. Batch continues after an individual failur
 and writes `replay_summary.json`. Validate returns 0 for ready, 2 for any findings.
 
 Each replay runs trusted job Python in a separate process and temporary working
-directory. Known analysis/design entry points are disabled; timeout kills its owned
+directory. Tracked job inputs are staged together under the original job name,
+so ordinary relative data reads, nested helpers, `runpy.run_path` and
+`__file__`-relative paths use that staged tree. Generated relative files remain
+in scratch, and the original source fingerprints are checked before publication.
+Known analysis/design entry points are disabled; timeout kills its owned
 process tree. Python configuration execution is **not a security sandbox**. Only
 replay trusted jobs. Fingerprints detect changes to source evidence and prevent
 publication if it changes; this detects accidental writes, not malicious code.

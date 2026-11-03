@@ -25,6 +25,11 @@ a new job. Do not clear the requirement marker, fabricate missing dimensions,
 edit generated readiness, or claim fabrication detail. Unchanged legacy jobs keep
 their prior completion rules; replay upgrades their evidence without redesign.
 
+For a fresh design, older local jobs are not inputs. Do not list, read, import or
+copy sibling job configurations, calculations, conversations or physical layouts
+unless the user explicitly identifies a prior job to reuse. Use the current brief,
+installed engine/examples and standards, and keep new work inside the current job.
+
 **Audience: the LLM agent.** This file tells you what you have, and the exact order
 in which to use it, to design **one** steel building well.
 

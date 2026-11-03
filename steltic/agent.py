@@ -979,6 +979,8 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
     sig_counts = {}
     loop_design_state = _loop_design_state(ws)
     fired_hints = set()              # hardening #7: one-shot phase hints keyed by trigger id
+    initial_design_nudged = False
+    initial_design_batches = 0
     nudged_sigs = set()              # signatures already soft-nudged (REPEAT_NUDGE)
     seen_paths = set()               # write_file paths seen so far (a progress signal)
     no_progress = 0                  # consecutive steps with no new file, no rc=0 run, no search
@@ -1198,6 +1200,18 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                 stall_nudged = True
                 pending_nudges.append(f"You have gone {no_progress} steps with no progress (no new file, no successful run). "
                     "Step back: name the ONE thing blocking you and fix exactly that -- or write up what you already have.")
+        initial_design_batches += 1
+        if (not initial_design_nudged and initial_design_batches >= 32 and _loop_design_state(ws) == {}
+                and not _BO.is_build_only(ws.jobs / building)):
+            initial_design_nudged = True
+            pending_nudges.append(
+                "[progress reminder] After 32 tool batches, this job still has no saved cfg.py or calculation "
+                "package. Successful read-only Python calls do not create a model. Use the references already "
+                "collected to save the resolved framing/configuration and implement the next model step now, "
+                "in small verifiable increments. If one prerequisite is genuinely missing, identify and "
+                "retrieve that specific item instead of surveying more engine files. Preserve the original "
+                "architectural requirements; do not guess capacities, skip required standards or bypass checks.")
+            yield {"type": "status", "text": "No initial model saved after 32 tool batches; prompted the designer to begin implementation."}
         for msg in pending_nudges:                             # inject AFTER the batch so every tool_call has its result
             messages.append({"role": "user", "content": msg})
     yield {"type": "error", "text": "max steps reached without a final answer"}

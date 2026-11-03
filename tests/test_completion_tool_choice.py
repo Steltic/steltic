@@ -42,12 +42,18 @@ def test_only_immediate_gate_retry_requires_a_tool(content):
     assert agent._build_chat_payload('test',messages,100,None,'','',set())['tool_choice']=='auto'
 
 
-def test_unsupported_required_choice_falls_back_once_and_remembers(monkeypatch):
+@pytest.mark.parametrize('error',[
+    {'error':{'message':'tool_choice required is not supported by this model'}},
+    {'error':{'message':'Provider returned error','metadata':{'raw':json.dumps({'error':{
+        'message':'only `"auto"` is supported for `tool_choice`. `"none"`, `"required"`, and named function choices are not currently supported',
+        'param':'tool_choice','type':'invalid_request_error'}})}}},
+])
+def test_unsupported_required_choice_falls_back_once_and_remembers(monkeypatch,error):
     seen=[]
     def serve(request):
         payload=json.loads(request.content);seen.append(payload)
         if payload['tool_choice']=='required':
-            return httpx.Response(400,json={'error':{'message':'tool_choice required is not supported by this model'}})
+            return httpx.Response(400,json=error)
         return httpx.Response(200,text='data: {"choices":[{"delta":{"content":"needs attention"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n')
     client=httpx.Client
     monkeypatch.setattr(agent.httpx,'Client',lambda **kw:client(transport=httpx.MockTransport(serve)))

@@ -46,7 +46,8 @@ PROGRESS_STALL_PAUSE = int(os.environ.get("PROGRESS_STALL_PAUSE", "20"))  # step
 MAX_CALLS       = int(os.environ.get("MAX_CALLS", "0"))         # hard cap on model calls per run (0 = use MAX_STEPS)
 TOOL_OUT_CAP    = int(os.environ.get("TOOL_OUT_CAP", "16000"))
 RAG_OUT_CAP     = int(os.environ.get("RAG_OUT_CAP", "60000"))   # spec RAG results (saved to file + evicted at completion) get a higher cap so full hits stay in context and the JSON stays valid for eviction
-TEMPERATURE     = float(os.environ.get("TEMPERATURE", "0.3"))
+_temperature    = os.environ.get("TEMPERATURE", "0.3").strip().lower()
+TEMPERATURE     = None if _temperature in ("", "none", "omit", "default") else float(_temperature)
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "1200"))
 RETRIES         = int(os.environ.get("RETRIES", "8"))           # LLM-call retries before giving up
 RETRY_BACKOFF_CAP = int(os.environ.get("RETRY_BACKOFF_CAP", "60"))  # max seconds between retries (backoff ramps up to this)

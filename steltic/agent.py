@@ -552,7 +552,7 @@ _MODEL_QUIRKS: dict = {}
 def _build_chat_payload(model, messages, max_tok, reasoning, provider, base_url, quirks):
     p = {"model": model, "messages": messages, "tools": TOOL_SPECS, "tool_choice": "auto", "stream": True}
     p["max_completion_tokens" if "max_completion_tokens" in quirks else "max_tokens"] = max_tok
-    if "no_temperature" not in quirks:
+    if config.TEMPERATURE is not None and "no_temperature" not in quirks:
         p["temperature"] = config.TEMPERATURE
     if "no_stream_options" not in quirks:
         p["stream_options"] = {"include_usage": True}
@@ -568,7 +568,7 @@ def _detect_quirk(body):
     b = (body or "").lower()
     if "max_completion_tokens" in b or ("max_tokens" in b and ("unsupported" in b or "not supported" in b)):
         return "max_completion_tokens"
-    if "temperature" in b and ("unsupported" in b or "not supported" in b or "does not support" in b):
+    if "temperature" in b and any(term in b for term in ("unsupported", "not supported", "does not support", "deprecated")):
         return "no_temperature"
     if "stream_options" in b and ("unsupported" in b or "not supported" in b):
         return "no_stream_options"
@@ -601,7 +601,7 @@ def _stream_chat(base_url, api_key, model, messages, max_tok, reasoning=None, ca
                 break
             body = resp.read().decode("utf-8", "replace")[:1200]
             resp.close()
-            q = _detect_quirk(body)
+            q = _detect_quirk(body) if resp.status_code == 400 else None
             if q and q not in quirks:                       # learn the param fix; retry adapted (reused next call)
                 quirks.add(q)
                 continue

@@ -142,6 +142,67 @@ def physical_screens(physical):
     return findings
 
 
+def _polyline_distance(first,second):
+    def distance(points,line):
+        maximum=0.
+        for point in points:
+            minimum=float('inf')
+            for a,b in zip(line,line[1:]):
+                delta=[y-x for x,y in zip(a,b)];denom=sum(v*v for v in delta)
+                if denom<1e-18:continue
+                t=max(0.,min(1.,sum((p-x)*v for p,x,v in zip(point,a,delta))/denom))
+                minimum=min(minimum,norm([p-x-t*v for p,x,v in zip(point,a,delta)]))
+            maximum=max(maximum,minimum)
+        return maximum
+    length=lambda line:sum(norm([y-x for x,y in zip(a,b)]) for a,b in zip(line,line[1:]))
+    return max(distance(first,second),distance(second,first),abs(length(first)-length(second)))
+
+
+def architectural_input_findings(package):
+    """Check preserved source requirements independently of claimed coverage."""
+    source=package.get('architectural_input')
+    if source is None:return []  # legacy and ordinary non-IFC jobs retain their contract
+    findings=[];tolerance=.005/.0254;actual=package.get('reference_system',{})
+    if source['reference_system'].get('source_ifc_sha256')!=source['source_ifc_sha256'] or any(p[0]>p[1] for row in source['openings'] for p in row['bounds_in']):
+        return [issue('architectural_input_invalid','Architectural source identity or bounds are inconsistent',severity='error')]
+    if actual.get('source_ifc_sha256')!=source['source_ifc_sha256']:
+        findings.append(issue('architectural_source_identity','Retain the exact original IFC fingerprint'))
+    missing=[]
+    for row in source['reference_system']['levels']:
+        if not any(row.get('name')==v.get('name') and abs(row['elevation_in']-v['elevation_in'])<tolerance for v in actual.get('levels',[])):
+            missing.append(row.get('name',str(row['level'])))
+    if missing:findings.append(issue('architectural_levels','Preserve every original named architectural datum',missing))
+    missing=[]
+    for row in source['reference_system']['grids']:
+        if not any(row['label']==v['label'] and row['direction']==v['direction'] and _polyline_distance(row['points_in'],v['points_in'])<tolerance for v in actual.get('grids',[])):
+            missing.append(row['label'])
+    if missing:findings.append(issue('architectural_grids','Preserve original grid labels, axis families and coordinates',missing))
+    missing=[];changed=[];duplicates=[]
+    for row in source['openings']:
+        matching=[o for o in package['physical']['openings'] if o.get('source_ifc_guid')==row['source_ifc_guid']]
+        if not matching:missing.append(row['source_ifc_guid']);continue
+        if len(matching)>1:duplicates.append(row['source_ifc_guid']);continue
+        bounds=[[min(p[k] for p in matching[0]['vertices']),max(p[k] for p in matching[0]['vertices'])] for k in range(3)]
+        expected=row['bounds_in'];normal=min(range(3),key=lambda k:expected[k][1]-expected[k][0])
+        errors=[abs(sum(bounds[normal])/2-sum(expected[normal])/2)]
+        errors += [abs(bounds[k][side]-expected[k][side]) for k in range(3) if k!=normal for side in (0,1)]
+        if max(errors)>tolerance:changed.append(row['source_ifc_guid'])
+    if missing:findings.append(issue('architectural_openings','Every original door/window needs a located physical opening with its source_ifc_guid; representative subsets are incomplete',missing))
+    if changed:findings.append(issue('architectural_opening_bounds','Physical openings differ from their original architectural bounds',changed))
+    if duplicates:findings.append(issue('architectural_opening_duplicates','An original opening was exported more than once',duplicates))
+    seen={};duplicates=[]
+    for member in package['physical']['members']:
+        if member.get('status')!='declared':continue
+        offsets=member.get('end_offsets')
+        if not isinstance(offsets,list) or len(offsets)!=2 or not all(vector(v) for v in offsets) or not vector(member.get('local_y')):continue
+        endpoints=[tuple(round(v+offset,6) for v,offset in zip(p,off)) for p,off in zip(member['axis'],offsets)]
+        key=(tuple(sorted(endpoints)),member['profile_id'],tuple(round(v,6) for v in member['local_y']))
+        if key in seen:duplicates.extend([seen[key],member['id']])
+        seen[key]=member['id']
+    if duplicates:findings.append(issue('duplicate_physical_members','Coincident identical member occurrences need a real offset or one combined physical declaration',duplicates))
+    return findings
+
+
 def validate(package):
     """Validate finite geometry, references, coverage and readiness independently.
 
@@ -365,6 +426,7 @@ def validate(package):
             bad("coordination_required", item["title"], item["entity_ids"] or [item["id"]], "needs_input")
     for supplied in package.get("source_findings", []):
         errors.append(supplied)
+    errors.extend(architectural_input_findings(package))
     for finding in physical_screens(physical):
         ids=[str(value) for row in finding['examples'] for key,value in row.items() if key.endswith('_id')]
         bad(finding['code'],finding['title']+'; resolve the physical declaration before claiming readiness',ids,'needs_input')

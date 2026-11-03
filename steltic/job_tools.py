@@ -68,7 +68,9 @@ class JobWorkspace:
         if d is not None and not any((d / p).exists() for p in
                 ("cfg.py", "provenance.json", "design/calc_package.json", "design/calc_package_cfs.json")):
             from steel_engine.bim_export import atomic_json
-            atomic_json(d / "design" / "bim_request.json", {"required": True, "require_connection_parts": True})
+            marker=d / "design" / "bim_request.json"
+            request=json.loads(marker.read_text(encoding='utf-8')) if marker.is_file() else {}
+            atomic_json(marker, {**request,"required": True, "require_connection_parts": True})
 
     def new_activity_log(self, building: str = "") -> dict:
         self.building = _clean_name(building)
@@ -88,6 +90,9 @@ class JobWorkspace:
     def write_file(self, path: str, content: str) -> dict:
         try:
             target = self._resolve_write(path)
+            job=self._job_dir()
+            if job and (job/'architectural_input.json').is_file() and target in (job/'architectural_input.json',job/'architectural_handoff.txt',job/'design/bim_request.json'):
+                return {"error":"This is framework-owned architectural input. Submit a revised complete openBIM handoff to update it; edit physical declarations, not the source requirements."}
             if (target.parent / "provenance.json").exists() and target.name in self._BUILD_ONLY_PROTECTED \
                     and target.parent.name == (self.building or target.parent.name):
                 return {"error": "BUILD-ONLY job: %s is generated from the user's own design and is never edited here "

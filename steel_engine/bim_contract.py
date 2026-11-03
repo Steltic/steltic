@@ -5,6 +5,7 @@ Keep this file and its adjacent JSON schema byte-identical in all three repos.
 """
 import json
 import math
+import re
 from pathlib import Path
 
 VERSION = "1.0"
@@ -99,6 +100,45 @@ def mapping_geometry_findings(package):
             findings.append(issue('analysis_occurrence_geometry',
                 'Mapped analysis intervals must form the actual physical reference axis; a section group or catch-all is not a located member',
                 [member['id']]+[c[0] for c in claims]))
+    return findings
+
+
+def physical_screens(physical):
+    """Limited geometry screens; no source data is changed or approved."""
+    findings=[]
+    def add(code,title,rows):
+        if rows:findings.append(dict(code=code,title=title,severity='needs_review',count=len(rows),examples=rows[:100]))
+    profiles={p['id']:p for p in physical.get('profiles',[])};plies=[]
+    for profile in profiles.values():
+        if profile.get('family')!='built_up':continue
+        components=profile.get('components',[])
+        match=re.fullmatch(r'(?:box-)?([1-9][0-9]*)[xX](.+)',profile['id'])
+        if match and components and all(c['profile_id']==match[2] for c in components) and len(components)!=int(match[1]):
+            plies.append(dict(profile_id=profile['id'],named_count=int(match[1]),component_count=len(components),constituent=match[2]))
+    add('physical_ply_count','Built-up section labels disagree with constituent counts',plies)
+    panels={p['id']:p for p in physical.get('panels',[])};outside=[]
+    for opening in physical.get('openings',[]):
+        host=panels.get(opening.get('host_id'),{});vertices=host.get('vertices',[])
+        if len(vertices)<3 or not all(vector(v) for v in vertices):continue
+        bounds=[(min(v[k] for v in vertices),max(v[k] for v in vertices)) for k in range(3)]
+        excess=max((max(lo-v[k],v[k]-hi,0.) for v in opening.get('vertices',[]) for k,(lo,hi) in enumerate(bounds)),default=0.)
+        if excess>1e-5:outside.append(dict(opening_id=opening['id'],host_id=host['id'],outside_distance_in=excess))
+    add('physical_opening_host','Opening boundaries extend outside their declared host bounds',outside)
+    joints={j['id']:j for j in physical.get('joints',[])};remote=[]
+    for connection in physical.get('connections',[]):
+        point=joints.get(connection.get('joint_id'),{}).get('point')
+        if not vector(point):continue
+        for part in connection.get('parts',[]):
+            g=part.get('geometry',{})
+            # Only explicitly sized boxes are screened here; other part types
+            # still need review. A distant origin alone is not proof of distance.
+            if g.get('type')!='box' or geometry_errors(g,profiles):continue
+            x,y=g['x_axis'],g['y_axis'];z=[x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]]
+            points=[[g['origin'][k]+i*g['size'][0]*x[k]+j*g['size'][1]*y[k]+l*g['size'][2]*z[k] for k in range(3)] for i in (0,1) for j in (0,1) for l in (0,1)]
+            bounds=[(min(v[k] for v in points),max(v[k] for v in points)) for k in range(3)]
+            distance=math.sqrt(sum(max(lo-point[k],point[k]-hi,0.)**2 for k,(lo,hi) in enumerate(bounds)))
+            if distance>72:remote.append(dict(connection_id=connection['id'],joint_id=connection.get('joint_id'),part_id=part['id'],distance_to_part_bounds_in=round(distance,6)))
+    add('physical_remote_part','Connection box parts are over six feet from their assigned joint',remote)
     return findings
 
 
@@ -313,6 +353,9 @@ def validate(package):
             bad("coordination_required", item["title"], item["entity_ids"] or [item["id"]], "needs_input")
     for supplied in package.get("source_findings", []):
         errors.append(supplied)
+    for finding in physical_screens(physical):
+        ids=[str(value) for row in finding['examples'] for key,value in row.items() if key.endswith('_id')]
+        bad(finding['code'],finding['title']+'; resolve the physical declaration before claiming readiness',ids,'needs_input')
     combined={}
     for finding in errors:
         key=(finding["code"],finding["message"],finding["severity"])

@@ -40,16 +40,32 @@ def test_explicit_selected_hardware_cannot_be_replaced_by_a_plate(text,field,mis
     'Bearing plate; no field welds; no bolts',
     'Bearing plate, bolts not required; anchor rods are not required',
     'Bearing plate without additional screws; no CJP welds',
+    'Existing encased grillage, no designed anchor rods',
+    'The end plate acts as the anchor plate for uplift; anchor reinforcement As = 154 in2',
+    'Deck bears without welds, screws or studs in the protected zone',
 ])
 def test_explicit_component_exclusions_do_not_create_hardware(text):
     p,_,_=package(text)
     assert not connection_component_findings(p)
 
 
+def test_exclusion_list_does_not_hide_later_positive_selection():
+    p,_,_=package('Deck without welds, screws or studs; outside the zone use four bolts and 2 anchor rods')
+    missing=connection_component_findings(p)[0]['examples'][0]['missing_component_categories']
+    assert missing==['anchor','bolt']
+
+
 def test_general_code_references_are_not_a_component_selection():
     p,_,record=package('bearing plate')
     record['data'].update(cited='AISC J3 bolt strength, J2 weld requirements',limit_state='bolt/weld connection guidance',capacity='screw bearing may govern')
     assert not connection_component_findings(p)
+
+
+def test_foundation_anchor_reinforcement_does_not_invent_rods_or_hide_selected_rods():
+    p,c,record=package('Embedded shaft; anchor reinforcement As >= 12 in2 by foundation engineer')
+    assert not connection_component_findings(p)
+    record['data']['components']+='; four erection anchor rods'
+    assert connection_component_findings(p)[0]['examples'][0]['missing_component_categories']==['anchor']
 
 
 def test_legacy_and_explicit_delegated_scope_retain_their_contract():

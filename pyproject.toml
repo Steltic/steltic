@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steltic"
-version = "0.2.3"
+version = "0.2.4"
 description = "Free, local AISC 360/341 steel-design agent: your LLM + OpenSees + stamped-style reports"
 readme = "README.md"
 license = "MIT"
@@ -33,6 +33,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "jsonschema>=4.23",
+    "filelock>=3.13",
     # build-only mode: the building template (.xlsx) for user-designed buildings
     "openpyxl>=3.1",
 ]

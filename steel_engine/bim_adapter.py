@@ -103,8 +103,13 @@ def capture(cfg, pkg, root):
         # These source roles/names explicitly describe nonphysical idealizations.
         if kind.lower() in ("rigid", "rigid_link", "rigid-zone") or (sec or "").startswith("RZ-"):
             excluded.append({"analysis_id":eid,"reason":"Rigid analysis idealization"}); continue
-        members.append({"id":eid,"kind":kind,"status":"candidate","axis":[coords[nodes[0]],coords[nodes[1]]],
-                        "local_y":local_y,"profile_id":sec,"material_id":None,"reference_line":None,
+        from physical_frame import width_axis
+        axis=[coords[nodes[0]],coords[nodes[1]]]
+        physical_y=width_axis(axis,local_y,args,profiles.get(sec,{}).get('properties',{})) if (sec or '').startswith(('W','S','M','HP')) else local_y
+        members.append({"id":eid,"kind":kind,"status":"candidate","axis":axis,
+                        "local_y":physical_y,"analysis_local_y":local_y,
+                        "orientation_basis":"Recorded element inertias mapped to profile width/depth axes" if physical_y else "Explicit physical section orientation required",
+                        "profile_id":sec,"material_id":None,"reference_line":None,
                         "end_offsets":None,"analysis_ids":[eid],"geometry_basis":"analysis_axis"})
     # Compare literal saved geometry; never execute the saved script's modal self-check.
     gold=root/"model_opensees.py"

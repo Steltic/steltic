@@ -62,10 +62,21 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     """Join structured declarations and captured geometry; never parse prose as facts."""
     model = snapshot.get("physical", {})
     physical = {key:list(model.get(key, [])) for key in COLLECTIONS}
-    physical.update(analysis_only=list(model.get("analysis_only", [])), record_dispositions=[], joint_dispositions=[], coverage={})
+    physical.update(analysis_only=list(model.get("analysis_only", [])), record_dispositions=[], joint_dispositions=[], coverage={},assemblies=[])
     findings = list(snapshot.get("findings", []))
+    if __package__:
+        from . import physical_inputs
+    else:
+        import physical_inputs
+    selected=physical_inputs.read(root,provenance['module'])
     reference_system=None
-    for origin, declaration in (("cfg.py#/bim", cfg.get("bim", {})), ("calculation package#/bim", pkg.get("bim", {}))):
+    sources=[("cfg.py#/bim", cfg.get("bim", {})), ("calculation package#/bim", pkg.get("bim", {}))]
+    if selected:
+        sources.append((physical_inputs.NAME+'#/declarations',selected['declarations']))
+        findings.extend(physical_inputs.binding_findings(root,selected))
+        provenance['physical_inputs']={'path':physical_inputs.NAME,'revision':selected['revision'],
+                                      'sha256':physical_inputs.digest(Path(root)/physical_inputs.NAME)}
+    for origin, declaration in sources:
         if not isinstance(declaration, dict): raise ValueError(origin+" must be an object")
         if declaration and declaration.get("schema_version") != VERSION: raise ValueError(origin+" requires schema_version "+VERSION)
         if 'reference_system' in declaration:
@@ -85,6 +96,7 @@ def assemble(root, cfg, pkg, snapshot, provenance):
             physical[key] = list(target.values())
         for key in ("analysis_only", "record_dispositions", "joint_dispositions"):
             physical[key].extend(declaration.get(key, []))
+        physical['assemblies'].extend(copy.deepcopy(declaration.get('assemblies',[])))
         for key,value in declaration.get("coverage", {}).items():
             if key in physical["coverage"] and physical["coverage"][key] != value: raise ValueError("Conflicting coverage: "+key)
             physical["coverage"][key] = value
@@ -93,6 +105,23 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     claimed.update(s["analysis_id"] for m in physical["members"] if m.get("status") == "declared" for s in m.get("analysis_segments", []))
     excluded = {a["analysis_id"] for a in physical["analysis_only"]}
     physical["members"] = [m for m in physical["members"] if m.get("status") == "declared" or not (set(m.get("analysis_ids", [])) & (claimed | excluded))]
+    # Preserve analysis-layout candidates as evidence when the engineer binds
+    # them to actual physical framing. A candidate outline is not another wall.
+    replacements=[]
+    for origin,declaration in sources:
+        for mapping in declaration.get('candidate_panel_replacements',[]):
+            replacements.append(dict(mapping,declaration_source=origin))
+    if replacements:
+        candidates={p['id']:p for p in physical['panels'] if p.get('status')=='candidate'}
+        declared={p['id'] for k in ('members','panels') for p in physical[k] if p.get('status')=='declared'}
+        seen=set();retained=[]
+        for mapping in replacements:
+            cid=mapping.get('candidate_id');ids=mapping.get('entity_ids',[])
+            if cid in seen or cid not in candidates or not ids or not set(ids)<=declared or not mapping.get('basis'):
+                raise ValueError('Candidate panel replacement needs a unique recovered candidate, actual declared entities and basis: '+str(cid))
+            seen.add(cid);retained.append(dict(mapping,candidate=candidates[cid]))
+        physical['panels']=[p for p in physical['panels'] if p['id'] not in seen]
+        snapshot.setdefault('layout_evidence',{})['replaced_panel_candidates']=retained
     records = []
     context = {}
     for table,value in pkg.items():
@@ -121,10 +150,10 @@ def assemble(root, cfg, pkg, snapshot, provenance):
               "provenance":provenance, "analysis":snapshot.get("analysis", {"nodes":[],"elements":[]}),
               "physical":physical, "design_records":records, "design_context":context,
               "layout_evidence":snapshot.get("layout_evidence", {}), "source_findings":findings,
-              "required":bool(cfg.get("bim", {}).get("required") or ((root/"design/bim_request.json").is_file() and read_json(root/"design/bim_request.json").get("required"))), "readiness":{}}
+              "required":bool(any(d.get('required') for _,d in sources) or ((root/"design/bim_request.json").is_file() and read_json(root/"design/bim_request.json").get("required"))), "readiness":{}}
     request=root/'design/bim_request.json'
     requirements=read_json(request) if request.is_file() else {}
-    if requirements.get('require_connection_parts') or cfg.get('bim',{}).get('require_connection_parts'):
+    if requirements.get('require_connection_parts') or any(d.get('require_connection_parts') for _,d in sources):
         result['require_connection_parts']=True
     if requirements.get('architectural_input_sha256'):
         source=root/'architectural_input.json'
@@ -139,6 +168,12 @@ def assemble(root, cfg, pkg, snapshot, provenance):
             # Identity is copied from the original input, never retyped by the model.
             reference_system['source_ifc_sha256']=result['architectural_input']['source_ifc_sha256']
     if reference_system is not None:result['reference_system']=reference_system
+    if selected:
+        result['information']=dict(revision=selected['revision'],fictional=selected.get('fictional',False),
+            requests=copy.deepcopy(selected['requests']),decisions=copy.deepcopy(selected['decisions']))
+        for request in selected['requests']:
+            if not request.get('quantitatively_resolved'):
+                findings.append(issue('coordination_required',request['question'],request.get('entity_ids') or [request['id']]))
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),
                            "findings":found, "counts":{"analysis_elements":len(result["analysis"]["elements"]), "members":len(physical["members"]), "panels":len(physical["panels"]), "design_records":len(records)}}
@@ -228,6 +263,7 @@ def worker(job, output):
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(ENGINE))
     import bim_adapter as adapter
+    import physical_inputs
     root=Path(job).resolve()
     source_files=tracked_sources(root)
     adapter.disable_analysis()
@@ -248,18 +284,32 @@ def worker(job, output):
     sys.path.insert(1, str(staged))
     package_file=adapter.PACKAGE
     pkg=read_json(root/"design"/package_file)
+    selected=physical_inputs.read(staged,adapter.MODULE)
+    capture_evidence={'kind':'native_configuration','independent_configuration_rebuild':True}
     try:
         cfg=runpy.run_path(str(staged/"cfg.py"))["cfg"]
     except ModuleNotFoundError as ex:
-        if not hasattr(adapter,"capture_saved"): raise
-        cfg,snapshot=adapter.capture_saved(staged,pkg,str(ex))
+        if adapter.MODULE=='HR' and (staged/'portable_model.json').is_file():
+            import portable_model
+            cfg,snapshot,capture_evidence=portable_model.capture(staged,pkg,selected)
+            capture_evidence['configuration_dependency_missing']=str(ex)
+        else:
+            if not hasattr(adapter,"capture_saved"): raise
+            cfg,snapshot=adapter.capture_saved(staged,pkg,str(ex))
+            capture_evidence={'kind':'legacy_missing_dependency','independent_configuration_rebuild':False,'reason':str(ex)}
     else:
-        snapshot=adapter.capture(cfg, pkg, staged)
+        capture_cfg=physical_inputs.apply_layout(cfg,selected)
+        if selected:
+            capture_cfg=copy.copy(capture_cfg)
+            capture_cfg['bim']={**cfg.get('bim',{}),
+                'panels':cfg.get('bim',{}).get('panels',[])+selected['declarations'].get('panels',[])}
+        snapshot=adapter.capture(capture_cfg, pkg, staged)
     snapshot["layout_evidence"]=evidence_json(snapshot.get("layout_evidence",{}))
     provenance={"module":adapter.MODULE,"package_file":package_file,"source_files":source_files,
                 "exporter_revision":os.environ.get("STELTIC_BIM_REVISION"),"producer_revision":None,
                 "engine_files":{p.name:digest(p) for p in sorted(ENGINE.iterdir()) if p.is_file() and p.suffix in (".py",".csv",".json")},
-                "engine_version":snapshot.pop("engine_version",None),"mode":"model_only_replay", "analysis_executed":False}
+                "engine_version":snapshot.pop("engine_version",None),"mode":"model_only_replay", "analysis_executed":False,
+                "model_capture":capture_evidence}
     result=assemble(root,cfg,pkg,snapshot,provenance)
     atomic_json(output,result)
 
@@ -273,17 +323,35 @@ def after_consistency(root, cfg, design_issues):
     """
     request=Path(root)/"design/bim_request.json"
     required=request.is_file() and read_json(request).get("required") is True
-    if not isinstance(cfg, dict) or not isinstance(cfg.get("bim"), dict):
-        return ["BIM declaration missing: new jobs require cfg['bim']; see contract/BIM_EXPORT.md"] if required else []
-    if cfg["bim"].get("required"):
+    if __package__:
+        from . import physical_inputs
+        from . import bim_adapter as adapter
+    else:
+        import physical_inputs
+        import bim_adapter as adapter
+    try:
+        selected=physical_inputs.read(root)
+    except (ValueError,TypeError,KeyError) as ex:
+        return ['BIM physical inputs invalid: '+str(ex)]
+    if not isinstance(cfg, dict) or (not isinstance(cfg.get("bim"), dict) and selected is None):
+        return ["BIM declaration missing: new jobs require physical_inputs.json; see contract/BIM_EXPORT.md"] if required else []
+    if cfg.get("bim",{}).get("required") or (selected and selected['declarations'].get('required')):
         marker=read_json(request) if request.is_file() else {}
         marker.update(required=True,cfg_sha256=digest(Path(root)/"cfg.py"))
-        if cfg['bim'].get('require_connection_parts'):marker['require_connection_parts']=True
+        if cfg.get('bim',{}).get('require_connection_parts') or (selected and selected['declarations'].get('require_connection_parts')):marker['require_connection_parts']=True
         atomic_json(request,marker)
     if design_issues: return []
     try:
+        if selected:physical_inputs.bind_checked_design(root)
+        # Preserve the actual saved model at completion, while its checked
+        # configuration and metadata still exist. Later fallback remains
+        # explicitly identified as saved-model replay, never a fresh analysis.
+        if adapter.MODULE=='HR' and (Path(root)/'model_opensees.py').is_file() and (Path(root)/'viewer_3d.html').is_file():
+            if __package__:from .portable_model import freeze
+            else:from portable_model import freeze
+            freeze(root)
         exported=replay(root)
-        if (required or cfg["bim"].get("required")) and exported["readiness"]["status"] != "ready":
+        if (required or cfg.get("bim",{}).get("required") or selected) and exported["readiness"]["status"] != "ready":
             return ["BIM "+f["code"]+": "+f["message"] for f in exported["readiness"]["findings"]]
     except Exception as ex:
         return ["BIM export failed: "+str(ex)]
@@ -318,8 +386,16 @@ def main(argv=None):
     batch.add_argument("jobs_root",type=Path); batch.add_argument("--output-root",type=Path,required=True)
     batch.add_argument("--timeout",type=float,default=120); batch.add_argument("--require-ready",action="store_true")
     check=sub.add_parser("validate"); check.add_argument("package",type=Path)
+    frozen=sub.add_parser('snapshot',help='Archive a checked HR saved model as portable, literal input without analysis')
+    frozen.add_argument('job',type=Path)
     w=sub.add_parser("_worker"); w.add_argument("job"); w.add_argument("output")
     args=ap.parse_args(argv)
+    if args.command=='snapshot':
+        if __package__:from .portable_model import freeze
+        else:from portable_model import freeze
+        result=freeze(args.job)
+        print(json.dumps({'module':result['module'],'commands':len(result['commands']),'analysis_executed':False,'path':'portable_model.json'}))
+        return 0
     if args.command=="_worker": worker(args.job,args.output); return 0
     if args.command=="validate":
         findings=validate(read_json(args.package)); print(json.dumps(findings,indent=2)); return 2 if findings else 0

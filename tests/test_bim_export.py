@@ -114,6 +114,8 @@ Path(__file__).with_name('scratch-output.txt').write_text('scratch only')
     (lambda p:p["physical"]["members"][0].update(material_id="missing"),"member_material"),
     (lambda p:p["physical"]["members"][0].update(profile_id="missing"),"member_profile"),
     (lambda p:p["physical"]["members"][0].update(end_offsets=None),"member_placement"),
+    (lambda p:p['physical']['members'][0].update(slots=[dict(start_in=0,end_in=200,width_in=.5,section_axis=0)]),'member_slot'),
+    (lambda p:p['physical']['members'][0].update(slots=[dict(start_in=10,end_in=20,width_in=-1,section_axis=0)]),'member_slot'),
     (lambda p:p["physical"]["connections"][0].update(joint_id="missing"),"connection_joint"),
     (lambda p:p["physical"]["joints"][0].update(point=[1000,0,0]),"joint_placement"),
     (lambda p:p["physical"]["connections"][0].update(design_record_ids=["connections/missing"]),"connection_design"),

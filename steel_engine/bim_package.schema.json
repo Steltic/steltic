@@ -495,6 +495,30 @@
             "points"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "mesh"
+            },
+            "faces": {
+              "type": "array",
+              "minItems": 4,
+              "items": {
+                "type": "array",
+                "minItems": 3,
+                "items": {
+                  "$ref": "#/$defs/point"
+                }
+              }
+            }
+          },
+          "required": [
+            "type",
+            "faces"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -515,12 +539,13 @@
             "type": "string",
             "minLength": 1
           },
-          "minItems": 1
+          "minItems": 0
         },
         "scope": {
           "enum": [
             "designed",
-            "delegated"
+            "delegated",
+            "coordination"
           ]
         },
         "parts": {
@@ -582,6 +607,89 @@
         "representation": {
           "type": "string",
           "minLength": 1
+        },
+        "assembly_instance": {
+          "type": "object",
+          "properties": {
+            "template_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "origin": {
+              "$ref": "#/$defs/point"
+            },
+            "x_axis": {
+              "$ref": "#/$defs/point"
+            },
+            "y_axis": {
+              "$ref": "#/$defs/point"
+            },
+            "bindings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "template_id",
+            "revision",
+            "origin",
+            "x_axis",
+            "y_axis",
+            "bindings"
+          ],
+          "additionalProperties": false
+        },
+        "source_record_selections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "field": {
+                "enum": [
+                  "selection",
+                  "components"
+                ]
+              },
+              "clause": {
+                "enum": [
+                  "base",
+                  "floors"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "record_id",
+              "field",
+              "clause",
+              "text",
+              "level",
+              "basis"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -590,7 +698,28 @@
         "design_record_ids",
         "scope"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "designed",
+                  "delegated"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "design_record_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "interface": {
       "type": "object",
@@ -793,6 +922,65 @@
             "string",
             "null"
           ]
+        },
+        "physical_inputs": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "const": "physical_inputs.json"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "path",
+            "revision",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "model_capture": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "native_configuration",
+                "legacy_missing_dependency",
+                "portable_checked_model"
+              ]
+            },
+            "independent_configuration_rebuild": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "basis": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "configuration_dependency_missing": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "independent_configuration_rebuild"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1000,21 +1188,35 @@
                 "minLength": 1
               },
               "kind": {
-                "enum": ["free_end", "continuous_member", "bearing_interface", "shared_connection"]
+                "enum": [
+                  "free_end",
+                  "continuous_member",
+                  "bearing_interface",
+                  "shared_connection"
+                ]
               },
               "connection_ids": {
                 "type": "array",
-                "items": {"type": "string", "minLength": 1},
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "uniqueItems": true
               },
               "design_record_ids": {
                 "type": "array",
-                "items": {"type": "string", "minLength": 1},
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "uniqueItems": true
               },
               "supporting_entity_ids": {
                 "type": "array",
-                "items": {"type": "string", "minLength": 1},
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "uniqueItems": true
               }
             },
@@ -1100,6 +1302,113 @@
           },
           "required": [],
           "additionalProperties": false
+        },
+        "assemblies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "material_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "geometry": {
+                      "$ref": "#/$defs/geometry"
+                    },
+                    "parameters": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "material_id",
+                    "geometry"
+                  ],
+                  "additionalProperties": true
+                },
+                "minItems": 1
+              },
+              "source_record_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "receivers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "enum": [
+                        "member",
+                        "panel",
+                        "interface"
+                      ]
+                    },
+                    "axis": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/point"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "additionalProperties": true
+                },
+                "minItems": 1
+              },
+              "basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "parts",
+              "source_record_ids",
+              "receivers",
+              "basis"
+            ],
+            "additionalProperties": true
+          }
         }
       },
       "required": [
@@ -1304,6 +1613,37 @@
         "source_ifc_sha256",
         "reference_system",
         "openings"
+      ],
+      "additionalProperties": false
+    },
+    "information": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fictional": {
+          "type": "boolean"
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "fictional",
+        "requests",
+        "decisions"
       ],
       "additionalProperties": false
     }

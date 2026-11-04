@@ -7,6 +7,10 @@ import json
 import math
 import re
 from pathlib import Path
+try:
+    from . import bim_assemblies,member_slots
+except ImportError:
+    import bim_assemblies,member_slots
 
 VERSION = "1.0"
 COLLECTIONS = ("members", "panels", "openings", "profiles", "materials", "joints", "connections", "interfaces")
@@ -42,6 +46,16 @@ def geometry_errors(g, profiles):
     if not isinstance(g, dict):
         return ["geometry must be an object"]
     kind = g.get("type")
+    if kind == 'mesh':
+        faces=g.get('faces',[])
+        if not isinstance(faces,list) or not faces or any(not isinstance(f,list) or len(f)<3 or not all(vector(p) for p in f) for f in faces):return ['Mesh needs finite polygon faces']
+        edges={}
+        for face in faces:
+            for a,b in zip(face,face[1:]+face[:1]):
+                a=tuple(round(v,8) for v in a);b=tuple(round(v,8) for v in b)
+                if a==b:return ['Mesh contains a zero-length edge']
+                key=tuple(sorted((a,b)));edges[key]=edges.get(key,0)+1
+        return [] if all(n==2 for n in edges.values()) else ['Solid mesh must have exactly two incident faces at each edge']
     if kind == "polyline":
         points = g.get("points", [])
         return [] if len(points) >= 2 and all(vector(p) for p in points) and any(p != points[0] for p in points) else ["invalid polyline"]
@@ -96,6 +110,7 @@ def _part_bounds(geometry, profiles):
     if geometry_errors(geometry,profiles): return None
     kind = geometry['type']
     if kind == 'polyline': points = geometry['points']; radius = 0.
+    elif kind == 'mesh': points=[p for face in geometry['faces'] for p in face];radius=0.
     elif kind == 'box':
         x,y = geometry['x_axis'],geometry['y_axis']
         z = [x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]]
@@ -115,6 +130,7 @@ def joint_disposition_findings(package):
     """
     if not package.get('require_connection_parts'): return []
     physical = package['physical']
+    templates=bim_assemblies.index(physical)
     members = {m['id']:m for m in physical.get('members',[])}
     panels = {p['id']:p for p in physical.get('panels',[])}
     profiles = {p['id']:p for p in physical.get('profiles',[])}
@@ -181,7 +197,7 @@ def joint_disposition_findings(package):
                 continue
             for cid in refs:
                 if cid not in bounds:
-                    bounds[cid] = [box for p in connections[cid].get('parts',[]) if (box := _part_bounds(p.get('geometry',{}),profiles)) is not None]
+                    bounds[cid] = [box for p in bim_assemblies.parts(connections[cid],templates,world=True) if (box := _part_bounds(p.get('geometry',{}),profiles)) is not None]
                 if not bounds[cid] or min(distance(point,box) for box in bounds[cid]) > 72:
                     bad('joint_shared_connection','The referenced assembly has no connection-part bounds within six feet of this joint; reference the actual local assembly (nearness alone does not prove fit)',jid)
     return findings
@@ -195,6 +211,10 @@ def connection_component_findings(package):
     reference groups are supported alongside solids for design coordination.
     """
     if not package.get('require_connection_parts'): return []
+    try:from .bim_record_clauses import applications
+    except ImportError:from bim_record_clauses import applications
+    selected_clauses,clause_errors=applications(package)
+    templates=bim_assemblies.index(package['physical'])
     records={r['id']:r for r in package.get('design_records',[])}
     materials={m['id']:m for m in package['physical'].get('materials',[])}
     patterns={
@@ -205,7 +225,12 @@ def connection_component_findings(package):
     }
     def positive(text):
         # Recognize explicit exclusions without turning them into requirements.
-        text=re.sub(r'\b(?:no|without)\s+(?:(?:field|shop|additional|anchor|CJP|PJP)\s+)*(?:bolts?|screws?|welds?|anchors?|rods?)\b','',text,flags=re.I)
+        # Reinforcing bars developed around an anchorage are foundation rebar,
+        # not a selection of an additional mechanical anchor rod.
+        text=re.sub(r'\banchor[- ]reinforcement\b','foundation reinforcement',text,flags=re.I)
+        text=re.sub(r'\banchor[- ]plates?\b','uplift end plate',text,flags=re.I)
+        item=r'(?:(?:field|shop|additional|designed|anchor|CJP|PJP)\s+)*(?:bolts?|screws?|welds?|anchors?|rods?|studs?)\b'
+        text=re.sub(r'\b(?:no|without)\s+'+item+r'(?:\s*(?:,|\bor\b|\band\b)\s*'+item+r')*','',text,flags=re.I)
         return re.sub(r'\b(?:anchor\s+rods?|bolts?|screws?|welds?|anchors?)\s+(?:are\s+)?(?:not required|not used|omitted|unnecessary)\b','',text,flags=re.I)
     def selection_text(value):
         if isinstance(value,str): return [positive(value)]
@@ -246,14 +271,20 @@ def connection_component_findings(package):
     findings=[]
     local_parts={}
     for c in package['physical'].get('connections',[]):
-        for rid in c.get('design_record_ids',[]):local_parts.setdefault((c.get('joint_id'),rid),[]).extend(c.get('parts',[]))
+        for rid in c.get('design_record_ids',[]):local_parts.setdefault((c.get('joint_id'),rid),[]).extend(bim_assemblies.parts(c,templates))
     for connection in package['physical'].get('connections',[]):
         if connection.get('scope')=='delegated': continue
         for rid in connection.get('design_record_ids',[]):
             record=records.get(rid,{})
             if record.get('waived') or record.get('table') not in ('connections','anchorage','holddowns','bases','schedules'): continue
             kinds=' '.join(part_label(part) for part in local_parts.get((connection.get('joint_id'),rid),[]))
-            selected=selected_text(record);missing=missing_categories(selected,kinds)
+            clause=selected_clauses.get((connection['id'],rid))
+            if clause is not None:
+                applied=next(s for s in connection['source_record_selections'] if s['record_id']==rid)
+                other='components' if applied['field']=='selection' else 'selection'
+                selected=' '.join([positive(clause),*selection_text(record.get('data',{}).get(other))])
+            else:selected=selected_text(record)
+            missing=missing_categories(selected,kinds)
             if missing:findings.append(dict(connection_id=connection['id'],design_record_id=rid,missing_component_categories=missing,selected_components=selected[:1200],returned_part_kinds=kinds))
     # A member/assembly coverage note must not hide an entirely absent selected
     # fastener family. Real rods represented as members remain valid; ordinary
@@ -273,7 +304,7 @@ def connection_component_findings(package):
         kinds=' '.join(part_label(part) for part in parts)
         missing=missing_categories(selected,kinds)
         if missing:absent_families.append(dict(design_record_id=rid,missing_component_categories=missing,selected_components=selected[:1200],returned_part_kinds=kinds,bound_entity_ids=sorted({e['id'] for e in bound})))
-    result=[]
+    result=[issue('source_record_selection',message,[cid,rid],'error') for cid,rid,message in clause_errors]
     if findings:
         finding=issue('connection_selected_components','Located connection parts omit component categories explicitly selected in the linked design; export the actual parts/reference groups without relabelling an unrelated solid',[f['connection_id'] for f in findings])
         finding.update(count=len(findings),examples=findings[:100]);result.append(finding)
@@ -292,7 +323,8 @@ def fastener_quantity_findings(package):
     """
     if not package.get('require_connection_parts'): return []
     connections=package['physical'].get('connections',[])
-    solids={'box','cylinder','extruded_profile'}
+    templates=bim_assemblies.index(package['physical'])
+    solids={'box','cylinder','extruded_profile','mesh'}
     def category(part):
         label=part.get('kind','').lower().replace('_',' ').replace('-',' ')
         if re.search(r'\b(?:plates?|washers?|nuts?|heads?)\b',label):return None
@@ -308,13 +340,13 @@ def fastener_quantity_findings(package):
     for connection in connections:
         if connection.get('scope')=='delegated':continue
         for rid in connection.get('design_record_ids',[]):
-            local.setdefault((connection.get('joint_id'),rid),[]).extend(connection.get('parts',[]))
+            local.setdefault((connection.get('joint_id'),rid),[]).extend(bim_assemblies.parts(connection,templates))
     findings=[]
     for connection in connections:
         if connection.get('scope')=='delegated':continue
-        pool=list(connection.get('parts',[]))
+        pool=bim_assemblies.parts(connection,templates)
         for rid in connection.get('design_record_ids',[]):pool.extend(local.get((connection.get('joint_id'),rid),[]))
-        for part in connection.get('parts',[]):
+        for part in bim_assemblies.parts(connection,templates):
             kind=category(part)
             if not kind or part.get('geometry',{}).get('type') not in solids:continue
             counts=[value for key,value in part.get('parameters',{}).items()
@@ -343,12 +375,13 @@ def duplicate_connection_part_findings(package):
     """
     if not package.get('require_connection_parts'): return []
     duplicates=[]
+    templates=bim_assemblies.index(package['physical'])
     for connection in package['physical'].get('connections',[]):
         if connection.get('scope')=='delegated': continue
         seen={}
-        for part in connection.get('parts',[]):
+        for part in bim_assemblies.parts(connection,templates):
             geometry=part.get('geometry',{})
-            if geometry.get('type') not in ('box','cylinder','extruded_profile'): continue
+            if geometry.get('type') not in ('box','cylinder','extruded_profile','mesh'): continue
             # Numeric JSON values compare equally (1 versus 1.0), so use a
             # recursive tuple rather than string serialisation for geometry.
             def frozen(value):
@@ -734,6 +767,8 @@ def validate(package):
     if package.get("units") != {"length":"in", "force":"kip", "stress":"ksi"}:
         bad("units", "Canonical units must be in / kip / ksi")
     physical = package.get("physical", {})
+    templates=bim_assemblies.index(physical)
+    errors.extend(bim_assemblies.findings(package))
     indexes = {}
     for key in COLLECTIONS:
         rows = physical.get(key, [])
@@ -744,7 +779,7 @@ def validate(package):
         indexes[key] = {r["id"]:r for r in rows}
         if len(indexes[key]) != len(rows): bad("duplicate_id", "Duplicate IDs in " + key)
     profiles, materials = indexes["profiles"], indexes["materials"]
-    profile_dimensions={"i":("d","bf","tf","tw"),"rhs":("h","b","t"),"chs":("d","t"),
+    profile_dimensions={"i":("d","bf","tf","tw"),"i_tapered":("d","bf","tf_tip","tf_root","tw"),"rhs":("h","b","t"),"chs":("d","t"),
                         "channel":("d","b","lip","t","r"),"z":("d","b","lip","t","r"),
                         "angle":("h","b","t"),"flat":("width","thickness"),"round":("d",),"box_envelope":("width","depth")}
     for p in profiles.values():
@@ -758,6 +793,9 @@ def validate(package):
                     if target.get("status")!="declared" or target.get("family")=="built_up": bad("profile_geometry","Constituents must reference declared non-built-up profiles",[p["id"]])
             elif family not in profile_dimensions or any(not number(dims.get(k)) or (dims[k]<0 if k in ("lip","r") else dims[k]<=0) for k in profile_dimensions[family]):
                 bad("profile_geometry", "Declare required dimensions for a supported profile family", [p["id"]])
+            if family=='i_tapered' and all(number(dims.get(k),True) for k in profile_dimensions[family]):
+                if dims['tf_tip']>dims['tf_root'] or 2*dims['tf_root']>=dims['d'] or dims['tw']>=dims['bf']:
+                    bad('profile_geometry','Tapered flange tip/root and web must fit the section envelope',[p['id']])
             if family=="box_envelope" and (p.get("scope")!="delegated" or not p.get("basis")): bad("profile_geometry","An envelope needs delegated scope and its basis",[p["id"]])
             if family in profile_dimensions and all(number(dims.get(k),True) for k in profile_dimensions[family]):
                 if ((family=="i" and (2*dims["tf"]>=dims["d"] or dims["tw"]>=dims["bf"])) or
@@ -800,6 +838,10 @@ def validate(package):
         if m.get("material_id") not in materials: bad("member_material", "Unresolved material", [mid])
         if not m.get("reference_line") or not isinstance(m.get("end_offsets"), list) or len(m["end_offsets"]) != 2 or not all(vector(v) for v in m["end_offsets"]):
             bad("member_placement", "Declare reference line and both physical end offsets", [mid])
+        elif 'slots' in m:
+            ends=[[v+o for v,o in zip(p,offset)] for p,offset in zip(axis,m['end_offsets'])]
+            try:member_slots.validated(m['slots'],math.dist(*ends))
+            except (ValueError,TypeError) as error:bad('member_slot',str(error),[mid])
     if candidates: bad("member_placement", "Confirm physical placement/profile/material of recovered analysis members", candidates, "needs_input")
     for aid, rows in portions.items():
         cursor = 0.0
@@ -877,19 +919,29 @@ def validate(package):
         if c.get("joint_id") not in indexes["joints"]: bad("connection_joint", "Connection has unknown joint", [cid])
         else: joined.add(c["joint_id"])
         refs = c.get("design_record_ids", [])
-        if not refs or any(ref not in records for ref in refs): bad("connection_design", "Connection needs valid design record IDs", [cid])
+        if c.get('scope')=='coordination':
+            info=package.get('information',{})
+            logged={d.get('request_id') for d in info.get('decisions',[]) if d.get('action')=='accept_test' and d.get('author') and d.get('note')}
+            accepted={r['id'] for r in info.get('requests',[]) if r.get('status')=='accepted_test' and r.get('fictional') is True and r.get('quantitatively_resolved') is True and r['id'] in logged}
+            decisions=c.get('decision_ids',[])
+            if info.get('fictional') is not True or c.get('engineering_status')!='not_checked' or not decisions or not set(decisions)<=accepted:
+                bad('connection_coordination_basis','Fictional coordination geometry needs explicit accepted test decisions and not_checked engineering status', [cid])
+            if any(ref not in records for ref in refs):bad('connection_design','Connection refers to unknown design records',[cid])
+        elif not refs or any(ref not in records for ref in refs): bad("connection_design", "Connection needs valid design record IDs", [cid])
         linked.update(refs)
-        parts = c.get("parts", [])
+        parts = bim_assemblies.parts(c,templates)
         detail = c.get("detail_ref", {})
         if c.get("scope") == "delegated":
             if not c.get("responsible_party") or not detail.get("id") or not detail.get("revision") or not c.get("representation"):
                 bad("delegated_interface", "Delegated connection needs party, versioned detail and representation", [cid])
         elif not parts and not (detail.get("id") and detail.get("revision")):
             bad("connection_geometry", "Connection needs parts or a versioned design-detail reference", [cid])
-        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not any(p.get('geometry',{}).get('type')!='polyline' for p in parts):
+        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not bim_assemblies.has_physical_connection(c,templates):
             bad('connection_parts_required','This job requires located physical parts for designed connections; a detail reference alone is incomplete',[cid],'needs_input')
         part_ids = set()
-        for part in parts:
+        # Local template geometry/materials were validated once above. Occurrence
+        # frames and bindings are checked independently for every joint.
+        for part in c.get('parts',[]):
             if not isinstance(part, dict) or not part.get("id") or part["id"] in part_ids:
                 bad("connection_part", "Invalid/duplicate connection part ID", [cid]); continue
             part_ids.add(part["id"])

@@ -71,6 +71,9 @@ class JobWorkspace:
             marker=d / "design" / "bim_request.json"
             request=json.loads(marker.read_text(encoding='utf-8')) if marker.is_file() else {}
             atomic_json(marker, {**request,"required": True, "require_connection_parts": True})
+            from steel_engine.physical_inputs import PhysicalModel, NAME
+            if not (d / NAME).exists():
+                PhysicalModel('HR').save(d)
 
     def new_activity_log(self, building: str = "") -> dict:
         self.building = _clean_name(building)

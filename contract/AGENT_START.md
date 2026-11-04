@@ -777,3 +777,39 @@ P-Delta + per-member DEMAND envelope + figures + report). It computes **NO AISC 
 
 
 Physical fastener quantities: a count label on one cylinder or bounding box does not create the selected bolt/anchor/screw pattern. Export the distinct located occurrences, preserving the actual checked count, sizes, spacing, supporting faces and load path. Do not remove or lower count metadata to hide missing hardware; reconcile any true metadata error against the actual completed connection calculation.
+
+## Physical BIM inputs and information requests
+
+Fresh jobs receive `physical_inputs.json` before modeling. Use
+`steel_engine.physical_inputs.PhysicalModel('HR', read(job))` to record the real
+selected products and physical occurrences while you design. Save at each completed
+phase. Do not postpone this to an openBIM supplement or substitute analysis springs,
+line elements or equivalent stiffness for actual studs, plates, floor/roof layers
+and connection components. Existing `cfg["bim"]` declarations remain supported.
+
+Use `physical_selection.record` and `selected` to preserve checked record IDs, JSON
+pointers and source hashes. The recording API does not calculate or infer capacities.
+Use `physical_catalog` for explicit catalogue geometry, `physical_layout` for supplied
+member splits, repetitions, walls and reservations, and `bim_assemblies` for versioned
+local parts with a rigid transform and actual receiving-member bindings at EVERY joint.
+Templates do not excuse missing hardware, counts, materials or receiver geometry.
+
+Reuse information already in the user's brief, IFC handoff, configuration and selected
+design records. Ask only for the remaining choices. Each request needs an explicit
+proposal and bindings to the affected fields. Proposed information remains provisional
+and visible on drawings. Quantitative confirmation writes back to this native job with
+revision/hash checks. Changes affecting design require affected engineering checks;
+never treat a user answer or a saved old PASS as a new capacity verification.
+
+Finish with consistency.check and inspect the separately reported BIM findings. The
+physical export must cover the designed scope and explicitly identify delegated or
+existing scope. No readiness override, fabricated checked record or silent omitted
+component is acceptable. For fictional test examples only, `accept_test` retains its
+explicit not-checked status; it is not a production engineering approval.
+
+For a pending physical-input engineering review, check the actual changed fields
+against their affected design records. Once the calculations and current consistency
+verdict support it, call `physical_inputs.record_design_review` with those record
+pointers, the request-register revision/hash and your review basis, then replay the
+export. See `contract/BIM_EXPORT.md` for the call. Never close a review merely because
+the old calculation package still says PASS.

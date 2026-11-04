@@ -437,3 +437,67 @@ Existing reference-only and delegated scope retain their contract. This check
 is a lower-bound data consistency screen, not a free-text schedule parser,
 spacing/edge-distance check or fastening-capacity certification. Independently
 reconcile each repeated family with its own selected quantities and spacings.
+
+
+## Native physical selections (version 1)
+
+`physical_inputs.json` is independent of the checked calculation/configuration bytes.
+It holds inch/kip/ksi declarations, original-source bindings, requests, decisions and
+a monotonic revision. `PhysicalModel.save(job)` rejects concurrent changes. OpenBIM
+uses the native service endpoints `GET /api/physical/{job}/requests`,
+`POST /api/physical/{job}/answers` and `POST /api/physical/{job}/replay`. Answer and replay
+requests carry the expected revision and SHA-256; answers also support an idempotent
+`decision_id`. Replaying builds geometry only and never calls the LLM or runs analysis.
+
+A confirmed change is retained even if export or drawing regeneration fails. Existing
+drawing revisions remain available. Pending design reviews are not cleared by replay.
+The accepted proposal and the final quantitative answer are distinct states.
+
+Local `assemblies` retain each selected component, receiver and source record. Each
+connection instance supplies an orthonormal frame, the exact template revision and
+a binding for every receiver. Actual geometry, profile, orientation and extent are
+validated against the bound physical member, including its physical end offsets.
+
+CFS equivalent wall segments can be subdivided using `layout.wall_segment_groups`:
+for example a 30-foot checked segment can bind to three contiguous 10-foot bays.
+The one-based groups must partition the physical ranges in order, remain contiguous
+and preserve each checked width. This changes only the staged physical capture;
+it does not edit the source stiffness model. Candidate panel replacements retain the
+original outline and an explicit mapping to the declared physical assembly as evidence.
+
+For immutable historical HR designs with unavailable local helper modules,
+`python -m steel_engine.bim_export snapshot JOB` records whitelisted literal model
+commands from a saved checked model. Replay tries cfg.py first and uses the snapshot
+only for missing dependencies. It verifies every source hash and the saved geometry,
+and labels this portable capture as NOT an independent configuration rebuild.
+
+Data completeness remains separate from structural capacity and shop/fabrication
+approval. Fictional coordination connections require an explicitly logged accepted
+test decision and `engineering_status: not_checked`; they cannot discard selected
+design-record references.
+
+An answer that changes a design-dependent field leaves a pending engineering review.
+After reviewing the affected selections and obtaining a current consistency PASS,
+the engineering workflow calls `physical_inputs.record_design_review(job,
+request_id=..., author=..., note=..., source_pointers=["/connections/0"],
+expected_revision=..., expected_sha256=...)` with the current request-register
+revision/hash and the actual affected calculation pointers. The review records those
+record hashes, the physical revision and the checking engineer's basis. A normal
+consistency run, replay, proposal acceptance or drawing refresh never clears this
+review automatically. Re-export after recording the review.
+
+HR completion also archives its checked literal model and viewer metadata before
+replay. This preserves portable geometry when an old local helper later disappears;
+it does not claim that the missing configuration dependency was rebuilt independently.
+
+
+Use openBIM 0.8.34 or later for native requests and assembly instances. Hub 0.2.6
+supplies the local HR/CFS service URLs; standalone openBIM can set HR_URL/CFS_URL.
+
+When a single immutable source record selects different base and floor hardware,
+use typed `source_record_selections` on its actual connection occurrences. Each
+entry names the original record ID, exact `selection` or `components` field,
+`base` or `floors` clause, verbatim clause text, actual floor level and basis.
+The validator checks exact, exhaustive source clauses and their application;
+arbitrary excerpts cannot discard another selected component. Keep the complete
+source record and source hash. This is applicability, not a modified calculation.

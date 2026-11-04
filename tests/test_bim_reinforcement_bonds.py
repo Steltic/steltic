@@ -125,3 +125,20 @@ def test_malformed_concrete_opening_references_report_a_finding():
     p=fixture();p['panels'][0]['openings']=[dict(id='bad')]
     errors,valid=R.evaluate(p)
     assert errors and not valid
+
+
+@pytest.mark.parametrize('defect',[None,'foreign_bar','remote_end','branch','lap_only','partial_bar','missing_host'])
+def test_end_disposition_uses_only_a_verified_whole_bar_bond(defect):
+    import importlib
+    C=importlib.import_module(A.__package__+'.bim_contract')
+    p=fixture('reinforcement_bond_lap' if defect=='lap_only' else 'reinforcement_bond_development')
+    p['joints']=[dict(id='start',point=[5,10,-1],member_ends=[dict(member_id='bar0',end='start')]),
+                 dict(id='end',point=[45,10,-1],member_ends=[dict(member_id='bar0',end='end')])]
+    p['joint_dispositions']=[dict(joint_id=j['id'],kind='shared_connection',connection_ids=['joint'],reason='Explicit bar bond') for j in p['joints']]
+    if defect=='foreign_bar':p['joints'][0]['member_ends'][0]['member_id']='bar1'
+    elif defect=='remote_end':p['joints'][0]['point'][0]+=1
+    elif defect=='branch':p['joints'][0]['attachments']=[dict(member_id='bar1',station=.5)]
+    elif defect=='partial_bar':p['assemblies'][0]['receivers'][0]['axis'][1][0]-=1
+    elif defect=='missing_host':p['panels']=[]
+    findings=C.joint_disposition_findings(dict(physical=p,require_connection_parts=True))
+    assert bool(findings)==bool(defect)

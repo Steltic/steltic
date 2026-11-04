@@ -58,6 +58,21 @@ def reference_lines(template):
     return lines
 
 
+def joint_end_coverage(connection,template,joint,members):
+    """Exact physical ends served by a separately verified whole-bar bond."""
+    bindings=connection.get('assembly_instance',{}).get('bindings',{})
+    owned={bindings.get(r) for b in template.get('bond_interfaces',[])
+           if b['kind']=='reinforcement_bond_development' for r in b['bar_receivers']}
+    covered=set()
+    for i,end in enumerate(joint.get('member_ends',[])):
+        member=members.get(end.get('member_id'),{})
+        if end.get('member_id') not in owned or end.get('end') not in ('start','end'):continue
+        k=0 if end['end']=='start' else 1
+        actual=[p+o for p,o in zip(member['axis'][k],member.get('end_offsets',[[0,0,0],[0,0,0]])[k])]
+        if math.dist(actual,joint['point'])<=TOL:covered.add(i)
+    return covered
+
+
 def _inside(q,ring):
     inside=False
     for a,b in zip(ring,ring[1:]+ring[:1]):

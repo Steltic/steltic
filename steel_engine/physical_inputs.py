@@ -13,6 +13,9 @@ import os
 from pathlib import Path
 import tempfile
 
+try:from . import bim_json
+except ImportError:import bim_json
+
 NAME = 'physical_inputs.json'
 SCHEMA = 'steltic.physical_inputs'
 COLLECTIONS = ('members','profiles','materials','panels','openings','joints','connections','interfaces')
@@ -20,22 +23,15 @@ STATES = ('proposed','accepted_proposal','confirmed','accepted_test','delegated'
 
 
 def fingerprint(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return bim_json.fingerprint(value)
 
 
 def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return bim_json.file_digest(path)
 
 
 def atomic_json(path, value):
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    content=json.dumps(value,sort_keys=True,indent=2,allow_nan=False)+'\n'
-    fd,temp=tempfile.mkstemp(prefix='.physical-',suffix='.tmp',dir=path.parent)
-    try:
-        with os.fdopen(fd,'w',encoding='utf-8',newline='\n') as stream:stream.write(content)
-        os.replace(temp,path)
-    finally:
-        if os.path.exists(temp):os.unlink(temp)
+    bim_json.atomic_json(path,value,prefix='.physical-')
 
 
 def empty(module):
@@ -48,7 +44,7 @@ def empty(module):
 
 
 def validate_input(value, module=None):
-    json.dumps(value,allow_nan=False)
+    bim_json.validate(value)
     if not isinstance(value,dict) or value.get('schema')!=SCHEMA or value.get('version')!=1:
         raise ValueError('Unsupported physical input schema/version')
     if value.get('module') not in ('HR','CFS') or (module and value['module']!=module):

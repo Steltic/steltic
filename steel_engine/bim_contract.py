@@ -8,9 +8,9 @@ import math
 import re
 from pathlib import Path
 try:
-    from . import bim_assemblies,member_slots
+    from . import bim_assemblies,bim_bonds,member_slots
 except ImportError:
-    import bim_assemblies,member_slots
+    import bim_assemblies,bim_bonds,member_slots
 
 VERSION = "1.0"
 COLLECTIONS = ("members", "panels", "openings", "profiles", "materials", "joints", "connections", "interfaces")
@@ -790,6 +790,8 @@ def validate(package):
     physical = package.get("physical", {})
     templates=bim_assemblies.index(physical)
     errors.extend(bim_assemblies.findings(package))
+    bond_errors,verified_bonds=bim_bonds.evaluate(physical)
+    errors.extend(issue('reinforcement_bond',message,[cid],'error') for cid,message in bond_errors)
     indexes = {}
     for key in COLLECTIONS:
         rows = physical.get(key, [])
@@ -957,7 +959,7 @@ def validate(package):
                 bad("delegated_interface", "Delegated connection needs party, versioned detail and representation", [cid])
         elif not parts and not (detail.get("id") and detail.get("revision")):
             bad("connection_geometry", "Connection needs parts or a versioned design-detail reference", [cid])
-        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not bim_assemblies.has_physical_connection(c,templates):
+        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not bim_assemblies.has_physical_connection(c,templates,verified_bonds=verified_bonds):
             bad('connection_parts_required','This job requires located physical parts for designed connections; a detail reference alone is incomplete',[cid],'needs_input')
         part_ids = set()
         # Local template geometry/materials were validated once above. Occurrence

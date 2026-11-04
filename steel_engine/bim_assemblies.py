@@ -66,13 +66,14 @@ def parts(connection,templates,*,world=False):
     return result
 
 
-def has_physical_connection(connection,templates):
+def has_physical_connection(connection,templates,*,verified_bonds=()):
     """Solid hardware or an explicit weld joining two real receiver members.
 
     A direct welded joint need not invent a plate/bolt solid. A text callout,
     continuity note or weld to an unbound local label cannot satisfy this check.
     Geometry, receiver placement and selected categories are validated elsewhere.
     """
+    if connection.get('id') in verified_bonds:return True
     components=parts(connection,templates)
     if any(p.get('geometry',{}).get('type')!='polyline' for p in components):return True
     placement=connection.get('assembly_instance',{});template=templates.get(placement.get('template_id'),{})
@@ -87,10 +88,11 @@ def has_physical_connection(connection,templates):
     return False
 
 
-def add_template(model,id,parts,*,source_record_ids=(),receivers=(),basis):
+def add_template(model,id,parts,*,source_record_ids=(),receivers=(),bond_interfaces=(),basis):
     rows=model.value['declarations'].setdefault('assemblies',[])
     if any(row['id']==id for row in rows):raise ValueError('Duplicate assembly template ID')
     value=dict(id=id,parts=copy.deepcopy(parts),source_record_ids=list(source_record_ids),receivers=copy.deepcopy(list(receivers)),basis=basis)
+    if bond_interfaces:value['bond_interfaces']=copy.deepcopy(list(bond_interfaces))
     value['revision']=fingerprint(value)
     rows.append(value);return value['revision']
 
@@ -107,17 +109,20 @@ def instance(model,id,joint_id,template_id,origin,x_axis,y_axis,*,bindings,desig
 def findings(package):
     try:from .bim_contract import issue,geometry_errors
     except ImportError:from bim_contract import issue,geometry_errors
+    try:from . import bim_bonds
+    except ImportError:import bim_bonds
     physical=package['physical'];templates=index(physical);result=[]
     profiles={p['id']:p for p in physical['profiles']};materials={p['id'] for p in physical['materials']}
     records={r['id'] for r in package['design_records']}
-    entities={r['id']:r for k in ('members','panels','interfaces') for r in physical[k]}
+    entities={(kind,r['id']):r for kind,key in (('member','members'),('panel','panels'),('interface','interfaces')) for r in physical[key]}
     joints={r['id']:r for r in physical['joints']}
     def bad(code,message,*ids):result.append(issue(code,message,ids,'error'))
     if len(templates)!=len(physical.get('assemblies',[])):bad('assembly_template','Duplicate assembly template IDs')
     for tid,template in templates.items():
         content={k:v for k,v in template.items() if k!='revision'}
         if template.get('revision')!=fingerprint(content):bad('assembly_revision','Assembly template content differs from its revision',tid)
-        if not template.get('basis') or not template.get('parts'):bad('assembly_template','An assembly needs physical parts and their basis',tid)
+        if not template.get('basis') or not (template.get('parts') or template.get('bond_interfaces')):bad('assembly_template','An assembly needs physical parts or a validated reinforcement bond, and its basis',tid)
+        for message in bim_bonds.template_errors(template):bad('reinforcement_bond',message,tid)
         if any(r not in records for r in template.get('source_record_ids',[])):bad('assembly_design','Assembly references unknown selected design records',tid)
         seen=set()
         for part in template.get('parts',[]):
@@ -154,7 +159,7 @@ def findings(package):
         expected={r.get('id') for r in template.get('receivers',[])}
         if not isinstance(bindings,dict) or set(bindings)!=expected:bad('assembly_binding','Bind each local receiver exactly once to this occurrence',cid);continue
         for receiver in template.get('receivers',[]):
-            rid=receiver['id'];eid=bindings[rid];entity=entities.get(eid)
+            rid=receiver['id'];eid=bindings[rid];entity=entities.get((receiver.get('kind'),eid))
             if entity is None:bad('assembly_binding','Assembly receiver references an unknown physical entity',cid,str(eid));continue
             if receiver.get('kind')!='member':continue
             actual=entity.get('axis',[]);local=receiver.get('axis',[])

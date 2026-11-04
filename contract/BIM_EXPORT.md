@@ -501,3 +501,17 @@ entry names the original record ID, exact `selection` or `components` field,
 The validator checks exact, exhaustive source clauses and their application;
 arbitrary excerpts cannot discard another selected component. Keep the complete
 source record and source hash. This is applicability, not a modified calculation.
+
+Straight horizontal reinforcement may declare `bond_interfaces` on a versioned
+assembly without additional steel hardware. Each interface identifies its actual
+bar receivers and concrete panel receiver, a basis, and
+`engineering_status: not_verified`. Supported kinds are
+`reinforcement_bond_development` (the full physical bar) and
+`reinforcement_bond_lap` (two touching parallel bars with an explicit `length_in`).
+The host must declare concrete, its top-surface boundary, positive thickness and
+`thickness_direction: negative_global_z`; bars must fit within it and avoid all
+declared openings. Only recomputed geometric checks satisfy the physical-connection
+gate. They do not verify cover requirements, development length, lap class or
+capacity. Receiver bindings retain member/panel/interface type even if IDs collide.
+Use openBIM 0.8.48 or later to retain these host relationships and bond references
+in IFC and drawings.

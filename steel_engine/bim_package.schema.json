@@ -1360,7 +1360,7 @@
                   ],
                   "additionalProperties": true
                 },
-                "minItems": 1
+                "minItems": 0
               },
               "source_record_ids": {
                 "type": "array",
@@ -1409,6 +1409,74 @@
               "basis": {
                 "type": "string",
                 "minLength": 1
+              },
+              "bond_interfaces": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "enum": [
+                        "reinforcement_bond_development",
+                        "reinforcement_bond_lap"
+                      ]
+                    },
+                    "host_receiver": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "bar_receivers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1,
+                      "maxItems": 2,
+                      "uniqueItems": true
+                    },
+                    "length_in": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "basis": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "engineering_status": {
+                      "const": "not_verified"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "host_receiver",
+                    "bar_receivers",
+                    "basis",
+                    "engineering_status"
+                  ],
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "kind": {
+                            "const": "reinforcement_bond_lap"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "length_in"
+                        ]
+                      }
+                    }
+                  ],
+                  "additionalProperties": true
+                }
               }
             },
             "required": [
@@ -1419,7 +1487,26 @@
               "receivers",
               "basis"
             ],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "anyOf": [
+              {
+                "properties": {
+                  "parts": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "required": [
+                  "bond_interfaces"
+                ],
+                "properties": {
+                  "bond_interfaces": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
           }
         }
       },

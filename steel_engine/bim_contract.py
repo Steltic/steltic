@@ -8,9 +8,9 @@ import math
 import re
 from pathlib import Path
 try:
-    from . import bim_assemblies,member_slots
+    from . import bim_assemblies,bim_bonds,member_slots
 except ImportError:
-    import bim_assemblies,member_slots
+    import bim_assemblies,bim_bonds,member_slots
 
 VERSION = "1.0"
 COLLECTIONS = ("members", "panels", "openings", "profiles", "materials", "joints", "connections", "interfaces")
@@ -122,7 +122,7 @@ def _part_bounds(geometry, profiles):
     return [(min(p[k] for p in points)-radius,max(p[k] for p in points)+radius) for k in range(3)]
 
 
-def joint_disposition_findings(package):
+def joint_disposition_findings(package,*,verified_bonds=None):
     """Require explicit, traceable exceptions for jobs requesting located parts.
 
     Legacy reason-only declarations remain readable. These checks establish
@@ -130,6 +130,7 @@ def joint_disposition_findings(package):
     """
     if not package.get('require_connection_parts'): return []
     physical = package['physical']
+    if verified_bonds is None:_,verified_bonds=bim_bonds.evaluate(physical)
     templates=bim_assemblies.index(physical)
     members = {m['id']:m for m in physical.get('members',[])}
     panels = {p['id']:p for p in physical.get('panels',[])}
@@ -195,11 +196,21 @@ def joint_disposition_findings(package):
             if not refs or any(r not in connections for r in refs):
                 bad('joint_shared_connection','Reference the existing located connection IDs that actually serve this joint; do not duplicate hardware or cite a representative detail',jid)
                 continue
+            bond_ends=set()
             for cid in refs:
+                if cid in verified_bonds:
+                    connection=connections[cid]
+                    template=templates[connection['assembly_instance']['template_id']]
+                    covered=bim_bonds.joint_end_coverage(connection,template,joint,members)
+                    if not covered:bad('joint_shared_connection','A whole-bar bond can serve only its actual bound physical bar ends; a lap or unrelated nearby bar cannot dispose of this joint',jid)
+                    bond_ends.update(covered)
+                    continue
                 if cid not in bounds:
                     bounds[cid] = [box for p in bim_assemblies.parts(connections[cid],templates,world=True) if (box := _part_bounds(p.get('geometry',{}),profiles)) is not None]
                 if not bounds[cid] or min(distance(point,box) for box in bounds[cid]) > 72:
                     bad('joint_shared_connection','The referenced assembly has no connection-part bounds within six feet of this joint; reference the actual local assembly (nearness alone does not prove fit)',jid)
+            if all(cid in verified_bonds for cid in refs) and (attachments or not ends or bond_ends!=set(range(len(ends)))):
+                bad('joint_shared_connection','Every end at a bond-only joint needs its own verified whole-bar bond; branch attachments need their actual connection',jid)
     return findings
 
 
@@ -790,6 +801,8 @@ def validate(package):
     physical = package.get("physical", {})
     templates=bim_assemblies.index(physical)
     errors.extend(bim_assemblies.findings(package))
+    bond_errors,verified_bonds=bim_bonds.evaluate(physical)
+    errors.extend(issue('reinforcement_bond',message,[cid],'error') for cid,message in bond_errors)
     indexes = {}
     for key in COLLECTIONS:
         rows = physical.get(key, [])
@@ -957,7 +970,7 @@ def validate(package):
                 bad("delegated_interface", "Delegated connection needs party, versioned detail and representation", [cid])
         elif not parts and not (detail.get("id") and detail.get("revision")):
             bad("connection_geometry", "Connection needs parts or a versioned design-detail reference", [cid])
-        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not bim_assemblies.has_physical_connection(c,templates):
+        if package.get('require_connection_parts') and c.get('scope')!='delegated' and not bim_assemblies.has_physical_connection(c,templates,verified_bonds=verified_bonds):
             bad('connection_parts_required','This job requires located physical parts for designed connections; a detail reference alone is incomplete',[cid],'needs_input')
         part_ids = set()
         # Local template geometry/materials were validated once above. Occurrence
@@ -995,7 +1008,7 @@ def validate(package):
         exempt_ids.add(d.get('joint_id'))
         free_joints.discard(d.get("joint_id"))
     if free_joints: bad("joint_connection", "Provide connections or free/continuous-joint reasons", free_joints, "needs_input")
-    errors.extend(joint_disposition_findings(package))
+    errors.extend(joint_disposition_findings(package,verified_bonds=verified_bonds))
     errors.extend(connection_component_findings(package))
     errors.extend(fastener_quantity_findings(package))
     errors.extend(duplicate_connection_part_findings(package))

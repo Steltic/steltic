@@ -22,8 +22,10 @@ import tempfile
 ENGINE = Path(__file__).resolve().parent
 if __package__:
     from .bim_contract import VERSION, COLLECTIONS, COVERAGE, issue, validate
+    from . import bim_json
 else:
     from bim_contract import VERSION, COLLECTIONS, COVERAGE, issue, validate
+    import bim_json
 
 
 def read_json(path):
@@ -31,7 +33,7 @@ def read_json(path):
 
 
 def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return bim_json.file_digest(path)
 
 
 def evidence_json(value):
@@ -45,17 +47,7 @@ def evidence_json(value):
 
 
 def atomic_json(path, obj):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
-    fd, temp = tempfile.mkstemp(prefix=".bim-", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(data)
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+    bim_json.atomic_json(path,obj,prefix='.bim-',ensure_ascii=False)
 
 
 def assemble(root, cfg, pkg, snapshot, provenance):
@@ -310,6 +302,10 @@ def worker(job, output):
                 "engine_files":{p.name:digest(p) for p in sorted(ENGINE.iterdir()) if p.is_file() and p.suffix in (".py",".csv",".json")},
                 "engine_version":snapshot.pop("engine_version",None),"mode":"model_only_replay", "analysis_executed":False,
                 "model_capture":capture_evidence}
+    # assemble reads the authoritative selection and independently checks its
+    # source bindings. Release the configuration-capture copy before that read;
+    # large assembly libraries otherwise remain decoded twice in this process.
+    del selected
     result=assemble(root,cfg,pkg,snapshot,provenance)
     atomic_json(output,result)
 

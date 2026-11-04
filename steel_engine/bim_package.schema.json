@@ -147,6 +147,18 @@
             ],
             "additionalProperties": false
           }
+        },
+        "analysis_component_roles": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 2,
+          "additionalProperties": {
+            "enum": [
+              "axial",
+              "flexural"
+            ]
+          },
+          "description": "Explicit coincident solver components of one shaft; checked against source element types, areas and the complete reference axis."
         }
       },
       "required": [

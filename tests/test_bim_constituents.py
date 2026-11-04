@@ -19,6 +19,18 @@ def overlaps(physical):
     return [f for f in physical_screens(physical) if f['code']=='physical_constituent_overlap']
 
 
+@pytest.mark.parametrize('field',['rotation_deg','offset'])
+def test_partial_profile_is_reported_by_schema_without_crashing_geometry_screen(field):
+    physical=assembly()
+    del physical['profiles'][1]['components'][0][field]
+    before=copy.deepcopy(physical)
+    assert not overlaps(physical)
+    assert physical==before
+    package=json.loads((Path(__file__).parent/'fixtures/synthetic_bim_package.json').read_text())
+    package['physical']['profiles']+=physical['profiles']
+    assert any(f['code']=='schema' and f['severity']=='error' for f in validate(package))
+
+
 def test_channel_bounding_centre_error_detected_without_mutation():
     physical=assembly();before=copy.deepcopy(physical)
     findings=overlaps(physical)

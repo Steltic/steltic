@@ -520,6 +520,12 @@ def _constituent_overlaps(profiles):
         components=[]
         for component in profile.get('components',[]):
             polygons=_section_core(profiles.get(component.get('profile_id'),{}))
+            # Shape screens also run on partial source data. The schema check
+            # reports missing transforms; this screen must not invent them or
+            # crash before those findings can reach the request register.
+            offset=component.get('offset')
+            if not polygons or not number(component.get('rotation_deg')) or not isinstance(offset,list) or len(offset)!=2 or not all(number(v) for v in offset):
+                components.append([]);continue
             angle=math.radians(component['rotation_deg']);co,si=math.cos(angle),math.sin(angle);u,v=component['offset']
             components.append([[[co*x-si*y+u,si*x+co*y+v] for x,y in poly] for poly in polygons])
         for i,first in enumerate(components):

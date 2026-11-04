@@ -428,6 +428,21 @@ def mapping_geometry_findings(package):
                 if residual > 1e-5 or station < -1e-5 or station > length+1e-5: mismatch = True
                 stations.append(station)
             intervals.append(sorted(stations))
+        # A solver may split one shaft into coincident axial and flexural
+        # components. Require the explicit roles AND this known mechanical
+        # pattern; overlapping ordinary frame elements are still an error.
+        roles=member.get('analysis_component_roles')
+        if roles is not None:
+            valid=isinstance(roles,dict) and len(roles)==2 and all(isinstance(v,str) for v in roles.values()) and set(roles.values())=={'axial','flexural'} and set(roles)==set(member.get('analysis_ids',[])) and len(member.get('analysis_ids',[]))==2 and not member.get('analysis_segments')
+            if valid:
+                axial=elements.get(next(k for k,v in roles.items() if v=='axial'),{})
+                flexural=elements.get(next(k for k,v in roles.items() if v=='flexural'),{})
+                aa=axial.get('builder_arguments',[]);fa=flexural.get('builder_arguments',[])
+                valid=len(aa)>4 and len(fa)>4 and str(aa[0]).lower() in ('truss','corottruss') and fa[0]=='elasticBeamColumn'
+                valid=valid and number(aa[4]) and number(fa[4]) and 0<fa[4]<=aa[4]*1e-4
+                valid=valid and len(intervals)==2 and all(abs(lo)<1e-5 and abs(hi-length)<1e-5 for lo,hi in intervals)
+            if valid:intervals=intervals[:1]
+            else:mismatch=True
         cursor = 0.0
         for lo, hi in sorted(intervals):
             if lo > cursor+1e-5 or lo < cursor-1e-5: mismatch = True

@@ -427,6 +427,18 @@ def mapping_geometry_findings(package):
         if member.get('status') != 'declared': continue
         claims = [(aid, 0, 1) for aid in member.get('analysis_ids', [])]
         claims += [(s['analysis_id'], s['start'], s['end']) for s in member.get('analysis_segments', [])]
+        mapping=member.get('analysis_coordinate_mapping')
+        order=[0,1,2]
+        if mapping is not None:
+            if (not isinstance(mapping,dict) or set(mapping)!={'axis_order','basis'} or
+                not isinstance(mapping.get('axis_order'),list) or len(mapping['axis_order'])!=3 or
+                any(type(v) is not int for v in mapping['axis_order']) or set(mapping['axis_order'])!={0,1,2} or
+                not isinstance(mapping.get('basis'),str) or not mapping['basis'].strip() or not claims):
+                findings.append(issue('analysis_coordinate_mapping',
+                    'Declare a complete source-axis permutation and its basis on a member with analysis claims; scaling, translation and dropped coordinates are not supported',
+                    [member['id']],'error'))
+                continue
+            order=mapping['axis_order']
         if not claims: continue
         a, b = member['axis']; direction = [y-x for x,y in zip(a,b)]
         length = norm(direction)
@@ -436,7 +448,7 @@ def mapping_geometry_findings(package):
             element = elements.get(aid, {}); ids = element.get('node_ids', [])
             if len(ids) != 2 or any(n not in nodes for n in ids):
                 mismatch = True; continue
-            p, q = [nodes[n] for n in ids]; stations = []
+            p, q = [[nodes[n][i] for i in order] for n in ids]; stations = []
             for t in (start, end):
                 point = [x+t*(y-x) for x,y in zip(p,q)]
                 station = sum((x-y)*d for x,y,d in zip(point,a,direction))

@@ -229,10 +229,11 @@ def connection_component_findings(package):
     records={r['id']:r for r in package.get('design_records',[])}
     materials={m['id']:m for m in package['physical'].get('materials',[])}
     patterns={
-        'anchor': r'\banchor(?:s|[- _]+(?:rod|bolt)s?)?\b|\bF1554\b.{0,35}\brods?\b|\brods?\b.{0,35}\bF1554\b',
+        'anchor': r'\banchor(?:s|[- _]+(?:rod|bolt)s?)?\b(?![- _]+bars?\b)|\bF1554\b.{0,35}\brods?\b|\brods?\b.{0,35}\bF1554\b',
         'bolt': r'\bbolts?\b|\bbolted\b',
         'screw': r'\bscrews?\b|\bscrewed\b',
         'weld': r'\bwelds?\b|\bwelded\b|\b(?:CJP|PJP)\b',
+        'anchor_bar': r'\banchor[- _]+bars?\b',
     }
     def positive(text):
         # Recognize explicit exclusions without turning them into requirements.
@@ -262,7 +263,11 @@ def connection_component_findings(package):
         return []
     def part_label(part):
         label=part.get('kind','').replace('_',' ').replace('-',' ')
-        if re.search(r'\b(?:bolts?|rods?|fasteners?|anchors?)\b',label,re.I):
+        if (part.get('kind') in ('plate','bar','formed_component') and
+            part.get('geometry',{}).get('type') in ('box','mesh','extruded_profile') and
+            re.search(patterns['anchor_bar'],str(part.get('parameters',{}).get('description','')),re.I)):
+            label+=' anchor bar'
+        if re.search(r'\b(?:bolts?|rods?|fasteners?|anchors?)\b',part.get('kind','').replace('_',' ').replace('-',' '),re.I):
             metadata=json.dumps([part.get('id',''),part.get('parameters',{}),materials.get(part.get('material_id'),{})])
             if re.search(r'anchor|F1554',metadata,re.I):label+=' anchor'
             if re.search(r'screw|C1513',metadata,re.I):label+=' screw'

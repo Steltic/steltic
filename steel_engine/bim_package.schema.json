@@ -676,7 +676,8 @@
               "clause": {
                 "enum": [
                   "base",
-                  "floors"
+                  "floors",
+                  "top"
                 ]
               },
               "text": {

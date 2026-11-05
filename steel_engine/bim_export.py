@@ -50,6 +50,21 @@ def atomic_json(path, obj):
     bim_json.atomic_json(path,obj,prefix='.bim-',ensure_ascii=False)
 
 
+def capture_configuration(cfg, selected):
+    """Expose accepted physical context to native capture without changing cfg."""
+    if __package__:
+        from . import physical_inputs
+    else:
+        import physical_inputs
+    capture_cfg=physical_inputs.apply_layout(cfg,selected)
+    if selected:
+        capture_cfg=copy.copy(capture_cfg)
+        capture_cfg['bim']=copy.deepcopy(cfg.get('bim',{}))
+        for name in ('panels','interfaces'):
+            capture_cfg['bim'][name]=copy.deepcopy(cfg.get('bim',{}).get(name,[])+selected['declarations'].get(name,[]))
+    return capture_cfg
+
+
 def assemble(root, cfg, pkg, snapshot, provenance):
     """Join structured declarations and captured geometry; never parse prose as facts."""
     model = snapshot.get("physical", {})
@@ -290,11 +305,7 @@ def worker(job, output):
             cfg,snapshot=adapter.capture_saved(staged,pkg,str(ex))
             capture_evidence={'kind':'legacy_missing_dependency','independent_configuration_rebuild':False,'reason':str(ex)}
     else:
-        capture_cfg=physical_inputs.apply_layout(cfg,selected)
-        if selected:
-            capture_cfg=copy.copy(capture_cfg)
-            capture_cfg['bim']={**cfg.get('bim',{}),
-                'panels':cfg.get('bim',{}).get('panels',[])+selected['declarations'].get('panels',[])}
+        capture_cfg=capture_configuration(cfg,selected)
         snapshot=adapter.capture(capture_cfg, pkg, staged)
     snapshot["layout_evidence"]=evidence_json(snapshot.get("layout_evidence",{}))
     provenance={"module":adapter.MODULE,"package_file":package_file,"source_files":source_files,

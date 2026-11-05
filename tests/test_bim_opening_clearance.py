@@ -88,3 +88,56 @@ def test_a_stored_ready_flag_cannot_override_opening_clash():
     assert finding['severity'] == 'needs_input'
     assert set(finding['entity_ids']) == {'beam', 'wall', 'opening'}
     assert package == original
+
+
+@pytest.mark.parametrize('reverse', [False,True])
+@pytest.mark.parametrize('direction,sign', [('negative_global_z',-1),('positive_global_z',1)])
+def test_opening_clearance_honours_declared_floor_surface(direction,sign,reverse):
+    data=physical([[10,10,-sign*.1],[30,10,-sign*.1]])
+    vertices=[[0,0,0],[40,0,0],[40,40,0],[0,40,0]]
+    data['panels'][0].update(vertices=vertices,thickness=1.5,thickness_direction=direction)
+    data['openings'][0]['vertices']=list(reversed(vertices)) if reverse else vertices
+    assert not clashes(data)  # Stud/track is on the clear side of the actual surface.
+    data['members'][0]['axis']=[[10,10,sign*1.4],[30,10,sign*1.4]]
+    assert clashes(data)  # Real intersection missed by the old symmetric half-depth.
+    data['members'][0]['axis']=[[10,10,sign*1.6],[30,10,sign*1.6]]
+    assert not clashes(data)
+
+
+@pytest.mark.parametrize('reverse', [False,True])
+def test_sloped_roof_extrudes_in_declared_global_direction(reverse):
+    data=physical([[10,10,6],[30,10,16]])
+    vertices=[[0,0,0],[40,0,20],[40,40,20],[0,40,0]]
+    data['panels'][0].update(vertices=vertices,thickness=1.5,thickness_direction='negative_global_z')
+    data['openings'][0]['vertices']=list(reversed(vertices)) if reverse else vertices
+    assert not clashes(data)
+    data['members'][0]['axis']=[[10,10,3.6],[30,10,13.6]]
+    assert clashes(data)
+
+
+def test_intended_penetration_only_exempts_its_explicit_actual_member():
+    data=physical([[20,0,-10],[20,0,100]])
+    opening=data['openings'][0]
+    opening.update(kind='member_clearance',penetrating_member_ids=['member'],
+                   penetration_basis='Accepted located clearance for this continuous structural tie rod.')
+    assert not clashes(data)
+    other=copy.deepcopy(data['members'][0]);other['id']='unrelated';data['members'].append(other)
+    assert clashes(data)[0]['examples']==[dict(opening_id='door',host_id='wall',member_id='unrelated')]
+    opening['kind']='door'
+    assert {e['member_id'] for e in clashes(data)[0]['examples']}=={'member','unrelated'}
+    assert any(f['code']=='physical_opening_penetration' for f in physical_screens(data))
+
+
+@pytest.mark.parametrize('changes',[
+    {'penetrating_member_ids':['missing']},
+    {'penetrating_member_ids':'member'},
+    {'penetrating_member_ids':['member','member']},
+    {'penetration_basis':''},
+])
+def test_invalid_penetration_declarations_do_not_hide_clashes(changes):
+    data=physical([[20,0,-10],[20,0,100]])
+    data['openings'][0].update(kind='wall_bearing_holdback',penetrating_member_ids=['member'],
+                               penetration_basis='Explicit member clearance')
+    data['openings'][0].update(changes)
+    assert clashes(data)
+    assert any(f['code']=='physical_opening_penetration' for f in physical_screens(data))

@@ -554,6 +554,22 @@ def _constituent_overlaps(profiles):
     return findings
 
 
+def _opening_penetrations(physical):
+    """Explicit member-clearance openings, never a blanket clash exemption."""
+    members={m['id']:m for m in physical.get('members',[])};allowed={};errors=[]
+    for opening in physical.get('openings',[]):
+        if 'penetrating_member_ids' not in opening:continue
+        ids=opening['penetrating_member_ids']
+        if (opening.get('kind') not in ('member_clearance','wall_bearing_holdback') or
+            not isinstance(ids,list) or not ids or not all(isinstance(mid,str) for mid in ids) or
+            len(set(ids))!=len(ids) or not isinstance(opening.get('penetration_basis'),str) or
+            not opening['penetration_basis'].strip() or
+            any(mid not in members or members[mid].get('status')!='declared' for mid in ids)):
+            errors.append(dict(opening_id=opening.get('id'),reason='A member-clearance opening needs distinct actual declared member IDs and an explicit penetration basis'));continue
+        allowed[opening['id']]=set(ids)
+    return allowed,errors
+
+
 def _opening_workline_clashes(physical):
     """Screen actual member axes against convex, planar opening reservations.
 
@@ -566,7 +582,7 @@ def _opening_workline_clashes(physical):
     def dot(a,b):return sum(x*y for x,y in zip(a,b))
     def sub(a,b):return [x-y for x,y in zip(a,b)]
     def cross(a,b):return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
-    members=[];findings=[];tolerance=.005/.0254
+    members=[];findings=[];tolerance=.005/.0254;penetrations,_=_opening_penetrations(physical)
     for member in physical.get('members',[]):
         if member.get('status')!='declared':continue
         axis=member.get('axis',[]);offsets=member.get('end_offsets',[])
@@ -585,18 +601,29 @@ def _opening_workline_clashes(physical):
         if length<1e-10:continue
         normal=[v/length for v in normal]
         if any(abs(dot(normal,sub(p,points[0])))>1e-5 for p in points):continue
-        half=host['thickness']/2
-        planes=[(normal,dot(normal,points[0])-half),([-v for v in normal],-dot(normal,points[0])-half)]
+        thickness=host['thickness'];direction=host.get('thickness_direction')
+        if direction in ('negative_global_z','positive_global_z'):
+            # A declared top/bottom surface is not a mid-surface. Preserve the
+            # global extrusion direction also for a sloped roof and either
+            # polygon winding, rather than screening a symmetric fictitious slab.
+            if abs(normal[2])<1e-10:continue
+            depth=[0.,0.,-1. if direction=='negative_global_z' else 1.];start,end=0.,thickness
+        else:depth=normal;start,end=-thickness/2,thickness/2
+        offsets=sorted(dot(normal,depth)*v for v in (start,end));datum=dot(normal,points[0])
+        planes=[(normal,datum+offsets[0]),([-v for v in normal],-datum-offsets[1])]
+        inward_depth=depth if dot(normal,depth)>0 else [-v for v in depth]
         convex=True
         for p,q in zip(points,points[1:]+points[:1]):
-            inward=cross(normal,sub(q,p));length=norm(inward)
+            inward=cross(inward_depth,sub(q,p));length=norm(inward)
             if length<1e-10:continue
             inward=[v/length for v in inward]
             if any(dot(inward,sub(v,p)) < -1e-6 for v in points):convex=False;break
             planes.append((inward,dot(inward,p)+tolerance))
         if not convex or len(planes)<5:continue
-        bounds=[(min(p[k] for p in points)-abs(normal[k])*half,max(p[k] for p in points)+abs(normal[k])*half) for k in range(3)]
+        bounds=[(min(p[k]+depth[k]*v for p in points for v in (start,end)),
+                 max(p[k]+depth[k]*v for p in points for v in (start,end))) for k in range(3)]
         for member_id,a,b,delta,member_bounds in members:
+            if member_id in penetrations.get(opening['id'],()):continue
             if any(hi<lo2 or hi2<lo for (lo,hi),(lo2,hi2) in zip(bounds,member_bounds)):continue
             lo,hi=0.,1.
             for inward,minimum in planes:
@@ -666,6 +693,7 @@ def physical_screens(physical):
             break
     add('physical_opening_host','Opening boundaries extend outside their declared host bounds',outside)
     add('physical_opening_host_plane','Opening boundaries must lie in their declared panel plane to form an actual opening',off_plane)
+    add('physical_opening_penetration','Identify the actual members intentionally passing through this material-clearance opening',_opening_penetrations(physical)[1])
     add('physical_opening_workline','Member worklines cross a declared opening; coordinate the framing and then check full section and connection clearance',_opening_workline_clashes(physical))
     add('physical_part_dimensions','Connection solid dimensions contradict explicit thickness/diameter parameters; reconcile both with the completed design',_part_dimension_mismatches(physical))
     joints={j['id']:j for j in physical.get('joints',[])};remote=[]

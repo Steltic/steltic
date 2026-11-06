@@ -1,6 +1,8 @@
 """Exact, exhaustive applications of explicitly labelled source clauses.
 
-A schedule may specify different hardware at the base and upper floors. The
+A schedule may specify different hardware at the base, upper floors or
+exterior-column/interior-HSS bases. These labels also exist in the package
+schema; the located member proof below remains mandatory. The
 original record remains immutable. An occurrence can select an exact clause,
 provided every clause has a located application and each selection is valid.
 Unlabelled or partially parsed records cannot use this mechanism.
@@ -10,8 +12,11 @@ import math,re
 
 def clauses(text):
     if not isinstance(text,str):return {}
-    hits=list(re.finditer(r'(?:^|;)\s*(base|floors|top):\s*',text,re.I))
-    if len(hits)!=2 or hits[0].start()!=0 or {h[1].lower() for h in hits} not in ({'base','floors'},{'base','top'}):return {}
+    hits=list(re.finditer(r'(?:^|;)\s*(base|floors|top|exterior bases|interior hss[\d.x/]+ columns):\s*',text,re.I))
+    if len(hits)!=2 or hits[0].start()!=0:return {}
+    labels={h[1].lower() for h in hits}
+    portal='exterior bases' in labels and any(re.fullmatch(r'interior hss[\d.x/]+ columns',label) for label in labels)
+    if labels not in ({'base','floors'},{'base','top'}) and not portal:return {}
     return {hit[1].lower():text[hit.end():hits[i+1].start() if i+1<len(hits) else len(text)].strip()
             for i,hit in enumerate(hits)}
 
@@ -41,6 +46,31 @@ def applications(package):
                 tracks=[members[mid] for mid in c.get('member_ids',[]) if mid in members and members[mid]['kind'] in ('bottom_track','ordinary_track','tier_track')]
                 if not any(m.get('level')==level for m in tracks) or (label=='base')!=(level==1):
                     errors.append((c['id'],str(rid),'Base/floors clause needs its actual receiving bottom track and matching storey'));continue
+            elif 'exterior bases' in options:
+                interior=next(v for v in options if v!='exterior bases')
+                profile=interior.removeprefix('interior ').removesuffix(' columns').upper()
+                q=c.get('point',joints.get(c.get('joint_id'),{}).get('point'));located=[]
+                for m in members.values():
+                    axis=m.get('joint_workpoints',m.get('axis'))
+                    if m.get('level')!=level or m.get('kind') not in ('column','prop'):continue
+                    if not isinstance(axis,list) or len(axis)!=2 or not all(point(v) for v in axis):continue
+                    if any(abs(axis[1][i]-axis[0][i])>.001 for i in (0,1)) or abs(axis[1][2]-axis[0][2])<1:continue
+                    located.append((m,min(axis,key=lambda v:v[2])))
+                props=[(m,p) for m,p in located if m.get('kind')=='prop' and str(m.get('profile_id','')).upper()==profile]
+                columns=[(m,p) for m,p in located if m.get('kind')=='column']
+                matched=False
+                if point(q):
+                    for prop,pp in props:
+                        for left,lp in columns:
+                            for right,rp in columns:
+                                for along in (0,1):
+                                    across=1-along
+                                    if not lp[along]+.001<pp[along]<rp[along]-.001:continue
+                                    if any(abs(v[i]-pp[i])>.001 for v in (lp,rp) for i in (across,2)):continue
+                                    targets=[(prop,pp)] if label==interior else [(left,lp),(right,rp)]
+                                    if any(m['id'] in c.get('member_ids',[]) and math.dist(p,q)<.001 for m,p in targets):matched=True
+                if not matched:
+                    errors.append((c['id'],str(rid),'Exterior/interior base clause needs its actual base joint, source HSS prop section and two flanking frame columns'));continue
             else:
                 # The source's separate post head/base clauses apply only at
                 # the actual ends of a bound endwall post, not a claimed label.

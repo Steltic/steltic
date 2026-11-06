@@ -112,11 +112,21 @@
               "minItems": 3,
               "maxItems": 3,
               "uniqueItems": true,
-              "items": {"type": "integer", "minimum": 0, "maximum": 2}
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              }
             },
-            "basis": {"type": "string", "minLength": 1}
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "required": ["axis_order", "basis"],
+          "required": [
+            "axis_order",
+            "basis"
+          ],
           "additionalProperties": false,
           "description": "Explicit relabelling of saved analysis coordinates into the physical reference frame: physical[i]=analysis[axis_order[i]]. No scaling, translation, rotation angles or omitted axes. Exact interval, extent and coverage checks still apply."
         },
@@ -690,11 +700,8 @@
                 ]
               },
               "clause": {
-                "enum": [
-                  "base",
-                  "floors",
-                  "top"
-                ]
+                "type": "string",
+                "pattern": "^(base|floors|top|exterior bases|interior hss[0-9.x/]+ columns)$"
               },
               "text": {
                 "type": "string",

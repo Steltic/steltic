@@ -13,6 +13,7 @@ import math
 import re
 from fractions import Fraction
 from .bim_collector_applications import receiver_application, receiver_target
+from .bim_brb_selections import checked_bolt_pattern
 
 
 NUMBER = r"(?:\d+[- ]\d+/\d+|\d+/\d+|\d+(?:\.\d+)?|\.\d+)"
@@ -793,7 +794,7 @@ def _add_crossing_plate(record, fields):
 
 def selection_record(record):
     typed = "bim_selection" in record["data"]
-    fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record)
+    fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record) + checked_bolt_pattern(record)
     result = {"source_pointer": record["source_pointer"], "record_sha256": digest_value(record["data"]),
               "basis": "typed_calc_fields" if typed else "literal_legacy_clauses", "fields": fields}
     data = record["data"]

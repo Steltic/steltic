@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 
 from .bim_json import file_digest
+from .bim_brb_selections import member_selections
 from .bim_collector_applications import member_sources
 from .bim_report_readback import check_report_selections
 from .bim_source_crossings import crossing_interfaces
@@ -260,12 +261,13 @@ def _finish_handoff(building, source_files, bindings, materials, records, physic
     bindings["generator_files"] = {name: file_digest(code / name) for name in
                                    ("saved_handoff.py", "bim_source_fields.py", "bim_source_status.py", "bim_materials.py",
                                     "bim_source_checks.py", "bim_source_crossings.py", "bim_report_readback.py",
-                                    "bim_collector_applications.py", "bim_assemblies.py", "aisc_shapes.csv")}
+                                    "bim_collector_applications.py", "bim_brb_selections.py", "bim_assemblies.py", "aisc_shapes.csv")}
     bindings["member_application_sources"] = member_catalog
     bindings["geometry_completion_owner"] = "openBIM"
     handoff = {"schema": SCHEMA, "version": VERSION, "building_id": building,
                "source_files": source_files, "material_schedule": materials, "source_bindings": bindings,
                "records": records, "occurrences": occurrences, "source_conflicts": conflicts,
+               "member_selections": member_selections(native_records, physical, materials),
                "crossing_interfaces": crossings, "unresolved_crossing_interfaces": unresolved}
     handoff["contract_sha256"] = digest_value(handoff)
     return handoff

@@ -1750,6 +1750,7 @@
         "material_schedule": {"type": "object"},
         "records": {"type": "object"},
         "occurrences": {"type": "object"},
+        "member_selections": {"type": "object"},
         "source_conflicts": {"type": "array"},
         "crossing_interfaces": {"type": "array"},
         "unresolved_crossing_interfaces": {"type": "array"},

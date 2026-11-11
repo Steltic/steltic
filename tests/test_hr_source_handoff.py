@@ -85,6 +85,11 @@ def test_selected_anchor_setout_and_grout():
     assert (f["anchor_pattern", "spacing_in"], f["anchor_pattern", "edge_in"]) == (12.5, 1.75)
     assert (f["base_plate", "width_in"], f["base_plate", "length_in"]) == (16, 32)
     assert (f["grout", "material"], f["grout", "thickness_in"]) == ("non-shrink grout", 2)
+    heavy = source("6 x 3.5 in ASTM A193 Grade B7 (Fy = 95 ksi, Fu = 115 ksi) anchor rods; "
+                   "the first row 6.50 in from the flange face, rods at 14.50 in centres and 4.75 in from the plate edges")
+    f, _, _ = actual_fields(heavy)
+    assert (f["anchor", "count"], f["anchor", "diameter_in"], f["anchor", "material"]) == (6, 3.5, "ASTM A193 Grade B7")
+    assert (f["anchor_pattern", "flange_offset_in"], f["anchor_pattern", "spacing_in"], f["anchor_pattern", "edge_in"]) == (6.5, 14.5, 4.75)
 
 
 @pytest.mark.parametrize("columns", [1, 2])
@@ -230,6 +235,97 @@ def test_collector_and_conventional_detail_in_same_source_row_follow_the_physica
     r["data"]["components"] = r["data"]["components"].replace("2 x 3 = 6", "2 x 3 = 8")
     with pytest.raises(ValueError, match="bolt-grid"):
         selection_record(r)
+
+
+def test_collector_receiver_needs_the_matching_member_source_and_support():
+    from steel_engine.bim_collector_applications import member_sources
+    member_rows = [{"id": "members/collector-X-floor-W24X55", "table": "members", "source_pointer": "/members/0",
+                    "data": {"inputs": {"role": "collector", "section": "W24X55"}}},
+                   {"id": "members/column", "table": "members", "source_pointer": "/members/1",
+                    "data": {"inputs": {"role": "gravity_col", "section": "W14X132"}}}]
+    collector = source("single plate 0.5 x 15 in A572 Gr 50; 5 x 0.875 in A325-N bolts",
+                       identity="conn-collector-X-floor", label="collector (drag strut) to SMF column: single plate")
+    gravity = source("single plate 0.75 x 15 in A572 Gr 50; 5 x 0.875 in A490-X bolts",
+                     label="single-plate shear with analysis axial force -- gravity beam ends")
+    gravity["data"]["section"] = "W24X55"
+    records = {r["id"]: selection_record(r) for r in (collector, gravity)}
+    members = [{"id": "beam", "kind": "beam", "axis": [[0, 0, 5], [10, 0, 5]], "profile_id": "W24X55",
+                "design_record_ids": [member_rows[0]["id"]]},
+               {"id": "column", "kind": "column", "axis": [[0, 0, 0], [0, 0, 10]], "profile_id": "W14X132",
+                "design_record_ids": [member_rows[1]["id"]]}]
+    c = {"id": "c", "point": [0, 0, 5], "member_ids": ["beam", "column"], "design_record_ids": list(records),
+         "parameters": {"collector": True}}
+    def check():
+        links = build_selections(records, {"members": members, "connections": [c]}, member_catalog=member_sources(member_rows))
+        return links["c"]["applications"]
+    col, local = check()
+    assert col["interface_application"]["status"] == "different_receiver" and not col["selected"] and local["selected"]
+    member_rows[1]["data"].update(inputs={"role": "lateral_col", "section": "W14X132"}, design_note="SMF column: selected section")
+    col, local = check()
+    assert col["interface_application"]["status"] == "located_interface" and col["selected"] and not local["selected"]
+    members[0]["profile_id"] = "W21X101"
+    assert check()[0]["interface_application"]["status"] == "different_member_section"
+
+
+def test_web_and_flange_variants_use_the_receiving_column_section_axes_and_grid():
+    r = source("ends on a column flange: two plates PL 0.375 x 17.5 in A572 Gr 50 (one each face of the beam web); "
+               "6 x 1 x 7/8 in A490-X bolts; web-side ends on the W14X605 (Grid 7/B (Level 3)): "
+               "two plates PL 0.4375 x 14.5 in A572 Gr 50 (one each face of the beam web); 5 x 2 x 7/8 in A490-X bolts")
+    r["data"]["section"] = "W21X83"
+    records = {r["id"]: selection_record(r)}
+    ms = [{"id": "beam", "kind": "beam", "profile_id": "W21X83", "axis": [[0, 0, 3], [10, 0, 3]]},
+          {"id": "column", "kind": "column", "profile_id": "W14X605", "local_y": [1, 0, 0], "axis": [[0, 0, 0], [0, 0, 10]]}]
+    c = {"id": "c", "point": [0, 0, 3], "member_ids": ["beam", "column"], "design_record_ids": list(records)}
+    physical = {"members": ms, "profiles": [{"id": "W14X605", "family": "i"}], "connections": [c]}
+    ref = {"grids": [{"label": "7", "points_in": [[0, 0, 0], [0, 10, 0]]},
+                     {"label": "B", "points_in": [[0, 0, 0], [10, 0, 0]]}], "levels": [{"level": 3, "elevation_in": 3}]}
+    def apply():
+        link = build_selections(records, physical, ref)["c"]["applications"][0]
+        fields = records[r["id"]]["fields"]
+        return link, [fields[i]["value"] for i in link["selected"] if (fields[i]["role"], fields[i]["field"]) == ("bolt", "count")]
+    assert apply()[1] == [10]
+    ms[1]["local_y"] = [0, 1, 0]
+    assert apply()[1] == [6]
+    ms[1]["local_y"] = [1, 0, 0]
+    ref["levels"][0]["level"] = 9
+    assert apply()[0]["support_application"]["selected_group"] is None
+    assert apply()[1] == []
+
+
+def test_source_referenced_floor_detail_does_not_apply_to_roof_end_of_the_same_section():
+    target = source("end connection = the collector / strut detail of conn-floor-W24X68 "
+                    "(one detail for every W24X68 end with a collector or axial force); 8 x 1 in A490-X bolts",
+                    identity="collector-Y", label="collector (drag strut) end connection on the braced line")
+    roof = source("6 x 1 in A490-X bolts", identity="conn-roof-W24X68")
+    roof["data"]["section"] = "W24X68"
+    records = {r["id"]: selection_record(r) for r in (target, roof)}
+    physical = {"members": [{"id": "beam", "kind": "beam", "profile_id": "W24X68", "axis": [[0, 0, 100], [0, 10, 100]]}],
+                "connections": [{"id": "c", "point": [0, 0, 100], "member_ids": ["beam"], "design_record_ids": list(records)}]}
+    alias, local = build_selections(records, physical)["c"]["applications"]
+    assert alias["interface_application"]["status"] == "different_source_end"
+    assert alias["selected"] == [] and local["selected"]
+
+
+def test_combined_brace_and_collector_selection_requires_the_same_brace_and_beam_binding():
+    special = source("single plate 0.75 x 18 in A572 Gr 50; 2 column(s) x 6 rows of 0.875 in ASTM F3125 A325-X bolts",
+                     identity="conn-bracedbay-beam-X-HSS8X8X1/2", label="braced-bay beam-to-column connection (single plate, shear + axial)")
+    special["data"]["demand"] = {"basis": "beam reaction + UFM Vb; UFM Hb + collector"}
+    simple = source("single plate 0.375 in x 12 in A572 Gr 50; 4 x 0.75 in A325-N bolts",
+                    identity="simple", label="single-plate shear connection (conventional configuration, AISC Manual Part 10)")
+    records = {r["id"]: selection_record(r) for r in (special, simple)}
+    ms = [{"id": "beam", "kind": "beam", "profile_id": "W21X68", "axis": [[0, 0, 10], [10, 0, 10]]},
+          {"id": "brace", "kind": "brace", "profile_id": "HSS8X8X1/2", "axis": [[0, 0, 10], [10, 0, 0]]}]
+    physical = {"members": ms, "connections": [
+        {"id": "c", "point": [0, 0, 10], "member_ids": ["beam"], "design_record_ids": list(records)},
+        {"id": "x", "point": [0, 0, 10], "member_ids": ["brace", "beam"], "parameters": {"joint": "corner"}}]}
+    combined, local = build_selections(records, physical)["c"]["applications"]
+    assert combined["interface_application"]["status"] == "located_interface"
+    assert local["selected"] == [] and local["included_in_combined_end"] == [special["id"]]
+    fields = records[special["id"]]["fields"]
+    assert [(fields[i]["role"], fields[i]["value"]) for i in combined["selected"] if fields[i]["field"] == "count"] == [("bolt", 12)]
+    physical["connections"][1]["member_ids"] = ["brace", "unrelated-beam"]
+    combined, local = build_selections(records, physical)["c"]["applications"]
+    assert not combined["selected"] and local["selected"]
 
 
 def test_source_conflict_requires_a_located_field_specific_decision():

@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from . import bim_assemblies
+from .bim_collector_applications import member_sources
 from .bim_source_crossings import crossing_interfaces
 from .bim_source_fields import applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
 
@@ -224,7 +225,10 @@ def findings(package):
             errors.append(_issue("hr_handoff_report_binding", "A bound report requires its SHA-256"))
         if set(occurrences) != {c["id"] for c in package["physical"]["connections"]}:
             errors.append(_issue("hr_handoff_occurrences", "Source handoff does not cover the exact connection occurrence set"))
-        expected_occurrences = build_selections(records, package["physical"], package.get("reference_system"))
+        catalog = member_sources(package["design_records"])
+        if handoff["source_bindings"].get("member_application_sources") != catalog:
+            errors.append(_issue("hr_handoff_member_sources", "Collector and support roles differ from the original source member records"))
+        expected_occurrences = build_selections(records, package["physical"], package.get("reference_system"), catalog)
         for cid, roles in brace_receiver_roles(package["physical"]).items():
             expected_occurrences[cid]["receiver_roles"] = roles
         try:

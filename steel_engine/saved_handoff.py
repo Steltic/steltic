@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 
 from .bim_json import file_digest
+from .bim_collector_applications import member_sources
 from .bim_report_readback import check_report_selections
 from .bim_source_crossings import crossing_interfaces
 from .bim_source_fields import application_location, applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
@@ -129,18 +130,34 @@ def _records(native, calc):
     return catalog
 
 
-def build_selections(records, physical, reference=None):
+def build_selections(records, physical, reference=None, member_catalog=None):
     """Locate selected fields for each occurrence and retain ambiguous fields."""
     members = {m["id"]: m for m in physical.get("members", [])}
     profiles = {p["id"]: p for p in physical.get("profiles", [])}
     located = {rid for rid, record in records.items() if record.get("application_target") or record.get("beam_end_groups") or
-               record.get("corner_alternative") or
+               record.get("corner_alternative") or record.get("support_groups") or record.get("receiver_target") or
                any("attachment" in f["applicability"] for f in record["fields"])}
     corners = {}
+    frame_directions = {}
+    corner_bearings = {}
+    braced_members = set()
+    panels = {p["id"] for p in physical.get("panels", []) if "wall" in p.get("kind", "").lower()}
     for joint in physical["connections"]:
         if joint.get("parameters", {}).get("joint") == "corner" and joint.get("point"):
             point = tuple(round(v, 5) for v in joint["point"])
             corners.setdefault(point, {})[joint["id"]] = joint.get("member_ids", [])
+            braced_members.update(joint.get("member_ids", []))
+            for mid in joint.get("member_ids", []):
+                member = members.get(mid, {})
+                if "brace" not in member.get("kind", "") or len(member.get("axis", [])) != 2:
+                    continue
+                a, b = member["axis"]
+                dx, dy = abs(b[0]-a[0]), abs(b[1]-a[1])
+                if max(dx, dy) > 1e-5 and min(dx, dy) < 1e-5:
+                    direction = "X" if dx > dy else "Y"
+                    frame_directions.setdefault(point, set()).add(direction)
+                    corner_bearings.setdefault(point, []).append({"direction": direction, "section": member.get("profile_id"),
+                                                                 "member_ids": joint.get("member_ids", []), "connection_id": joint["id"]})
     occurrences = {}
     for connection in physical["connections"]:
         cid = connection["id"]
@@ -149,8 +166,13 @@ def build_selections(records, physical, reference=None):
         if located.intersection(connection.get("design_record_ids", [])):
             location = application_location(connection, members, profiles, reference)
             if location:
-                location["corner_members"] = corners.get(tuple(round(v, 5) for v in location["point_in"]), {})
-        links = applications(connection, records, location)
+                pt = tuple(round(v, 5) for v in location["point_in"])
+                location["corner_members"] = corners.get(pt, {})
+                location["brace_frame_directions"] = sorted(frame_directions.get(pt, []))
+                location["corner_bearings"] = corner_bearings.get(pt, [])
+                location["braced_member_ids"] = sorted(braced_members.intersection(location["end_members"]))
+                location["wall_receivers"] = sorted(panels.intersection(connection.get("panel_ids", []) + connection.get("member_ids", [])))
+        links = applications(connection, records, location, member_catalog)
         occurrences[cid] = {"applications": links, "scope": connection.get("scope"),
                             "selection_basis": "located_source_records" if links else
                             ("adopted_physical_detail" if connection.get("basis") == "A" else "no_linked_connection_record")}
@@ -224,8 +246,9 @@ def _specific_overrides(records, occurrences, decisions, calc_sha256):
     return conflicts
 
 
-def _finish_handoff(building, source_files, bindings, materials, records, physical, decisions, reference=None):
-    occurrences = build_selections(records, physical, reference)
+def _finish_handoff(building, source_files, bindings, materials, records, physical, decisions, reference=None, native_records=()):
+    member_catalog = member_sources(native_records)
+    occurrences = build_selections(records, physical, reference, member_catalog)
     for cid, roles in brace_receiver_roles(physical).items():
         occurrences[cid]["receiver_roles"] = roles
     conflicts = _specific_overrides(records, occurrences, decisions, source_files.get("design/calc_package.json"))
@@ -236,7 +259,8 @@ def _finish_handoff(building, source_files, bindings, materials, records, physic
     bindings["generator_files"] = {name: file_digest(code / name) for name in
                                    ("saved_handoff.py", "bim_source_fields.py", "bim_source_status.py", "bim_materials.py",
                                     "bim_source_checks.py", "bim_source_crossings.py", "bim_report_readback.py",
-                                    "bim_assemblies.py", "aisc_shapes.csv")}
+                                    "bim_collector_applications.py", "bim_assemblies.py", "aisc_shapes.csv")}
+    bindings["member_application_sources"] = member_catalog
     bindings["geometry_completion_owner"] = "openBIM"
     handoff = {"schema": SCHEMA, "version": VERSION, "building_id": building,
                "source_files": source_files, "material_schedule": materials, "source_bindings": bindings,
@@ -255,7 +279,8 @@ def attach_current_handoff(package, cfg, calc, selected_inputs=None):
         package["building_id"], files, {"kind": "current_hr_export", "analysis_executed": False,
         "native_content_sha256": native_content_digest(package),
         "report_binding": "bound" if "report.html" in files else "awaiting_report"},
-        materials, records, package["physical"], (selected_inputs or {}).get("decisions", []), package.get("reference_system"))
+        materials, records, package["physical"], (selected_inputs or {}).get("decisions", []), package.get("reference_system"),
+        package["design_records"])
 
 
 def seal_current_package(package):
@@ -342,7 +367,7 @@ def export_saved(job, native_path, decisions, output, *, contract_only=False):
                                "physical_input_scope": "accepted saved declarations for candidate regeneration",
                                "report_material_rows_verified": len(material_schedule["materials"]),
                                "analysis_executed": False}, material_schedule, records, native["physical"], decisions_data,
-                              native.get("reference_system"))
+                              native.get("reference_system"), native["design_records"])
     native["source_handoff"] = handoff
     # Close the read/write race for changed original evidence. Output always
     # resides in its own candidate directory, even for the compact sidecar.

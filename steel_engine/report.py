@@ -1907,7 +1907,7 @@ def _chapters(ctx=None):
        "Combinations applied to the right members (&Omega;<sub>0</sub> to capacity-protected elements only, where required); uplift/net tension (0.9D) checked.",
        "Second-order effects handled per combination (no superposition of factored second-order results)."]),
      5: ("Analysis model fidelity", [
-       "Geometry, member sizes and orientations match the drawings (strong/weak axis correct).",
+       "Verify geometry, member sizes and strong/weak-axis orientations against the delivered drawings.",
        "Boundary conditions: column base fixity matches the base plate/anchorage detail and the foundation's capacity.",
        "Connection idealization (rigid / pinned / PR releases) matches the detailed connections.",
        "Diaphragm constraint, rigid offsets/panel zones, and leaning columns with their P-&Delta; represented.",
@@ -1939,12 +1939,12 @@ def _chapters(ctx=None):
        "Column base reactions (P/V/M, uplift, overturning) provided to foundation design; consistent with assumed base fixity.",
        "Overall overturning/sliding stability; net uplift anchorage; load cases to geotech consistent with bearing/lateral capacity."]),
      12: ("Drawings, specifications & documentation", [
-       "Drawings internally consistent and consistent with the calculations.",
+       "Verify drawing consistency against the selected calculation records and the IFC.",
        "General notes, material specs, welding/bolting, special-inspection schedule and design loads shown.",
-       "Member schedules, framing plans, brace/MF elevations and connection details complete and coordinated.",
+       "Check and coordinate the member schedules, framing plans, elevations and connection details.",
        "Deferred-submittal items listed; assumptions and limitations documented."]),
      13: ("QA / professional acceptance", [
-       "Independent check performed (different engineer or method); discrepancies resolved.",
+       "Complete the independent check and resolve each discrepancy before acceptance.",
        "Software validated/appropriate; analysis assumptions vs detailing reconciled.",
        "Special inspection &amp; testing program (IBC Ch. 17) defined.",
        "Calc package complete, traceable (input &rarr; demand &rarr; capacity &rarr; D/C &rarr; cited clause), archived.",
@@ -1973,7 +1973,7 @@ def _chapter(n, status=None, ctx=None):
     li = "".join(f"<li>{t}</li>" for t in items)
     extra = f" &mdash; <span class='chk-status'>{status}</span>" if status else ""
     return (f"<h2>Chapter {n} &mdash; {title}</h2>"
-            f"<div class='chk'><div class='chk-h'>Reviewer acceptance items{extra}</div><ul>{li}</ul></div>")
+            f"<div class='chk'><div class='chk-h'>Required reviewer checks{extra}</div><ul>{li}</ul></div>")
 
 
 def _risk_category(Ie, cfg=None):
@@ -2961,7 +2961,7 @@ def _diaphragm_section(cfg, Fx, wind=None, pkg=None, basis=None):
         dia = dia or ["diaphragm design record"]
     deck = ("The diaphragm itself (%s) is designed in the calculation package." % ", ".join(_esc(c) for c in dia[:6])
             if dia else "The deck diaphragm itself (deck shear and fasteners) is designed by the deck supplier for these "
-                        "forces%s and confirmed on the drawings." % (
+                        "forces%s. The contract documents require the supplier's verified detail." % (
                             ", with the 25%% increase of &sect;12.3.3.5 (%s) on the deck connections to the vertical "
                             "elements and collectors"
                             % "/".join(_QA.get("t12335")) if _QA.get("t12335") else ""))
@@ -4695,8 +4695,8 @@ def _aisc341_detailing(cfg, pkg, sf=None, ctx=None):
         _clad = float(cfg.get("clad", 1.0) or 0.0) > 0
     except (TypeError, ValueError):
         pass
-    note = ("<p class='cnote'>Weld inspection (NDT)%s %s confirmed on the drawings and the connection submittal%s.</p>"
-            % (" and the C&amp;C cladding" if _clad else "", "are" if _clad else "is",
+    note = ("<p class='cnote'>The drawing and submittal review must verify weld inspection (NDT)%s%s.</p>"
+            % (" and C&amp;C cladding" if _clad else "",
                "; AISC 358 prequalification limits are listed with the moment connections" if ctx.get("mf358") else ""))
     return intro + "".join(out) + extra + _uplift_summary(pkg) + note
 
@@ -5897,81 +5897,52 @@ def _PIPE_A341(cfg, d):
     return _DP.aisc341_applies(cfg, d)
 
 
-def _materials_table(cfg, pkg=None):
-    """Material specifications: cfg['materials'] when declared, else inferred from the sections used and from the
-    connection / composite records (W: A992; HSS: A500 Gr. C; plates A572 Gr. 50 (A36 where recorded); bolts ASTM
-    F3125 Grade A325 / A490 as recorded; anchor rods F1554 grades recorded; welds E70XX; concrete where recorded)."""
-    decl = cfg.get("materials")
+def _materials_table(cfg, pkg=None, root=None):
+    """Render the same explicit material selections exported to openBIM."""
+    from steel_engine.bim_materials import material_schedule
+    physical = None
+    if root and os.path.isfile(os.path.join(root, "physical_inputs.json")):
+        with open(os.path.join(root, "physical_inputs.json"), encoding="utf-8-sig") as stream:
+            physical = json.load(stream)
+    schedule = material_schedule(cfg, pkg, physical)
+    if not schedule['materials']:
+        return "<p class='note' data-material-status='unresolved'>Material selection is unresolved in the source records.</p>"
     rows = []
-    if isinstance(decl, dict) and decl:
-        rows = [[_n(k), _n(v) if not isinstance(v, dict) else _fmt(v)] for k, v in decl.items()]
-    elif isinstance(decl, (list, tuple)) and decl:
-        for x in decl:
-            if isinstance(x, (list, tuple)):
-                rows.append([_n(x[0]), " ".join(_n(y) for y in x[1:])])
-            elif isinstance(x, dict):
-                rows.append([_n(x.get("item", x.get("element", ""))), _n(x.get("spec", x.get("value", "")))
-                             + ((" &mdash; " + _n(x.get("props"))) if x.get("props") else "")])
-    if rows:
-        rows += _cvn_rows(cfg, pkg, _all_sections(cfg, pkg))
-        return _table(["Element", "Specification"], rows) + "<p class='cnote'>E = 29,000 ksi for all structural steel.</p>"
-    secs = _all_sections(cfg, pkg)
-    blob = ""
+    for row in schedule['materials']:
+        applications = row.get('applications', [])
+        source = ', '.join(dict.fromkeys(a['record_id'] + (' ' + str(a['scope']) if a['scope'] else '')
+                                         for a in applications)) if applications else row['source']
+        rows.append([_esc(row['item']), _esc(row['spec']), _esc(source)])
+    note = ""
+    if schedule['conflicts']:
+        note = "<p class='note' data-material-status='source_conflict'>Conflicting source specifications require a field-specific decision.</p>"
+    return _table(["Element", "Selected specification", "Selection source"], rows) + note
+
+
+def _delivery_section():
+    """A report precedes the detached hash certificate for its final bytes."""
+    return ("<section id='openbim-delivery' data-status='requires-current-certificate'>"
+            "<p>The independent drawing and IFC check is complete when the "
+            "<a href='delivery_certificate.json'>delivery certificate</a> records a passing result "
+            "for this report, the selected design, drawings and IFC. Pending, failed or stale "
+            "certificates leave delivery incomplete.</p></section>")
+
+
+def _recorded_completion(root, pkg):
+    from pathlib import Path
+    from steel_engine.bim_source_status import consistency_errors
+    root = Path(root)
     try:
-        blob = json.dumps({k: (pkg or {}).get(k) for k in ("connections", "composite_design", "capacity_design")}) \
-            if isinstance(pkg, dict) else ""
-    except Exception:
-        blob = ""
-    blob_l = blob.lower()
-    if any(s.startswith("W") for s in secs) or not secs:
-        rows.append(["Wide-flange shapes", "ASTM A992, F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 65 ksi"])
-    rect = [s for s in secs if s.startswith("HSS") and s.count("X") >= 2]
-    rnd = [s for s in secs if s.startswith("HSS") and s.count("X") == 1]
-    if rect:
-        rows.append(["Rectangular / square HSS", "ASTM A500 Grade C, F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 62 ksi"])
-    if rnd:
-        rows.append(["Round HSS", "ASTM A500 Grade C, F<sub>y</sub> = 46 ksi, F<sub>u</sub> = 62 ksi"])
-    if any(s.startswith(("L", "2L")) for s in secs) or re.search(r"\b2?l\s?\d+x\d+", blob_l):
-        rows.append(["Angles", "ASTM A36, F<sub>y</sub> = 36 ksi, F<sub>u</sub> = 58 ksi (or A572 Gr. 50 where noted)"])
-    pl = ["ASTM A572 Grade 50 (F<sub>y</sub> = 50 ksi, F<sub>u</sub> = 65 ksi)"]
-    if "a36" in blob_l:
-        pl.append("ASTM A36 (F<sub>y</sub> = 36 ksi, F<sub>u</sub> = 58 ksi) where noted in the connection design")
-    rows.append(["Plates and bars", "; ".join(pl)])
-    bolts = [g for g in ("A325", "A490") if g.lower() in blob_l] or ["A325"]
-    try:
-        _a341m = any(bool(_PIPE_A341(cfg, d)) for d in ("X", "Y"))
-    except Exception:
-        _a341m = False
-    rows.append(["High-strength bolts", "ASTM F3125 Grade %s; %s" % (" / ".join(bolts),
-                 "bolts in the seismic force-resisting system pretensioned with Class A (or better) faying surfaces "
-                 "(AISC 341-22 D2.2), other bolts snug-tight unless noted" if _a341m else "snug-tight or pretensioned as noted")])
-    fg = sorted({m for m in re.findall(r"f1554\s*(?:gr(?:ade)?\.?\s*)?(36|55|105)", blob_l)}, key=int)
-    rows.append(["Anchor rods", "ASTM F1554 Grade %s" % " / ".join(fg) if fg else
-                 "ASTM F1554 (grade per the column-base design, Chapter 10)"])
-    rows.append(["Welds", "E70XX electrodes (F<sub>EXX</sub> = 70 ksi), AWS D1.1%s" % (
-        "; welds in the seismic force-resisting system per AWS D1.8, demand-critical welds with filler metal per "
-        "AISC 341-22 A3.4b" if _a341m else "")])
-    comp = "composite" in str(cfg.get("floor_system", "")).lower() or bool((pkg or {}).get("composite_design")) \
-        if isinstance(pkg, dict) else "composite" in str(cfg.get("floor_system", "")).lower()
-    if comp:
-        cc = cfg.get("concrete") if isinstance(cfg.get("concrete"), dict) else {}
-        txt = (json.dumps((pkg or {}).get("composite_design") or {}) + " " + str(cfg.get("floor_system", ""))) \
-            if isinstance(pkg, dict) else str(cfg.get("floor_system", ""))
-        fc = cc.get("fc_ksi") or (re.search(r"f'?c'?\s*=\s*(\d+(?:\.\d+)?)\s*ksi", txt, re.I) or [None, None])[1]
-        wc = cc.get("wc_pcf") or (re.search(r"(\d{3})\s*pcf", txt, re.I) or [None, None])[1]
-        lw = bool(re.search(r"\blw\b|lightweight|light-weight", txt, re.I)) or str(cc.get("type", "")).lower().startswith("l")
-        spec = "%s concrete on composite steel deck" % ("lightweight" if lw else "normal-weight")
-        if fc: spec += ", f&prime;<sub>c</sub> = %s ksi" % _n(float(fc))
-        if wc: spec += ", w<sub>c</sub> = %s pcf" % _n(float(wc))
-        if not fc:
-            spec += " (f&prime;<sub>c</sub> per the slab specification)"
-        rows.append(["Floor slab", spec])
-        if re.search(r"\bstud", blob_l):
-            rows.append(["Steel headed stud anchors", "ASTM A108, F<sub>u</sub> = 65 ksi (AWS D1.1 Type B)"])
-    rows += _cvn_rows(cfg, pkg, secs)
-    return (_table(["Element", "Specification"], rows)
-            + "<p class='cnote'>E = 29,000 ksi for all structural steel. The specifications listed are those of the sections "
-            "and connection records of this design; the project specification governs.</p>")
+        result = json.loads((root / 'design/consistency_result.json').read_text(encoding='utf-8-sig'))
+        issues = consistency_errors(root, result)
+    except (OSError, ValueError, TypeError) as error:
+        issues = [str(error)]
+    statement = "Recorded design consistency passed with zero reconciliation items." if not issues else "Design consistency incomplete. " + " ".join(issues)
+    capacity = (pkg or {}).get('capacity_design') or {}
+    status = capacity.get('completion', {}) if isinstance(capacity, dict) else {}
+    engineering = status.get('status') if isinstance(status, dict) else None
+    return ("<section id='recorded-design-completion'><p>" + _esc(statement)
+            + (" Recorded engineering status: " + _esc(engineering) if engineering else "") + "</p></section>")
 
 
 def _floor_vibration_section(cfg, pkg):
@@ -6192,7 +6163,7 @@ def build_report(name, root=None):
         ["Beam-to-column joints", _esc(md.get("joints") or ("pinned" if cfg.get("releases") else "rigid"))],
         ["Lateral system", ("X: %s; Y: %s" % (_sys_label(sf, "X"), _sys_label(sf, "Y"))) if sf else "&mdash;"],
     ]))
-    parts.append("<h3>Materials</h3>" + _materials_table(cfg, pkg))
+    parts.append("<h3>Materials</h3>" + _materials_table(cfg, pkg, root))
     parts.append("<h3>Geometry</h3>")
     try: parts.append(_img(fig_plan(cfg), "Plan grid &mdash; the (i, j) labels used in the reaction and force tables"))
     except Exception as ex: parts.append(f"<p class='note'>[plan figure failed: {_esc(ex)}]</p>")
@@ -6532,10 +6503,8 @@ def build_report(name, root=None):
     _csum = _connection_summary(pkg)
     if _csum:
         parts.append(_csum)
-        parts.append("<p class='cnote'>Connections are designed per AISC 360-22 Ch. J (bolts J3, welds J2, block shear J4.3, "
-                     "connecting elements J4, base plates and anchorage J8 / J9 with ACI 318-19 Ch. 17) and Ch. K for HSS"
-                     + ("; seismic connections per AISC 341-22" if a341 else "") + "; single-plate shear connections per the "
-                     "AISC Manual Part 10. Only shop-level detailing is left to the fabricator's connection submittal.</p>")
+        parts.append("<p class='cnote'>The recorded selections and checks above define the documented connection scope. "
+                     "Consult each record for its source, applicability and outstanding interface requirements.</p>")
     else:
         parts.append("<p class='note'>No connection design is recorded in the calc package; the demands above are for the "
                      "connection designer.</p>")
@@ -6545,13 +6514,12 @@ def build_report(name, root=None):
     parts.append(_base_reactions_section(cfg, pkg, ctx))
 
     # ============== Chapter 12 — Drawings, specifications & documentation ================
-    parts.append(_chapter(12, status="verified on the contract documents"))
-    parts.append("<p class='cnote'>Drawing and specification consistency, general notes, the special-inspection schedule, "
-                 "member schedules, framing plans, brace / moment-frame elevations, connection details and the "
-                 "deferred-submittal list are produced and checked on the contract documents, not in this report.</p>")
+    parts.append(_chapter(12, status="delivery certificate required"))
+    parts.append(_delivery_section())
 
     # ===================== Chapter 13 — QA / professional acceptance =====================
     parts.append(_chapter(13))
+    parts.append(_recorded_completion(root, pkg))
     parts.append(_qa_scorecard(cfg, Fx, reX, eX, eY, runs, pkg, root, reY))
     parts.append(_consistency_section(name, root, pkg))
     parts.append(_gate_waivers_section(pkg))
@@ -6562,9 +6530,8 @@ def build_report(name, root=None):
                      "standards, and the design log) are in the <a href='qa_annex.html'>QA annex</a>.</p>")
     except Exception as ex:
         print(f"[report] QA annex not written: {ex}")
-    parts.append("<p class='cnote'><b>Professional responsibility:</b> the independent check, software validation, "
-                 "reconciliation of the model assumptions with the final details, and the engineer-of-record seal are "
-                 "completed outside this calculation package.</p>")
+    parts.append("<p class='cnote'>Professional acceptance requires an independent review, verification of the final "
+                 "details against the model assumptions and engineer-of-record acceptance.</p>")
 
     # ============================== Appendices ==========================================
     parts.append("<h2>Appendix A &mdash; AISC 360-22 member and connection calculations</h2>")
@@ -6587,7 +6554,10 @@ def build_report(name, root=None):
     html = re.sub("@@FIGNUM@@", _fignum, html)        # number every figure in document order
     outdir = root; os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, "report.html")
-    open(path, "w", encoding="utf-8").write(html)
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(html)
+    from steel_engine.saved_handoff import bind_rendered_report
+    bind_rendered_report(root, pkg)
     print(f"[{name}] wrote {path}")
     return path
 

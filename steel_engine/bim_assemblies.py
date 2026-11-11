@@ -175,6 +175,19 @@ def findings(package):
             stations=[dot([a-b for a,b in zip(p,actual[0])],d) for p in axis]
             if min(stations)<-.01 or max(stations)>length+.01:
                 bad('assembly_receiver_extent','Placed receiver extends beyond its actual bound member',cid,eid)
+            application=receiver.get('application')
+            if application is not None:
+                role=application.get('role') if isinstance(application,dict) else None
+                if role not in ('terminal','whole_member','midspan','support_context'):
+                    bad('assembly_receiver_role','Receiver application needs a supported local member role',cid,eid)
+                elif role=='terminal':
+                    end=application.get('member_end')
+                    if type(end) is not int or end not in (0,1) or min(math.dist(p,actual[end]) for p in axis)>.01:
+                        bad('assembly_terminal_receiver','Terminal receiver must meet the selected physical member end after cutbacks',cid,eid)
+                elif role=='whole_member' and any(min(math.dist(p,q) for p in axis)>.01 for q in actual):
+                    bad('assembly_whole_receiver','Whole-member receiver must include both physical ends',cid,eid)
+                elif role=='midspan' and (min(stations)<=.01 or max(stations)>=length-.01):
+                    bad('assembly_midspan_receiver','Midspan receiver must lie inside the bound physical segment',cid,eid)
             if finite(receiver.get('local_y')):
                 expected_y=transformed(receiver['local_y'],frame,True)
                 actual_y=entity.get('local_y',[])

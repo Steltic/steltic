@@ -46,7 +46,7 @@ def _member_fields(record, materials):
             if elongation:
                 fields.append(_field("brb_core", "expected_elongation_in", float(elongation[1]),
                                      "in", pointer, literal))
-        shell = re.search(r"global stability of the buckling-restraining casing \(steel "
+        shell = re.search(r"global stability of the buckling-restraining casing(?: \(steel |, )"
                           r"(HSS[\d./X]+) (?:ASTM )?A500 Gr(?:ade)?\.? C\b", literal, re.I)
         if shell:
             fields.extend([_field("brb_casing", "section", shell[1], "literal", pointer, literal),
@@ -60,6 +60,22 @@ def _member_fields(record, materials):
     if expected.get("system") == "BRBF" and upper:
         fields.append(_field("brb_core", "fy_max_ksi", float(upper[1]), "ksi",
                              base + "/inputs/expected_strength/basis", basis))
+    terminal = data.get("brb_core_terminal")
+    if terminal is not None:
+        if not isinstance(terminal, dict):
+            raise ValueError("Invalid BRB core terminal on " + record["id"])
+        terminal_units = {"minimum_transition_length_in":"in", "end_area_ratio":"ratio", "head_joint_weld":"literal",
+                          "head_joint_electrode":"literal", "core_material":"literal", "head_material":"literal",
+                          "pin_clearance_diameter_in":"in", "yielding_length_workpoint_ratio":"ratio"}
+        for key, unit in terminal_units.items():
+            value = terminal.get(key)
+            valid = isinstance(value,str) and bool(value.strip()) if unit=="literal" else (
+                type(value) in (int,float) and math.isfinite(value) and value>0)
+            if not valid:
+                raise ValueError("Invalid BRB core terminal " + key + " on " + record["id"])
+            if key == "yielding_length_workpoint_ratio" and any(f["value"] != value for f in fields if f["field"] == key):
+                raise ValueError("BRB core terminal ratio disagrees with the member calculation on " + record["id"])
+            fields.append(_field("brb_core_terminal", key, value, unit, base+"/brb_core_terminal/"+key, value))
     return fields + _brace_materials(materials)
 
 

@@ -31,6 +31,43 @@ def actual_fields(record, **parameters):
             for field in [selected["fields"][i]]}, selected, link
 
 
+def test_ordinary_brb_corner_and_apex_pin_dimensions_replay_the_original_group_e_moment():
+    r = source('corner gusset at the column base: 4 in dia. pin in double shear; free-edge stiffeners PL 3/4 x 6 both sides of each free edge; apex gusset: 4 in dia. pin in double shear')
+    r['data']['checks'] = [
+        {'limit_state':'corner gusset: pin flexure, M = P/2 (t/4 + gap + tclevis/2) = 565 kip-in', 'Mu_kipin':564.51},
+        {'limit_state':'corner gusset: gusset at the pin: tensile rupture, be = 6.63 in, t = 3 in', 'Tu_kip':645.15},
+        {'limit_state':'corner gusset: cheek plate to gusset fillet welds (9/16 in, 40 in around each plate), share of bearing'},
+        {'limit_state':'corner gusset: gusset Whitmore yielding (Whitmore section 28.2 in long, 8 in beyond the cheek plates, t = 1.25 in)'},
+        {'limit_state':'apex gusset: pin flexure, M = P/2 (t/4 + gap + tclevis/2) = 600 kip-in', 'Mu_kipin':600.},
+        {'limit_state':'apex gusset: apex gusset at the pin: tensile rupture, be = 6.63 in, t = 3 in', 'Tu_kip':645.15}]
+    indexed = selection_record(r)['fields']
+    joint = lambda name: {(f['role'],f['field']):f for f in indexed if f['applicability'].get('joint')==name}
+    base = joint('base')
+    assert base['clevis_plate','side_gap_in']['value'] == .25
+    assert base['clevis_plate','thickness_in']['value'] == 1.5 and base['pin','grip_in']['value'] == 6.5
+    assert base['cheek_fillet','perimeter_each_in']['value'] == 40
+    assert base['gusset','whitmore_distance_beyond_cheek_in']['value'] == 8
+    assert ('clevis_plate','side_gap_in') not in joint('apex')
+
+
+def test_basement_girder_detail_requires_its_named_physical_member_and_column():
+    from steel_engine.bim_collector_applications import receiver_application
+    target={'role':'basement_girder_end','member_record':'members/basement-W30X99'}
+    site={'point_in':[0,0,0],'columns':{'column':{'source_ids':[]}},
+          'end_members':{'girder':{'kind':'girder','section':'W30X99','source_ids':['members/basement-W30X99']}}}
+    assert receiver_application(target,site,{})['status']=='located_interface'
+    site['end_members']['girder']['source_ids']=['members/floor-W30X99']
+    assert receiver_application(target,site,{})['status']=='different_receiver'
+
+
+def test_located_transfer_support_is_stable_after_native_json_reopen():
+    row=source('double gusset plates 2 PL 1 1/2 in of the support node welded to the W14X455 flange tips (4 lines x 42 in, 1 in E70)',
+               identity='conn-truss-support-C2-C5',label='transfer truss support on the Grid C2 / C5 columns at Level 3 (welded gussets)')
+    selected=selection_record(row)
+    assert selected['transfer_target']['grid_intersections']==[['C','2'],['C','5']]
+    assert json.loads(json.dumps(selected))==selected
+
+
 def test_selected_pin_stack_retains_its_order_grip_material_and_attachment_evidence():
     record = source("Three moving plates on one pin.")
     plies = [{"role": role, "connected_to": target, "material": "ASTM A572 Grade 50", "thickness_in": thickness}

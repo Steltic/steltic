@@ -4,6 +4,26 @@ import math
 from steel_engine.bim_brb_selections import checked_bolt_pattern, member_selections
 
 
+def test_checked_terminal_survives_real_member_handoff_and_disagreement_is_rejected():
+    import pytest
+    terminal = {'yielding_length_workpoint_ratio':.53,'minimum_transition_length_in':12.,'end_area_ratio':2.4,
+                'head_joint_weld':'CJP','head_joint_electrode':'E70','core_material':'ASTM A36',
+                'head_material':'ASTM A572 Grade 50','pin_clearance_diameter_in':.0625}
+    record={'table':'members','id':'members/brace-BRB20','source_pointer':'/members/2','data':{
+        'inputs':{'section':'BRB20'},'capacity':{'Asc_in2':20},'brb_core_terminal':terminal,
+        'checks':[{'limit_state':'core strain over the yielding length 53 in (0.53 Lwp)'},
+                  {'limit_state':'global stability of the buckling-restraining casing, HSS18X18X1/2 ASTM A500 Grade C; concrete fill neglected'}]}}
+    physical={'members':[{'id':'B','kind':'brace','profile_id':'BRB20','axis':[[0,0,0],[100,0,0]],'design_record_ids':[record['id']]}]}
+    member=member_selections([record],physical,{'materials':[]})['B']
+    lookup={(f['role'],f['field']):f for f in member['fields']}
+    assert member['yielding_core_length_in']==53
+    assert lookup['brb_core_terminal','head_joint_weld']['source']['pointer']=='/members/2/brb_core_terminal/head_joint_weld'
+    assert lookup['brb_casing','material']['value']=='ASTM A500 Grade C'
+    record['data']['brb_core_terminal']['yielding_length_workpoint_ratio']=.6
+    with pytest.raises(ValueError,match='disagrees with the member calculation'):
+        member_selections([record],physical,{'materials':[]})
+
+
 def test_selected_core_uses_each_workline_and_the_named_material():
     source = {"table": "members", "id": "members/brace-BRB10", "source_pointer": "/members/3",
               "data": {"inputs": {"section": "BRB10", "expected_strength": {"system": "BRBF", "basis": "Fysc 46, Ry 1.00"}},

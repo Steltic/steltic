@@ -324,6 +324,7 @@ def _legacy_fields(record):
                  "grout", (("thickness_in", "in"), ("material", "literal")))
     _recover_layout_precision(fields, text, data)
     _selected_gusset_fillet_checks(record, fields)
+    _pinned_gusset_checks(record, fields)
     for pattern in (
         rf"\b(?:corner|apex|base) gusset\s+(?P<thickness_in>{NUMBER}){IN}(?:\s+(?P<material>{GRADE}))?",
         rf"\b(?:slotted for|splice plates to)\s+(?:an?|the)\s+(?P<thickness_in>{NUMBER}){IN}\s+(?P<material>{GRADE})\s+gusset",
@@ -437,6 +438,70 @@ def _selected_gusset_fillet_checks(record, fields):
             if val is not None:
                 fields.append(_field(role, key, val, unit, record["source_pointer"] + f"/checks/{i}/limit_state",
                                      match.group(), match.span(), scope))
+
+
+def _pinned_gusset_checks(record, fields):
+    """Bind the corner or apex calculations to the particular leaf, cheek and weld they size."""
+    data = record["data"]
+    text = data.get("components", "")
+    if not isinstance(text,str) or not re.search(r"\b(?:pin|pins)\b", text, re.I):
+        return
+    base = bool(re.search(r"corner gusset at the column base\b",text,re.I))
+    for i, check in enumerate(data.get("checks", [])):
+        literal = check.get("limit_state", "")
+        heading = re.match(r"(corner|apex) gusset:\s*", literal, re.I)
+        if not heading:
+            continue
+        joint = heading[1].lower()
+        scope = {"joint":"base" if joint=="corner" and base else joint}
+        pointer = record["source_pointer"]+f"/checks/{i}/limit_state"
+        def add(role,key,value,unit):
+            fields.append(_field(role,key,value,unit,pointer,literal,applicability=scope))
+        if "pin flexure, M = P/2 (t/4 + gap + tclevis/2)" in literal:
+            for k, bore_check in enumerate(data.get("checks", [])):
+                match = re.match(rf"{joint} gusset: .*at the pin: tensile rupture, be = {NUMBER}{IN}, t = ({NUMBER}){IN}",
+                                 bore_check.get("limit_state", ""), re.I)
+                force = bore_check.get("Tu_kip")
+                moment = check.get("Mu_kipin")
+                if not match or not isinstance(force,(float,int)) or not isinstance(moment,(float,int)):
+                    continue
+                composite = number(match[1]); clevis, gap = 1.5, .25
+                if not math.isclose(moment, force/2*(composite/4+gap+clevis/2), abs_tol=.011):
+                    continue
+                for role,key,value,unit in (("clevis_plate","count",2,"count"), ("clevis_plate","thickness_in",clevis,"in"),
+                                            ("clevis_plate","side_gap_in",gap,"in"),("pin","grip_in",composite+2*(clevis+gap),"in")):
+                    add(role,key,value,unit)
+                    fields[-1]["source"].update(source_routine="stk_ext/groupE.py:brb_gusset/pin_connection",
+                        corroborating_pointers=[record["source_pointer"]+f"/checks/{i}/Mu_kipin",
+                                                record["source_pointer"]+f"/checks/{k}/Tu_kip",
+                                                record["source_pointer"]+f"/checks/{k}/limit_state"],
+                        equation="M=P/2*(t_composite/4+gap_each+t_clevis_each/2)")
+                break
+        weld = re.search(rf"gusset-to-(base[- ]plate|column|beam)(?: flange)? welds?,\s*"
+                         rf"({NUMBER}){IN}\s+(?:E70\w* )?fillets? both sides(?:\s*x\s*|,\s*(?:base[- ]plate[- ]edge|column[- ]edge|beam[- ]edge) weld length )"
+                         rf"({NUMBER}){IN}",literal,re.I)
+        if weld:
+            role="gusset_"+("base" if weld[1].lower().startswith("base") else weld[1].lower())+"_weld"
+            add(role,"faces",2,"count");add(role,"size_in",number(weld[2]),"in");add(role,"length_in",number(weld[3]),"in")
+        cheek = re.search(rf"cheek plate to (?:apex )?gusset fillet welds \(({NUMBER}){IN},\s*({NUMBER}){IN} around each plate",literal,re.I)
+        if cheek:
+            add("cheek_fillet","size_in",number(cheek[1]),"in")
+            add("cheek_fillet","perimeter_each_in",number(cheek[2]),"in")
+        section = re.search(rf"Whitmore section ({NUMBER}){IN} long, ({NUMBER}){IN} beyond the cheek plates",literal,re.I)
+        if section:
+            add("gusset","whitmore_effective_width_in",number(section[1]),"in")
+            add("gusset","whitmore_distance_beyond_cheek_in",number(section[2]),"in")
+        buckling = re.search(rf"Thornton L = ({NUMBER}){IN}", literal, re.I)
+        if buckling:
+            add("gusset","thornton_length_in",number(buckling[1]),"in")
+    for st in re.finditer(rf"free-edge stiffeners PL ({NUMBER}){X}({NUMBER}) both sides of each free edge",text,re.I):
+        scope = _scope_at(text,st.start())
+        if not scope:
+            continue
+        if base and scope.get("joint") == "corner":
+            scope = dict(scope, joint="base")
+        for key,value,unit in (("thickness_in",number(st[1]),"in"),("width_in",number(st[2]),"in"),("faces",2,"count")):
+            fields.append(_field("gusset_edge_stiffener",key,value,unit,record["source_pointer"]+"/components",st.group(),st.span(),scope))
 
 
 def _typed_fields(record):
@@ -707,7 +772,7 @@ def _transfer_receivers(record, fields):
             fields.append(f)
     target = {"role":key,"kind":key if flange else "column","section":member_section}
     if support:
-        target.update(grid_intersections=[m.groups() for name in support.groups()[:2] if (m:=re.fullmatch(r"([A-Z]+)(\d+)",name))],level=int(support[3]))
+        target.update(grid_intersections=[list(m.groups()) for name in support.groups()[:2] if (m:=re.fullmatch(r"([A-Z]+)(\d+)",name))],level=int(support[3]))
     return target
 
 
@@ -1126,7 +1191,7 @@ def applications(connection, records, location=None, member_catalog=None):
             if receiver_links[rid]["role"] == "infill_end" and rid not in specific_infills:
                 receiver_links[rid].update(status="related_interface", located_specific_records=specific_infills)
     scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in
-                 ("scheduled_collector", "reentrant_frame", "collector_beam_end", "opening_edge", "infill_end")]
+                 ("scheduled_collector", "reentrant_frame", "collector_beam_end", "opening_edge", "infill_end", "basement_girder_end")]
     if scheduled:
         for rid in matched_receivers:
             if receiver_links[rid]["role"] == "smf_column":

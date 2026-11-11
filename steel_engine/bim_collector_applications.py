@@ -25,6 +25,10 @@ def member_sources(rows):
 def receiver_target(row):
     data = row["data"]
     text = str(data.get("type", ""))
+    basement = re.match(r"^single-plate shear connection, basement girder to the basement column\b",text,re.I)
+    if basement and (member := re.fullmatch(r"connections/conn-(basement-girder-W[\d.]+X[\d.]+)",row["id"],re.I)):
+        return {"role":"basement_girder_end","member_record":"members/"+member[1],
+                "source":{"pointer":row["source_pointer"]+"/type","literal":text}}
     if re.match(r"^atrium-edge chord / collector connection at the opening corners\b", text, re.I):
         return {"role":"opening_edge", "source":{"pointer":row["source_pointer"]+"/type", "literal":text}}
     infill = re.match(r"^single-plate shear connection, (atrium )?infill beam\b.*? to girder\b", text, re.I)
@@ -180,7 +184,10 @@ def receiver_application(target, location, catalog):
                 if rid in catalog and catalog[rid]["section"] == m["section"]}
     role = target["role"]
     status = "unlocated_interface"
-    if role == "opening_edge":
+    if role == "basement_girder_end":
+        matched = any(m["kind"]=="girder" and target["member_record"] in m["source_ids"] for m in site.get("end_members",{}).values())
+        status = "located_interface" if matched and columns else "different_receiver" if site else "unlocated_interface"
+    elif role == "opening_edge":
         selected = ends.keys() & set(site.get("opening_edge_member_ids", []))
         status = "located_interface" if selected and columns else "different_location" if site else "unlocated_interface"
     elif role == "infill_end":

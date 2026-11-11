@@ -82,7 +82,9 @@ def design_files(root):
     root=Path(root)
     try:from .bim_export import tracked_sources
     except ImportError:from bim_export import tracked_sources
-    ignored={NAME,'portable_model.json','bim_inputs.json','design/bim_request.json'}
+    # The report is a delivery dependency, rendered after the design check.
+    # It is bound in the handoff without making a cycle in the design inputs.
+    ignored={NAME,'portable_model.json','bim_inputs.json','design/bim_request.json','report.html'}
     # Never exclude an arbitrary directory: configurations may consume files in
     # it. The physical selections live in this one explicitly versioned file.
     return {n:h for n,h in tracked_sources(root).items() if n not in ignored}
@@ -111,10 +113,11 @@ def _checked_design_sources(root,value):
     if not stamp_path.is_file():raise ValueError('A recorded structural consistency verdict is required')
     stamp=json.loads(stamp_path.read_text(encoding='utf-8-sig'))
     package=root/'design'/('calc_package.json' if value['module']=='HR' else 'calc_package_cfs.json')
-    expected=stamp.get('calc_package_sha256') or stamp.get('package_sha1')
-    actual=digest(package) if stamp.get('calc_package_sha256') else hashlib.sha1(package.read_bytes()).hexdigest()
-    if stamp.get('result')!='PASS' or not expected or actual!=expected or (stamp.get('cfg_sha256') and stamp['cfg_sha256']!=digest(root/'cfg.py')):
-        raise ValueError('Cannot bind physical inputs to a failing or stale structural consistency verdict')
+    try: from .bim_source_status import consistency_errors
+    except ImportError: from bim_source_status import consistency_errors
+    errors=consistency_errors(root,stamp,package.name)
+    if errors:
+        raise ValueError('Cannot bind physical inputs to a failing or stale structural consistency verdict: '+', '.join(errors))
     return design_files(root)
 
 

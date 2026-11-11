@@ -26,6 +26,9 @@ def test_new_job_cannot_finish_with_only_designed_connection_references(exported
     package['require_connection_parts']=True
     assert 'connection_parts_required' in {i['code'] for i in B.validate(package)}
     connection.update(scope='delegated',responsible_party='Named supplier',representation='Explicit supplier interface')
+    assert {i['code'] for i in B.validate(package)} == {'hr_handoff_applicability'}
+    from steel_engine.saved_handoff import attach_current_handoff
+    attach_current_handoff(package, {}, B.read_json(exported[0]/'design/calc_package.json'))
     assert not B.validate(package)
 
 

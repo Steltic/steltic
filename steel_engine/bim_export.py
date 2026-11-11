@@ -144,12 +144,12 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     consistency = root/"design"/"consistency_result.json"
     if consistency.is_file():
         result = read_json(consistency)
-        cp = root/"design"/provenance["package_file"]
-        expected = result.get("calc_package_sha256") or result.get("package_sha1")
-        actual = digest(cp) if result.get("calc_package_sha256") else hashlib.sha1(cp.read_bytes()).hexdigest()
-        cfg_ok = not result.get("cfg_sha256") or result["cfg_sha256"] == digest(root/"cfg.py")
-        if result.get("result") != "PASS" or not expected or expected != actual or not cfg_ok:
-            findings.append(issue("design_provenance", "Recorded design consistency is failing or stale"))
+        if __package__:
+            from .bim_source_status import consistency_errors
+        else:
+            from bim_source_status import consistency_errors
+        for message in consistency_errors(root, result, provenance["package_file"]):
+            findings.append(issue("design_provenance", message))
     else:
         findings.append(issue("design_provenance", "No recorded design consistency verdict"))
     result = {"schema":"steltic.bim_package", "schema_version":VERSION, "building_id":root.name,
@@ -181,6 +181,9 @@ def assemble(root, cfg, pkg, snapshot, provenance):
         for request in selected['requests']:
             if not request.get('quantitatively_resolved'):
                 findings.append(issue('coordination_required',request['question'],request.get('entity_ids') or [request['id']]))
+    if provenance["module"] == "HR":
+        from steel_engine.saved_handoff import attach_current_handoff
+        attach_current_handoff(result, cfg, pkg, selected)
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),
                            "findings":found, "counts":{"analysis_elements":len(result["analysis"]["elements"]), "members":len(physical["members"]), "panels":len(physical["panels"]), "design_records":len(records)}}
@@ -212,7 +215,7 @@ def tracked_sources(root):
             if not p.is_relative_to(root.resolve()) or not p.is_file():
                 raise ValueError("BIM input must be an existing file inside the job: " + relative)
             files.add(p)
-    for rel in ("design/calc_package.json", "design/calc_package_cfs.json", "design/consistency_result.json", "design/member_schedule.csv", "design/bim_request.json", "viewer_3d.html"):
+    for rel in ("design/calc_package.json", "design/calc_package_cfs.json", "design/consistency_result.json", "design/member_schedule.csv", "design/bim_request.json", "viewer_3d.html", "report.html"):
         p=root/rel
         if p.is_file(): files.add(p)
     return {p.relative_to(root).as_posix():digest(p) for p in sorted(files)}
@@ -393,10 +396,19 @@ def main(argv=None):
     batch.add_argument("jobs_root",type=Path); batch.add_argument("--output-root",type=Path,required=True)
     batch.add_argument("--timeout",type=float,default=120); batch.add_argument("--require-ready",action="store_true")
     check=sub.add_parser("validate"); check.add_argument("package",type=Path)
+    saved=sub.add_parser("saved-handoff",help="Bind an existing HR report/design, native snapshot and accepted decision archive without replay")
+    for name in ("job","native","decisions","output"):
+        saved.add_argument("--"+name,type=Path,required=True)
+    saved.add_argument("--contract-only",action="store_true")
     frozen=sub.add_parser('snapshot',help='Archive a checked HR saved model as portable, literal input without analysis')
     frozen.add_argument('job',type=Path)
     w=sub.add_parser("_worker"); w.add_argument("job"); w.add_argument("output")
     args=ap.parse_args(argv)
+    if args.command=="saved-handoff":
+        from steel_engine.saved_handoff import export_saved
+        result=export_saved(args.job,args.native,args.decisions,args.output,contract_only=args.contract_only)
+        print(json.dumps(result))
+        return 0
     if args.command=='snapshot':
         if __package__:from .portable_model import freeze
         else:from portable_model import freeze

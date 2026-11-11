@@ -59,7 +59,7 @@ cfg=dict(custom_build=build,present={})
     (root/"cfg.py").write_text(script,encoding="utf-8")
     pkg={"members":[],"connections":[{"id":"c1","selection":"Synthetic fixture only","DC":0.5}],"bim":connections()}
     B.atomic_json(root/"design"/PACKAGE,pkg)
-    stamp={"result":"PASS","calc_package_sha256":B.digest(root/"design"/PACKAGE),"cfg_sha256":B.digest(root/"cfg.py")}
+    stamp={"result":"PASS","n_issues":0,"issues":[],"calc_package_sha256":B.digest(root/"design"/PACKAGE),"cfg_sha256":B.digest(root/"cfg.py")}
     B.atomic_json(root/"design/consistency_result.json",stamp)
     return root
 
@@ -305,7 +305,9 @@ def test_grouped_record_requires_occurrence_or_disposition(exported):
     p["design_records"].append({"id":"connections/c2","table":"connections","source_pointer":"/connections/1","waived":False,"data":{"id":"c2"}})
     assert "connection_mapping" in {f["code"] for f in B.validate(p)}
     p["physical"]["record_dispositions"]=[{"record_id":"connections/c2","status":"not_applicable","reason":"Explicit fixture no-splice note"}]
-    assert not B.validate(p)
+    # The disposition closes the physical mapping, but adding a calculation
+    # record still invalidates the source handoff generated for the old input.
+    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_record"}
 
 
 def test_delegated_connection_requires_defined_interface(exported):
@@ -313,6 +315,9 @@ def test_delegated_connection_requires_defined_interface(exported):
     c.update(scope="delegated",parts=[])
     assert "delegated_interface" in {f["code"] for f in B.validate(p)}
     c.update(responsible_party="Fixture supplier",detail_ref={"id":"supplier-interface","revision":"A"},representation="Design-envelope reference")
+    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_applicability"}
+    from steel_engine.saved_handoff import attach_current_handoff
+    attach_current_handoff(p, {}, B.read_json(exported[0]/"design"/PACKAGE))
     assert not B.validate(p)
 
 

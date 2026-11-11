@@ -77,6 +77,18 @@ def test_reinforcement_and_main_slot_welds_have_separate_end_scopes():
     assert any(selected["fields"][i]["role"] == "reinforcement_fillet" for i in link["conditional"])
 
 
+def test_normal_corner_weld_after_a_common_brace_detail_does_not_apply_to_base_or_apex():
+    row = source("HSS10.750X0.625 slotted for a 1 in A572 Gr 50 gusset, four 5/8 in E70 welds x 21 in; "
+                 "corner gusset 1 in A572 Gr 50, column edge 32.0 in (3/4 in fillets both sides)")
+    assert actual_fields(row, joint="corner")[0]["gusset_column_weld", "length_in"] == 32
+    for joint in ("apex", "base"):
+        fields, _, _ = actual_fields(row, joint=joint)
+        assert fields["brace_slot_weld", "length_in"] == 21 and ("gusset_column_weld", "length_in") not in fields
+    base = source("base corner gusset 1 in A572 Gr 50 on the column wall: column edge 44.0 in (3/4 in fillets both sides)")
+    assert actual_fields(base, joint="base")[0]["gusset_column_weld", "length_in"] == 44
+    assert ("gusset_column_weld", "length_in") not in actual_fields(base, joint="corner")[0]
+
+
 def test_selected_anchor_setout_and_grout():
     r = source("base plate PL 0.75 x 16 x 32 in ASTM A572 Gr 50 on 2 in non-shrink grout; "
                "4 x 1 in ASTM F1554-36 anchor rods, 2 per flange side in one row outside the flanges at 12.5 in, "
@@ -90,6 +102,10 @@ def test_selected_anchor_setout_and_grout():
     f, _, _ = actual_fields(heavy)
     assert (f["anchor", "count"], f["anchor", "diameter_in"], f["anchor", "material"]) == (6, 3.5, "ASTM A193 Grade B7")
     assert (f["anchor_pattern", "flange_offset_in"], f["anchor_pattern", "spacing_in"], f["anchor_pattern", "edge_in"]) == (6.5, 14.5, 4.75)
+    revised = source("provided rod-centre edge distances 4.85 in normal to the column flanges and 5.00 in along the flanges; "
+                     "minimum required rod-centre edge 4.50 in")
+    edges, _, _ = actual_fields(revised)
+    assert [edges["anchor_pattern", name] for name in ("edge_flange_normal_in", "edge_along_flange_in", "minimum_edge_in")] == [4.85, 5, 4.5]
 
 
 @pytest.mark.parametrize("columns", [1, 2])

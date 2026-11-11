@@ -64,14 +64,18 @@ def _scope_at(text, position):
     context = text[:position]
     # A vertical bar separates complete corner/apex detail descriptions.
     section = re.split(r"\s*\|\s*", context)[-1]
+    heading = re.match(r"(?:base corner|corner|apex) gusset\b(?: at the (?:column base|base plate))?", text[position:], re.I)
+    if heading:
+        section += heading.group()
     end = re.findall(r"(?:^|;)\s*(lower|upper)\s+end\s*:", section, re.I)
     end = end[-1].lower() if end else None
-    if re.match(r"\s*(?:at (?:the )?)?apex gusset\b", section, re.I):
-        return _scope(joint="apex", end=end)
-    if re.match(r"\s*corner gusset at the (?:column base|base plate)\b", section, re.I):
-        return _scope(joint="base", end=end)
-    if re.match(r"\s*corner gusset\b", section, re.I):
-        return _scope(joint="corner", end=end)
+    marker = r"(?:^|;)\s*(?:(?:lower|upper) end:\s*)?(?:at (?:the )?)?(base corner|corner|apex) gusset\b"
+    markers = list(re.finditer(marker, section, re.I))
+    if markers:
+        label = markers[-1][1].lower()
+        if label == "base corner" or re.match(r"\s+at the (?:column base|base plate)\b", section[markers[-1].end():], re.I):
+            label = "base"
+        return _scope(joint=label, end=end)
     # A source record may select end-specific reinforcement while describing
     # the separate apex later. Do not apply that field to its opposite end.
     return _scope(end=end)
@@ -252,6 +256,10 @@ def _legacy_fields(record):
                  "anchor_pattern", (("edge_in", "in"),))
     _add_matches(fields, text, src, rf"\bthe first row (?P<flange_offset_in>{NUMBER}){IN} from the flange face,\s*"
                  rf"rods at (?P<spacing_in>{NUMBER}){IN} centres", "anchor_pattern", (("flange_offset_in", "in"), ("spacing_in", "in")))
+    _add_matches(fields, text, src, rf"\bprovided rod-centre edge distances (?P<edge_flange_normal_in>{NUMBER}){IN} "
+                 rf"normal to the column flanges and (?P<edge_along_flange_in>{NUMBER}){IN} along the flanges; "
+                 rf"minimum required rod-centre edge (?P<minimum_edge_in>{NUMBER}){IN}", "anchor_pattern",
+                 (("edge_flange_normal_in", "in"), ("edge_along_flange_in", "in"), ("minimum_edge_in", "in")))
     _add_matches(fields, text, src, rf"\bon\s+(?P<thickness_in>{NUMBER}){IN}\s+(?P<material>(?:cementitious\s+)?non[- ]shrink grout)",
                  "grout", (("thickness_in", "in"), ("material", "literal")))
     for pattern in (

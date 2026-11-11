@@ -25,6 +25,19 @@ def member_sources(rows):
 def receiver_target(row):
     data = row["data"]
     text = str(data.get("type", ""))
+    basement = re.match(r"^single-plate shear connection, basement girder to the basement column\b",text,re.I)
+    if basement and (member := re.fullmatch(r"connections/conn-(basement-girder-W[\d.]+X[\d.]+)",row["id"],re.I)):
+        return {"role":"basement_girder_end","member_record":"members/"+member[1],
+                "source":{"pointer":row["source_pointer"]+"/type","literal":text}}
+    if re.match(r"^atrium-edge chord / collector connection at the opening corners\b", text, re.I):
+        return {"role":"opening_edge", "source":{"pointer":row["source_pointer"]+"/type", "literal":text}}
+    infill = re.match(r"^single-plate shear connection, (atrium )?infill beam\b.*? to girder\b", text, re.I)
+    if infill:
+        section = re.search(r"-(W[\d.]+X[\d.]+)$", row["id"], re.I)
+        if section:
+            prefix = "members/infill-atrium-" if infill[1] else "members/infill-"
+            return {"role":"infill_end", "section":section[1], "source_prefix":prefix, "specific":bool(infill[1]),
+                    "source":{"pointer":row["source_pointer"]+"/type","literal":text}}
     schedule = _schedule_target(row)
     if schedule:
         return schedule
@@ -87,6 +100,18 @@ def _schedule_target(row):
                      r"levels (\d+) and (\d+): the (W[\dX.]+) floor girders \(Grid (\w+), Grids (\w+)-(\w+); "
                      r"Grid (\w+), Grids (\w+)-(\w+) and, at level (\d+), Grids (\w+)-(\w+)\), "
                      r"the (W[\dX.]+) link-roof girder \(Grid (\w+), Grids (\w+)-(\w+), level (\d+)\)", components, re.I)
+    all_lines = re.search(r"one detail at every collector-beam end of grids (\w+), (\w+) and (\w+), floors and roof", basis, re.I)
+    direction = re.search(r"conn-collector-([XY])-lines$", row["id"], re.I)
+    podium = re.match(r"collector connections at the podium setback \(L(\d+), podium-only bay to the Tower [A-Z] frames on Grids (\w+), (\w+) and (\w+)\)", text, re.I)
+    if all_lines and direction:
+        return {"role": "scheduled_collector", "places": [{"direction": direction[1], "line": grid}
+                 for grid in all_lines.groups()], "source": {"pointer": row["source_pointer"]+"/design_basis", "literal": all_lines.group()}}
+    if podium:
+        level, a, b, number = podium.groups()
+        return {"role": "scheduled_collector", "requires_collector": True,
+                "places": [{"line": v, "direction": "X", "levels": [int(level)]} for v in (a,b)]+
+                          [{"line": number, "direction": "Y", "levels": [int(level)]}],
+                "source": {"pointer": row["source_pointer"]+"/type","literal":podium.group()}}
     if level_line:
         p = {"line": level_line[2], "levels": [int(level_line[1])]}
         bay = re.search(r"\(([A-Z]+)(\d+)-\1(\d+)", level_line[3], re.I)
@@ -96,7 +121,8 @@ def _schedule_target(row):
     elif continuation:
         for grid in (continuation[1], continuation[2]):
             for bay in ([continuation[3], continuation[4]], [continuation[5], continuation[6]]):
-                places.append({"line": grid, "bay": bay, "direction": continuation[7], "section": continuation[8]})
+                places.append({"line": grid, "bay": bay, "direction": continuation[7], "section": continuation[8],
+                               "requires_opening_corner":True})
     elif corner:
         pair = re.search(r"\(Grid (\w+) at Grids (\w+) and (\w+);", text, re.I)
         quad = re.search(r"\(Grids (\w+) and (\w+) at (\w+) and (\w+);", text, re.I)
@@ -123,6 +149,8 @@ def _schedule_target(row):
 
 
 def _in_place(place, site, ends):
+    if place.get("requires_opening_corner") and not site.get("opening_corner"):
+        return False
     if "grids" in place and not set(place["grids"]) <= set(site.get("grids", [])):
         return False
     if "levels" in place and not set(place["levels"]).intersection(site.get("levels", [])):
@@ -156,7 +184,19 @@ def receiver_application(target, location, catalog):
                 if rid in catalog and catalog[rid]["section"] == m["section"]}
     role = target["role"]
     status = "unlocated_interface"
-    if role == "collector_beam_end":
+    if role == "basement_girder_end":
+        matched = any(m["kind"]=="girder" and target["member_record"] in m["source_ids"] for m in site.get("end_members",{}).values())
+        status = "located_interface" if matched and columns else "different_receiver" if site else "unlocated_interface"
+    elif role == "opening_edge":
+        selected = ends.keys() & set(site.get("opening_edge_member_ids", []))
+        status = "located_interface" if selected and columns else "different_location" if site else "unlocated_interface"
+    elif role == "infill_end":
+        infills = [m for m in site.get("end_members", {}).values() if m["kind"] == "infill" and m["section"] == target["section"]]
+        if any(any(r.startswith(target["source_prefix"]) for r in m["source_ids"]) for m in infills):
+            status = "located_interface"
+        elif site:
+            status = "different_receiver"
+    elif role == "collector_beam_end":
         if target["outside_braced_bay"] and set(ends).intersection(site.get("braced_member_ids", [])):
             status = "different_receiver"
         elif direct:
@@ -203,3 +243,36 @@ def receiver_application(target, location, catalog):
             "levels": site.get("levels", []), "bound_beam_sections": {mid: m["section"] for mid, m in ends.items()},
             "matching_member_source_ids": sorted(direct), "source_collector_sections": sorted({v["section"] for v in candidates.values()}),
             "receiving_column_source_ids": sorted(supports), "brace_frame_directions": site.get("brace_frame_directions", [])}
+
+
+def opening_corner(point, members, panels):
+    """Locate a re-entrant floor corner and the beam segments actually bordering its void."""
+    def occupied(x, y):
+        for vertices in panels:
+            inside = False
+            for a,b in zip(vertices, vertices[1:]+vertices[:1]):
+                if (a[1]>y) != (b[1]>y) and x < (b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]:
+                    inside = not inside
+            if inside:
+                return True
+        return False
+    x,y,z = point
+    step = .01
+    if sum(occupied(x+a*step,y+b*step) for a in (-1,1) for b in (-1,1)) != 3:
+        return False, []
+    edges = []
+    for mid, member in members.items():
+        if member.get("kind") != "beam" or len(member.get("axis", [])) != 2:
+            continue
+        ends = member["axis"]
+        if any(abs(p[2]-z)>1e-5 for p in ends):
+            continue
+        far = max(ends, key=lambda p:(p[0]-x)**2+(p[1]-y)**2)
+        dx,dy = far[0]-x, far[1]-y
+        length = (dx*dx+dy*dy)**.5
+        if length == 0:
+            continue
+        sx,sy = dx/length*step,dy/length*step
+        if occupied(x+sx-sy,y+sy+sx) != occupied(x+sx+sy,y+sy-sx):
+            edges.append(mid)
+    return True, sorted(edges)

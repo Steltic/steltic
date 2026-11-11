@@ -16,7 +16,8 @@ import tempfile
 import zipfile
 
 from .bim_json import file_digest
-from .bim_collector_applications import member_sources
+from .bim_brb_selections import member_selections
+from .bim_collector_applications import member_sources, opening_corner
 from .bim_report_readback import check_report_selections
 from .bim_source_crossings import crossing_interfaces
 from .bim_source_fields import application_location, applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
@@ -136,12 +137,21 @@ def build_selections(records, physical, reference=None, member_catalog=None):
     profiles = {p["id"]: p for p in physical.get("profiles", [])}
     located = {rid for rid, record in records.items() if record.get("application_target") or record.get("beam_end_groups") or
                record.get("corner_alternative") or record.get("support_groups") or record.get("receiver_target") or
+               record.get("dedicated_brace_base") or record.get("compound_receivers") or record.get("transfer_target") or record.get("crossing_source") or
                any("attachment" in f["applicability"] for f in record["fields"])}
     corners = {}
     frame_directions = {}
     corner_bearings = {}
     braced_members = set()
     panels = {p["id"] for p in physical.get("panels", []) if "wall" in p.get("kind", "").lower()}
+    opening_records = {rid for rid,r in records.items() if (t := r.get("receiver_target", {})).get("role") == "opening_edge"
+                       or any(p.get("requires_opening_corner") for p in t.get("places", []))}
+    floor_regions = {}
+    if opening_records:
+        for panel in physical.get("panels", []):
+            vertices = panel.get("vertices", [])
+            if len(vertices) >= 3 and all(abs(v[2]-vertices[0][2])<1e-6 for v in vertices):
+                floor_regions.setdefault(round(vertices[0][2],5), []).append(vertices)
     for joint in physical["connections"]:
         if joint.get("parameters", {}).get("joint") == "corner" and joint.get("point"):
             point = tuple(round(v, 5) for v in joint["point"])
@@ -167,6 +177,9 @@ def build_selections(records, physical, reference=None, member_catalog=None):
             location = application_location(connection, members, profiles, reference)
             if location:
                 pt = tuple(round(v, 5) for v in location["point_in"])
+                if opening_records.intersection(connection["design_record_ids"]):
+                    location["opening_corner"], location["opening_edge_member_ids"] = opening_corner(
+                        pt, {mid:members[mid] for mid in location["end_members"]}, floor_regions.get(pt[2], []))
                 location["corner_members"] = corners.get(pt, {})
                 location["brace_frame_directions"] = sorted(frame_directions.get(pt, []))
                 location["corner_bearings"] = corner_bearings.get(pt, [])
@@ -259,12 +272,13 @@ def _finish_handoff(building, source_files, bindings, materials, records, physic
     bindings["generator_files"] = {name: file_digest(code / name) for name in
                                    ("saved_handoff.py", "bim_source_fields.py", "bim_source_status.py", "bim_materials.py",
                                     "bim_source_checks.py", "bim_source_crossings.py", "bim_report_readback.py",
-                                    "bim_collector_applications.py", "bim_assemblies.py", "aisc_shapes.csv")}
+                                    "bim_collector_applications.py", "bim_brb_selections.py", "bim_assemblies.py", "aisc_shapes.csv")}
     bindings["member_application_sources"] = member_catalog
     bindings["geometry_completion_owner"] = "openBIM"
     handoff = {"schema": SCHEMA, "version": VERSION, "building_id": building,
                "source_files": source_files, "material_schedule": materials, "source_bindings": bindings,
                "records": records, "occurrences": occurrences, "source_conflicts": conflicts,
+               "member_selections": member_selections(native_records, physical, materials),
                "crossing_interfaces": crossings, "unresolved_crossing_interfaces": unresolved}
     handoff["contract_sha256"] = digest_value(handoff)
     return handoff

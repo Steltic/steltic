@@ -27,8 +27,17 @@ def _intersection(left, right):
     return [(i+j)/2 for i, j in zip(p, q)], [s, t]
 
 
+def _crossing_normal(left, right):
+    """Orient the unit normal by its largest world component, independent of the ordering of axes."""
+    a, b = ([end - start for start, end in zip(*axis)] for axis in (left, right))
+    normal = [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]]
+    length = math.sqrt(sum(x*x for x in normal))
+    sign = 1 if max(normal, key=abs) > 0 else -1
+    return [sign*x/length for x in normal]
+
+
 def crossing_interfaces(records, physical):
-    fields = {rid: [i for i, f in enumerate(r["fields"]) if f["role"] == "flat_bar_crossing_fillet"]
+    fields = {rid: [i for i, f in enumerate(r["fields"]) if f["role"] in ("flat_bar_crossing_fillet", "flat_bar_crossing_plate")]
               for rid, r in records.items()}
     fields = {rid: indexes for rid, indexes in fields.items() if indexes}
     if not fields:
@@ -64,6 +73,14 @@ def crossing_interfaces(records, physical):
                                "record_id": rid, "selected": indexes, "member_ids": [a, b], "member_stations": stations,
                                "point_in": point, "source_end_connection_ids": sorted(candidates[a] | candidates[b]),
                                "native_connection_ids": actual, "status": "native_connection" if actual else "requires_openbim_geometry"})
+            selected_plate = records[rid].get("crossing_plate")
+            if selected_plate:
+                plate = selected_plate["value"]
+                selected = {key: plate[key] for key in ("thickness_in", "length_in", "width_in", "material")}
+                selected.update(record_id=rid, source_pointer=selected_plate["source_pointer"],
+                                normal=_crossing_normal(members[a], members[b]))
+                interfaces[-1].update(kind="flat_bar_crossing_plate", plate=selected, welds=plate["welds"],
+                                      member_faces=[{"member_id": a, "face_sign": -1}, {"member_id": b, "face_sign": 1}])
             matched.update((a, b))
         missing = sorted(set(candidates) - matched)
         if not candidates or missing:

@@ -8,11 +8,15 @@ to a pin in a design check does not select a pin connection.
 from __future__ import annotations
 
 import hashlib
+import csv
 import json
 import math
 import re
 from fractions import Fraction
+from functools import lru_cache
+from pathlib import Path
 from .bim_collector_applications import receiver_application, receiver_target
+from .bim_brb_selections import checked_bolt_pattern
 
 
 NUMBER = r"(?:\d+[- ]\d+/\d+|\d+/\d+|\d+(?:\.\d+)?|\.\d+)"
@@ -125,6 +129,7 @@ def _legacy_fields(record):
     variants = (
         ("brb_bolted", r"\bBRB end\s*\([^)]*\)\s*bolted between two splice plates"),
         ("brb_pinned", r"\b(?:corner|apex) gusset\b[^|;]{0,260}\b(?:pin\s+" + NUMBER + IN + r"\s*dia|" + NUMBER + IN + r"\s*dia\.?\s*pin)\b"),
+        ("beam_pin_hinge", r"^"+NUMBER+IN+r"\s+dia\.?\s+pin \([^)]*\) in double shear; knife plate"),
         ("beam_pin_hinge", r"(?:^|:)\s*pin[- ]hinge release beyond the corner gusset"),
         ("beam_pin_hinge", r"\bthe beam joins the stub only through a\s+" + NUMBER + IN + r"\s*pin\b"),
         ("beam_pin_hinge", r"^pin\s+" + NUMBER + IN + r"\s*dia\.?\s*\([^)]+\)\s+in double shear,[^;]{0,160}\bflange gap\b"),
@@ -191,6 +196,13 @@ def _legacy_fields(record):
                      role, (("insertion_in", "in"),))
     _add_matches(fields, text, src, rf"(?P<gap_in>{NUMBER}){IN}\s+flange gap\b", "beam_flange", (("gap_in", "in"),))
 
+    _add_matches(fields,text,src,rf"knife plate (?P<thickness_in>{NUMBER}){IN} at the hole, width (?P<width_in>{NUMBER}){IN}, extension (?P<extension_in>{NUMBER}){IN}",
+                 "knife_plate",(("thickness_in","in"),("width_in","in"),("extension_in","in")))
+    _add_matches(fields,text,src,rf"(?P<count>{COUNT}) clevis plates (?P<thickness_in>{NUMBER}){IN} welded to the beam end", "clevis_plate",
+                 (("count","count"),("thickness_in","in")))
+    _add_matches(fields,text,src,rf"clevis plates {NUMBER}{IN} welded to the beam end \((?P<size_in>{NUMBER}){IN} fillets\)",
+                 "clevis_beam_fillet",(("size_in","in"),))
+    _add_matches(fields,text,src,rf"(?P<gap_in>{NUMBER}){IN} clear gap at the flanges","beam_flange",(("gap_in","in"),))
     # These two constructions identify the outside face of the clevis, as
     # opposed to adjacent knife/stub/inner-face welds.
     for tail in (r"on the outer faces to both (?:beam )?flanges", r"to both (?:beam )?flanges on their outer faces"):
@@ -243,17 +255,65 @@ def _legacy_fields(record):
                      "bolt", ((axis + "_edge_in", "in"),))
     _add_matches(fields, text, src, rf"\bbeam end set back\s+(?P<cutback_in>{NUMBER}){IN}\s+from the (?:support|column) face",
                  "beam_end", (("cutback_in", "in"),))
-    _add_matches(fields, text, src, rf"\bbase plate\s+PL\s*(?P<thickness_in>{NUMBER}){X}(?P<width_in>{NUMBER}){X}(?P<length_in>{NUMBER}){IN}(?:\s+(?P<material>{GRADE}))?",
+    _add_matches(fields, text, src, rf"\bbase plate\s+PL\s*(?P<thickness_in>{NUMBER}){X}(?P<width_in>{NUMBER}){X}(?P<length_in>{NUMBER}){IN}(?:\s+\(?(?P<material>{GRADE})\)?)?",
                  "base_plate", (("thickness_in", "in"), ("width_in", "in"), ("length_in", "in"), ("material", "literal")))
     _add_matches(fields, text, src, rf"\b(?P<count>{COUNT}){X}(?P<diameter_in>{NUMBER}){IN}\s+(?P<material>(?:ASTM\s+)?F1554[- ](?:Gr(?:ade)?\.?\s*)?(?:36|55|105))\s+anchor rods?",
                  "anchor", (("count", "count"), ("diameter_in", "in"), ("material", "literal")))
     _add_matches(fields, text, src, rf"\b(?P<count>{COUNT}){X}(?P<diameter_in>{NUMBER}){IN}\s+"
                  rf"(?P<material>(?:ASTM\s+)?A193\s+Gr(?:ade)?\.?\s*B7)\s*(?:\([^)]{{0,220}}\)\s*)?anchor rods?",
                  "anchor", (("count", "count"), ("diameter_in", "in"), ("material", "literal")))
+    _add_matches(fields, text, src, rf"\b(?P<count>{COUNT})\s+anchor rods?\s+(?P<diameter_in>{NUMBER}){IN}\s+"
+                 rf"(?P<material>(?:ASTM\s+)?F1554[- ](?:36|55|105))\b",
+                 "anchor", (("count", "count"), ("diameter_in", "in"), ("material", "literal")))
+    group_b_layout = re.search(rf"two outside each flange (?P<flange_offset_in>{NUMBER}){IN} from the flange face at "
+                               rf"(?P<spacing_in>{NUMBER}){IN}, (?P<edge_flange_normal_in>{NUMBER}){IN} from the plate edges", text, re.I)
+    if group_b_layout:
+        for key, literal in group_b_layout.groupdict().items():
+            fields.append(_field("anchor_pattern", key, number(literal), "in", src,
+                                 group_b_layout.group(), group_b_layout.span()))
+        # The centered transverse pitch fixes the other installed edge.
+        # The original pinned_base producer explicitly sets g on the
+        # flange-normal axis (x_r = (N - d)/2 - g).
+        width = next((f["value"] for f in fields if f["role"] == "base_plate" and f["field"] == "width_in"), None)
+        if width:
+            edge = (width - number(group_b_layout["spacing_in"])) / 2
+            fields.append(_field("anchor_pattern", "edge_along_flange_in", edge, "in", src,
+                                 group_b_layout.group(), group_b_layout.span()))
+        _add_matches(fields, text, src, rf"cruciform shear lug PL (?P<thickness_in>{NUMBER}){IN} \(legs (?P<width_in>{NUMBER}){IN} wide, "
+                     rf"(?P<embedment_in>{NUMBER}){IN} below the grout; (?P<material>{GRADE})\)", "cruciform_shear_lug",
+                     (("thickness_in", "in"), ("width_in", "in"), ("embedment_in", "in"), ("material", "literal")))
+        for index, check in enumerate(data.get("checks", [])):
+            clause = check.get("limit_state", "") if isinstance(check, dict) else ""
+            pointer = ptr + f"/checks/{index}/limit_state"
+            _add_matches(fields, clause, pointer, rf"half the (?P<width_in>{NUMBER}){IN} plate washer", "plate_washer", (("width_in", "in"),))
+            _add_matches(fields, clause, pointer, rf"\((?P<diameter_in>{NUMBER}){IN} hole, AISC Manual Table 14-2\)", "anchor_hole", (("diameter_in", "in"),))
     _add_matches(fields, text, src, rf"\bone row outside the flanges at\s+(?P<spacing_in>{NUMBER}){IN}",
                  "anchor_pattern", (("spacing_in", "in"),))
-    _add_matches(fields, text, src, rf"(?P<edge_in>{NUMBER}){IN}\s+from the plate edges\b",
-                 "anchor_pattern", (("edge_in", "in"),))
+    # An edge described as "or more" is a minimum; directional supplied
+    # edges and pitches stay independently checkable at each real base.
+    _add_matches(fields, text, src, rf"\brods\s+(?P<spacing_in>{NUMBER}){IN}\s+apart\b",
+                 "anchor_pattern", (("spacing_in", "in"),))
+    _add_matches(fields, text, src, rf"\ba1\s*=\s*(?P<flange_offset_in>{NUMBER}){IN}\s+from the flange face",
+                 "anchor_pattern", (("flange_offset_in", "in"),))
+    _add_matches(fields, text, src, rf"(?P<minimum_edge_in>{NUMBER}){IN}\s+or more from the plate edges",
+                 "anchor_pattern", (("minimum_edge_in", "in"),))
+    _add_matches(fields, text, src, rf"(?P<diameter_in>{NUMBER}){IN}\s+holes\s*\(AISC Manual Table 14-2\)\s+with (?:top )?plate washers",
+                 "anchor_hole", (("diameter_in", "in"),))
+    _add_matches(fields, text, src, rf"\brod holes\s+(?P<diameter_in>{NUMBER}){IN}\b",
+                 "anchor_hole", (("diameter_in", "in"),))
+    _add_matches(fields, text, src, rf"\bwasher holes\s+(?P<diameter_in>{NUMBER}){IN}\b",
+                 "washer_hole", (("diameter_in", "in"),))
+    if not re.search(r"\bcruciform shear lug\b|\bsecond (?:shear[- ]lug )?arm\b", text, re.I):
+        _add_matches(fields, text, src, rf"(?:^|;\s*)shear lug\s+(?P<material>{GRADE})\s+PL\s+(?P<thickness_in>{NUMBER})"
+                     rf"{X}(?P<width_in>{NUMBER}){IN},\s*(?P<embedment_in>{NUMBER}){IN}\s+embedded below the grout",
+                     "shear_lug", (("thickness_in", "in"), ("width_in", "in"), ("embedment_in", "in"), ("material", "literal")))
+        normal = re.search(r"\bsingle shear lug has a face normal along world ([XYZ])\b", text)
+        if normal:
+            vector = [int(axis == normal[1]) for axis in "XYZ"]
+            fields.append(_field("shear_lug", "face_normal", vector, "unit_vector", src, normal.group(), normal.span()))
+    if not group_b_layout:
+        _add_matches(fields, text, src, rf"(?P<edge_in>{NUMBER}){IN}\s+from the plate edges\b",
+                     "anchor_pattern", (("edge_in", "in"),))
     _add_matches(fields, text, src, rf"\bthe first row (?P<flange_offset_in>{NUMBER}){IN} from the flange face,\s*"
                  rf"rods at (?P<spacing_in>{NUMBER}){IN} centres", "anchor_pattern", (("flange_offset_in", "in"), ("spacing_in", "in")))
     _add_matches(fields, text, src, rf"\bprovided rod-centre edge distances (?P<edge_flange_normal_in>{NUMBER}){IN} "
@@ -262,6 +322,9 @@ def _legacy_fields(record):
                  (("edge_flange_normal_in", "in"), ("edge_along_flange_in", "in"), ("minimum_edge_in", "in")))
     _add_matches(fields, text, src, rf"\bon\s+(?P<thickness_in>{NUMBER}){IN}\s+(?P<material>(?:cementitious\s+)?non[- ]shrink grout)",
                  "grout", (("thickness_in", "in"), ("material", "literal")))
+    _recover_layout_precision(fields, text, data)
+    _selected_gusset_fillet_checks(record, fields)
+    _pinned_gusset_checks(record, fields)
     for pattern in (
         rf"\b(?:corner|apex|base) gusset\s+(?P<thickness_in>{NUMBER}){IN}(?:\s+(?P<material>{GRADE}))?",
         rf"\b(?:slotted for|splice plates to)\s+(?:an?|the)\s+(?P<thickness_in>{NUMBER}){IN}\s+(?P<material>{GRADE})\s+gusset",
@@ -284,9 +347,161 @@ def _legacy_fields(record):
                  "gusset_base_weld", (("length_in", "in"),))
     _add_matches(fields, text, src, rf"\b(?P<depths>{NUMBER})t\s+linear clearance\b",
                  "brace_end_clearance", (("depths", "ratio"),))
+    _add_matches(fields, text, src, rf"\bWhitmore width\s+(?P<whitmore_effective_width_in>{NUMBER}){IN}",
+                 "gusset", (("whitmore_effective_width_in", "in"),))
+    for field in fields:
+        if field["field"] == "whitmore_effective_width_in":
+            field["evidence_kind"] = "effective_section_used_in_source_check"
+            field["check_sources"] = []
+            for i, check in enumerate(data.get("checks", [])):
+                clause = check.get("limit_state", "") if isinstance(check, dict) else ""
+                match = re.search(rf"\bgusset Whitmore yielding \(Lw = ({NUMBER}){IN}", clause, re.I)
+                if match and number(match[1]) == field["value"]:
+                    field["check_sources"].append({"pointer": ptr + f"/checks/{i}/limit_state",
+                                                   "literal": match.group(), "span": list(match.span())})
+        if field["role"] == "brace_end_clearance":
+            # A record-wide design-basis requirement applies to both brace
+            # ends even when its component description starts with one end.
+            basis = str(data.get("design_basis", ""))
+            match = re.search(rf"\b({NUMBER})t linear fold-line clearance\b", basis, re.I)
+            if match and number(match[1]) == field["value"] and not text.lower().startswith("x-brace crossing:"):
+                field["applicability"] = {}
+                field["application_source"] = {"pointer": ptr + "/design_basis", "span": list(match.span()),
+                                               "literal": match.group(), "scope": "brace buckling accommodation"}
     _add_matches(fields, text, src, rf"(?P<clearance_in>{NUMBER}){IN}\s+clear of (?:the )?column\b",
                  "gusset_column_clearance", (("clearance_in", "in"),))
     return fields
+
+
+@lru_cache(maxsize=1)
+def _catalog_flange_widths():
+    with Path(__file__).with_name("aisc_shapes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        return {r["AISC_Manual_Label"]: float(r["bf"]) for r in csv.DictReader(stream) if r.get("Type") == "W"}
+
+
+def _recover_layout_precision(fields, text, data):
+    """Recover the original Group A rod layout when its printed branch and values agree."""
+    if ("provided rod-centre edge distances" in text
+            or "4 da =" not in text or "AISC 360-22 Table J3.4 / J3.5 distance for the hole" not in text):
+        return
+    layout = re.search(r"rod layout: [0-9]+ rods outside each flange in one row of ([0-9]+) ", text)
+    by_key = {(f["role"], f["field"]): f for f in fields}
+    needed = [("base_plate", "width_in"), ("anchor", "diameter_in"), ("anchor_hole", "diameter_in"),
+              ("anchor_pattern", "spacing_in"), ("anchor_pattern", "minimum_edge_in")]
+    if not layout or int(layout[1]) < 2 or any(k not in by_key for k in needed):
+        return
+    width, rod, hole, printed_pitch, printed_edge = (by_key[k]["value"] for k in needed)
+    edge = max(1.75 * rod, hole / 2 + 1.5)
+    pitch = (width - 2 * edge) / (int(layout[1]) - 1)
+    if "no net uplift at this base" not in text:
+        # With uplift the original producer limits the outer rods to the
+        # 45-degree load spread and keeps the washer clear of the gusset.
+        offset = by_key.get(("anchor_pattern", "flange_offset_in"))
+        sec = re.search(r"-(W[\d.]+X[\d.]+)$", str(data.get("id", "")), re.I)
+        if ("anchor reinforcement As >=" not in text or not offset or not sec
+                or (bf := _catalog_flange_widths().get(sec[1])) is None):
+            return
+        nr = int(layout[1])
+        pitch = max(4 * rod, 2 * (1.5 + rod) if nr % 2 == 0 else 0,
+                    min(pitch, (bf + 2 * offset["value"]) / (nr - 1)))
+    if float(f"{pitch:.1f}") != printed_pitch or float(f"{edge:.2f}") != printed_edge:
+        return
+    method = {"producer": "stk_ext/groupA.py:_rod_geometry and base_dg1",
+              "producer_sha256": "7aa5a16d8319cea7689eb585d74e9ec3b38517472f2cd0f7359dacdb72092d82",
+              "width_in": width, "rod_diameter_in": rod, "hole_in": hole, "rods_per_row": int(layout[1])}
+    for key, exact, digits in (("spacing_in", pitch, 1), ("minimum_edge_in", edge, 2)):
+        field = by_key["anchor_pattern", key]
+        field["printed_value"], field["printed_decimal_places"] = field["value"], digits
+        field["value"] = exact
+        field["derivation"] = method
+        field["evidence_kind"] = "recovered_original_layout_precision"
+
+
+def _selected_gusset_fillet_checks(record, fields):
+    """A limit-state clause may specify the actual two face welds independently of end hardware."""
+    for i, check in enumerate(record["data"].get("checks", [])):
+        label = check.get("limit_state", "") if isinstance(check, dict) else ""
+        match = re.match(rf"(?:(lower|upper) end:\s*)?(?:base |corner |apex )?gusset-to-(column|beam|base-plate)(?: flange)? "
+                         rf"welds?,\s*(two) ({NUMBER}){IN} (?:E70\w* )?fillets?\b(?:\s*x\s*({NUMBER}){IN})?", label, re.I)
+        if not match:
+            continue
+        end, host, _, size, run = match.groups()
+        target = "base" if host.lower() == "base-plate" else host.lower()
+        role = "gusset_" + target + "_weld"
+        # The same source can carry general corner and separate base or apex details.
+        # Its check prefix plus actual receiver identifies the application.
+        literal = match.group().lower()
+        joint = ("base" if "base gusset" in literal or target == "base" else
+                 "apex" if "apex gusset" in literal else "corner" if not end or target == "column" else None)
+        scope = _scope(joint=joint, end=end.lower() if end else None)
+        for key, val, unit in (("faces", 2, "count"), ("size_in", number(size), "in"), ("length_in", number(run) if run else None, "in")):
+            if val is not None:
+                fields.append(_field(role, key, val, unit, record["source_pointer"] + f"/checks/{i}/limit_state",
+                                     match.group(), match.span(), scope))
+
+
+def _pinned_gusset_checks(record, fields):
+    """Bind the corner or apex calculations to the particular leaf, cheek and weld they size."""
+    data = record["data"]
+    text = data.get("components", "")
+    if not isinstance(text,str) or not re.search(r"\b(?:pin|pins)\b", text, re.I):
+        return
+    base = bool(re.search(r"corner gusset at the column base\b",text,re.I))
+    for i, check in enumerate(data.get("checks", [])):
+        literal = check.get("limit_state", "")
+        heading = re.match(r"(corner|apex) gusset:\s*", literal, re.I)
+        if not heading:
+            continue
+        joint = heading[1].lower()
+        scope = {"joint":"base" if joint=="corner" and base else joint}
+        pointer = record["source_pointer"]+f"/checks/{i}/limit_state"
+        def add(role,key,value,unit):
+            fields.append(_field(role,key,value,unit,pointer,literal,applicability=scope))
+        if "pin flexure, M = P/2 (t/4 + gap + tclevis/2)" in literal:
+            for k, bore_check in enumerate(data.get("checks", [])):
+                match = re.match(rf"{joint} gusset: .*at the pin: tensile rupture, be = {NUMBER}{IN}, t = ({NUMBER}){IN}",
+                                 bore_check.get("limit_state", ""), re.I)
+                force = bore_check.get("Tu_kip")
+                moment = check.get("Mu_kipin")
+                if not match or not isinstance(force,(float,int)) or not isinstance(moment,(float,int)):
+                    continue
+                composite = number(match[1]); clevis, gap = 1.5, .25
+                if not math.isclose(moment, force/2*(composite/4+gap+clevis/2), abs_tol=.011):
+                    continue
+                for role,key,value,unit in (("clevis_plate","count",2,"count"), ("clevis_plate","thickness_in",clevis,"in"),
+                                            ("clevis_plate","side_gap_in",gap,"in"),("pin","grip_in",composite+2*(clevis+gap),"in")):
+                    add(role,key,value,unit)
+                    fields[-1]["source"].update(source_routine="stk_ext/groupE.py:brb_gusset/pin_connection",
+                        corroborating_pointers=[record["source_pointer"]+f"/checks/{i}/Mu_kipin",
+                                                record["source_pointer"]+f"/checks/{k}/Tu_kip",
+                                                record["source_pointer"]+f"/checks/{k}/limit_state"],
+                        equation="M=P/2*(t_composite/4+gap_each+t_clevis_each/2)")
+                break
+        weld = re.search(rf"gusset-to-(base[- ]plate|column|beam)(?: flange)? welds?,\s*"
+                         rf"({NUMBER}){IN}\s+(?:E70\w* )?fillets? both sides(?:\s*x\s*|,\s*(?:base[- ]plate[- ]edge|column[- ]edge|beam[- ]edge) weld length )"
+                         rf"({NUMBER}){IN}",literal,re.I)
+        if weld:
+            role="gusset_"+("base" if weld[1].lower().startswith("base") else weld[1].lower())+"_weld"
+            add(role,"faces",2,"count");add(role,"size_in",number(weld[2]),"in");add(role,"length_in",number(weld[3]),"in")
+        cheek = re.search(rf"cheek plate to (?:apex )?gusset fillet welds \(({NUMBER}){IN},\s*({NUMBER}){IN} around each plate",literal,re.I)
+        if cheek:
+            add("cheek_fillet","size_in",number(cheek[1]),"in")
+            add("cheek_fillet","perimeter_each_in",number(cheek[2]),"in")
+        section = re.search(rf"Whitmore section ({NUMBER}){IN} long, ({NUMBER}){IN} beyond the cheek plates",literal,re.I)
+        if section:
+            add("gusset","whitmore_effective_width_in",number(section[1]),"in")
+            add("gusset","whitmore_distance_beyond_cheek_in",number(section[2]),"in")
+        buckling = re.search(rf"Thornton L = ({NUMBER}){IN}", literal, re.I)
+        if buckling:
+            add("gusset","thornton_length_in",number(buckling[1]),"in")
+    for st in re.finditer(rf"free-edge stiffeners PL ({NUMBER}){X}({NUMBER}) both sides of each free edge",text,re.I):
+        scope = _scope_at(text,st.start())
+        if not scope:
+            continue
+        if base and scope.get("joint") == "corner":
+            scope = dict(scope, joint="base")
+        for key,value,unit in (("thickness_in",number(st[1]),"in"),("width_in",number(st[2]),"in"),("faces",2,"count")):
+            fields.append(_field("gusset_edge_stiffener",key,value,unit,record["source_pointer"]+"/components",st.group(),st.span(),scope))
 
 
 def _typed_fields(record):
@@ -407,12 +622,333 @@ def _support_groups(record, fields):
     return groups
 
 
+def _brace_support(record, fields):
+    data = record["data"]
+    components = data.get("components")
+    if not isinstance(components, str):
+        return None
+    label = data.get("type", "")
+    ptr = record["source_pointer"] + "/components"
+    main = re.search(r"base corner gusset to the column \((BOX[\d.X]+)\) at the pile cap", label, re.I)
+    local = re.match(r"OCBF base gusset at the lower end", label, re.I)
+    if not main and not local:
+        return None
+    optional = r"\(?\s*"
+    closing = r"\s*\)?"
+    for role, pattern, keys in (
+        ("gusset", rf"\bgusset\s+(?P<thickness_in>{NUMBER}){IN},\s*column edge", ("thickness_in",)),
+        ("gusset_column_weld", rf"\bcolumn edge\s+{optional}(?P<length_in>{NUMBER}){IN}[^;]{{0,4}}CJP groove weld", ("length_in",)),
+        ("gusset_column_weld", rf"\bcolumn edge\s+(?P<length_in>{NUMBER}){IN}\s+on the column (?:flange|web)", ("length_in",)),
+        ("gusset_base_weld", rf"\bbase edge\s+(?P<length_in>{NUMBER}){IN}\s+on the base plate", ("length_in",)),
+        ("gusset_collar_weld", rf"\bbottom edge\s+{optional}(?P<length_in>{NUMBER}){IN}{closing}\s+welded to a PL", ("length_in",)),
+        ("collar_plate", rf"\bwelded to a PL\s+{optional}(?P<thickness_in>{NUMBER}){IN}{closing}\s+collar plate", ("thickness_in",)),
+        ("collar_column_weld", rf"\bLw\s*=\s*{optional}(?P<length_in>{NUMBER}){IN}", ("length_in",)),
+        ("collar_plate", rf"\b(?P<reinforcement_gap_in>{NUMBER}){IN}\s+between the plates, the gusset and its welds", ("reinforcement_gap_in",)),
+        ("gusset_foundation_clearance", rf"\bbottom edge\s+{optional}(?P<clearance_in>{NUMBER}){IN}{closing}\s+clear of the cap face", ("clearance_in",)),
+    ):
+        _add_matches(fields, components, ptr, pattern, role, [(key, "in") for key in keys])
+    for match in re.finditer(rf"\bcolumn edge\s+{optional}{NUMBER}{IN}\s*[, (]+(?P<weld_type>CJP) groove weld", components, re.I):
+        fields.append(_field("gusset_column_weld", "weld_type", "CJP", "enum", ptr, match.group(), match.span()))
+    for role, marker in (("collar_column_weld", r"CJP-welded to the \(?[\d.]+ in\)? box wall"),
+                         ("gusset_foundation_clearance", r"no foundation interface")):
+        for match in re.finditer(marker, components, re.I):
+            key, value = ("weld_type", "CJP") if role == "collar_column_weld" else ("weld_to_foundation", False)
+            fields.append(_field(role, key, value, "enum" if value else "bool", ptr, match.group(), match.span()))
+    for role in ("gusset_column_weld", "gusset_base_weld"):
+        _add_matches(fields, components, ptr, rf"(?P<size_in>{NUMBER}){IN}\s+E70\w* fillets both faces on both edges",
+                     role, (("size_in", "in"),))
+    both = re.search(r"E70\w* fillets both faces on both edges",components,re.I)
+    if both:
+        for role in ("gusset_column_weld", "gusset_base_weld"):
+            fields.append(_field(role,"faces",2,"count",ptr,both.group(),both.span()))
+    if main:
+        groups = [(0, main[1].upper())]
+        groups.extend((m.start(), m[1].upper()) for m in re.finditer(r"\bat (BOX[\d.X]+): gusset", components, re.I))
+        for field in fields:
+            src = field["source"]
+            if src["pointer"] == ptr and "span" in src and field["role"] != "connection":
+                column = next(v for start, v in reversed(groups) if start <= src["span"][0])
+                field["applicability"] = {"joint": "base", "column_section": column}
+        # Some checked geometry states a longer installed weld for the same
+        # receiver. Preserve the design-check minimum separately from it.
+        longer = re.search(rf"at (BOX[\d.X]+) the reinforcing plates are set ({NUMBER}){IN} apart.*?weld there is ({NUMBER}){IN} longer", components, re.I)
+        if longer:
+            column = longer[1].upper()
+            scoped = {"joint": "base", "column_section": column}
+            for f in list(fields):
+                if f["role"] == "collar_column_weld" and f["field"] == "length_in" and f["applicability"] == scoped:
+                    f["field"] = "checked_minimum_length_in"
+                    selected = _field("collar_column_weld", "length_in", f["value"] + number(longer[3]),
+                                      "in", ptr, longer.group(), longer.span(), scoped)
+                    selected["additional_source"] = f["source"]
+                    fields.append(selected)
+                if f["role"] == "collar_plate" and f["field"] == "reinforcement_gap_in" and f["applicability"] == scoped:
+                    f["field"] = "checked_minimum_gap_in"
+                    fields.append(_field("collar_plate", "reinforcement_gap_in", number(longer[2]),
+                                         "in", ptr, longer.group(), longer.span(), scoped))
+        return {"column_sections": [v for _, v in groups]}
+    web = bool(re.search(r"column edge [^;]{0,80} on the column web", components, re.I))
+    side = "web" if web else "flange"
+    for field in fields:
+        if field["role"] != "connection":
+            field["applicability"].update(joint="base", column_face=side)
+    return {"scope":"located brace base","column_face":side}
+
+
+def _compound_receivers(record, fields):
+    data = record["data"]
+    text = data.get("components")
+    if not isinstance(text, str):
+        return None
+    ptr = record["source_pointer"] + "/components"
+    prefix = re.match(r"top:\s*", text, re.I)
+    base = re.search(r";\s*base:\s*", text, re.I)
+    if prefix and base:
+        for f in fields:
+            if f["source"]["pointer"] == ptr and "span" in f["source"]:
+                f["applicability"]["post_end"] = "lower" if f["source"]["span"][0] >= base.start() else "upper"
+        return "post_end"
+    if not text.lower().startswith("x-brace crossing:"):
+        return None
+    split = re.search(r"\bthe interrupted HSS[\dX./-]+ in two halves:", text, re.I)
+    if not split:
+        return None
+    for f in fields:
+        src = f["source"]
+        if src["pointer"] != ptr or "span" not in src or f["role"] in ("connection", "gusset"):
+            continue
+        receiver = "split" if src["span"][0] >= split.start() else "continuous"
+        f["applicability"]["crossing_receiver"] = receiver
+        if f["role"] in ("brace_slot_weld", "reinforcement_fillet", "slot_reinforcement"):
+            f["role"] = receiver + "_" + f["role"]
+    for i, check in enumerate(data.get("checks", [])):
+        label = check.get("limit_state", "") if isinstance(check, dict) else ""
+        match = re.match(rf"slot welds, gusset to the continuous diagonal: slot fillets ({NUMBER}){IN} on the (\w+) slot edges, ({NUMBER}){IN} long", label, re.I)
+        if match:
+            for name, val, unit in (("size_in", match[1], "in"), ("count", match[2], "count"), ("length_in", match[3], "in")):
+                fields.append(_field("continuous_brace_slot_weld", name, number(val), unit,
+                    record["source_pointer"] + f"/checks/{i}/limit_state", match.group(), match.span(),
+                    {"joint": "crossing", "crossing_receiver": "continuous"}))
+    return "crossing"
+
+
+def _transfer_receivers(record, fields):
+    data = record["data"]
+    text = data.get("components", "")
+    label = str(data.get("type", ""))
+    if not isinstance(text, str):
+        return None
+    flange = re.match(r"transfer truss (chord|diagonal) joints", label, re.I)
+    support = re.match(r"transfer truss support on the Grid (\w+) / (\w+) columns at Level (\d+)", label, re.I)
+    if not flange and not support:
+        return None
+    key = "transfer_" + (flange[1].lower() if flange else "support")
+    selected = re.match(rf"double gusset plates (?P<count>{COUNT}) PL (?P<thickness>{NUMBER}){IN}", text, re.I)
+    section = re.search(r"flange tips of the (W[\dX.]+)|welded to the (W[\dX.]+) flange tips", text, re.I)
+    if not selected or not section:
+        return None
+    member_section = section[1] or section[2]
+    scope = {"transfer_receiver": key}
+    pointer = record["source_pointer"] + "/components"
+    plate = key + "_gusset"
+    for name, value, unit in (("count",number(selected["count"]),"count"),("thickness_in",number(selected["thickness"]),"in")):
+        fields.append(_field(plate,name,value,unit,pointer,selected.group(),selected.span(),scope))
+    grade = re.search(r"\((A572 Gr 50)\)",text,re.I)
+    if grade:
+        fields.append(_field(plate,"material",grade[1],"literal",pointer,grade.group(),grade.span(),scope))
+    width = re.search(rf"Whitmore width ({NUMBER}){IN}",text,re.I)
+    if width:
+        f = _field(plate,"whitmore_effective_width_in",number(width[1]),"in",pointer,width.group(),width.span(),scope)
+        f["evidence_kind"] = "effective_section_used_in_source_check"
+        fields.append(f)
+    a = re.search(rf"(\d+) lines of ({NUMBER}){IN} (E70\w*) fillet welds x ({NUMBER}){IN}",text,re.I)
+    b = re.search(rf"(\d+) lines x ({NUMBER}){IN}, ({NUMBER}){IN} (E70\w*)",text,re.I)
+    match = a or b
+    if match:
+        count,size,metal,length = a.groups() if a else (b[1],b[3],b[4],b[2])
+        for name,value,unit in (("count",number(count),"count"),("size_in",number(size),"in"),("length_in",number(length),"in"),("material",metal,"literal")):
+            f = _field(plate+"_weld",name,value,unit,pointer,match.group(),match.span(),scope)
+            f["attachment_roles"] = [key,plate]
+            fields.append(f)
+    target = {"role":key,"kind":key if flange else "column","section":member_section}
+    if support:
+        target.update(grid_intersections=[list(m.groups()) for name in support.groups()[:2] if (m:=re.fullmatch(r"([A-Z]+)(\d+)",name))],level=int(support[3]))
+    return target
+
+
+def _crossing_selections(record, fields):
+    data = record["data"]
+    text = data.get("components","")
+    if not isinstance(text,str):
+        return None
+    common = re.search(r"crossing: one diagonal continuous, the other (?:spliced through it with a "
+                       r"[^.;]+?gusset and the same welds|connected through a [^.;]+? gusset passing "
+                       r"through the slotted continuous brace, same welds as the end connection)", text, re.I)
+    split = re.search(r"the spliced diagonal's halves slotted onto the gusset with the end-connection welds",text,re.I)
+    if not (common or split):
+        return None
+    pointer=record["source_pointer"]+"/components"
+    for field in list(fields):
+        if field["role"] != "brace_slot_weld":
+            continue
+        for field_role in ("split",):
+            f = _field(field_role+"_brace_slot_weld",field["field"],field["value"],field["unit"],pointer,
+                       field["source"]["literal"],field["source"].get("span"),{"joint":"crossing","crossing_receiver":field_role})
+            f["application_source"]={"pointer":pointer,"literal":(split or common).group(),"span":list((split or common).span())}
+            f["attachment_roles"]=["split_diagonal_half","crossing_gusset"]
+            fields.append(f)
+    around = re.search(r"fillet-welded to it all round the slot",text,re.I)
+    if around:
+        fields.append(_field("continuous_brace_slot_weld","run","all_round_slot","enum",pointer,
+                             around.group(),around.span(),{"joint":"crossing","crossing_receiver":"continuous"}))
+    return {"kind":"compound" if common else "dedicated","scope":"crossing"}
+
+
+def _positive_dimension(data, key):
+    value = data.get(key)
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def _text_value(data, key):
+    return isinstance(data.get(key), str) and bool(data[key].strip())
+
+
+def _checked_pin_stack(record):
+    """Verify the through-pin stack, bore and specified clearances before binding its source."""
+    stack = record["data"]["pin_stack"]
+    dimensions = ("pin_diameter_in", "pin_hole_diameter_in", "grip_in")
+    if not isinstance(stack, dict) or not all(_positive_dimension(stack, k) for k in dimensions):
+        raise ValueError("Invalid selected pin dimensions in " + record["id"])
+    gap = stack.get("clearance_between_moving_groups_in")
+    if type(gap) not in (int, float) or not math.isfinite(gap) or gap < 0 or not _text_value(stack, "pin_material"):
+        raise ValueError("Invalid selected pin material or moving clearance in " + record["id"])
+    plies = stack.get("selected_stack")
+    if not isinstance(plies, list) or len(plies) < 3:
+        raise ValueError("Invalid selected pin plies in " + record["id"])
+    for ply in plies:
+        if (not isinstance(ply, dict) or not _positive_dimension(ply, "thickness_in")
+                or not all(_text_value(ply, k) for k in ("role", "material", "connected_to"))):
+            raise ValueError("Invalid selected pin ply in " + record["id"])
+    roles = {ply["role"]: ply for ply in plies}
+    if len(roles) != len(plies) or stack["pin_hole_diameter_in"] < stack["pin_diameter_in"]:
+        raise ValueError("Conflicting selected pin stack in " + record["id"])
+
+    # Attached cheek plies move with their named primary leaf. Directly
+    # connected host leaves remain separate across a moving brace ply.
+    owners = []
+    for ply in plies:
+        target = ply["connected_to"]
+        if target == "host":
+            owners.append(ply["role"])
+        elif target == "brace_end":
+            owners.append(target)
+        elif target in roles and roles[target]["connected_to"] == "host":
+            owners.append(target)
+        else:
+            raise ValueError("Unknown pin-ply attachment in " + record["id"])
+    clearances = sum(a != b for a, b in zip(owners, owners[1:]))
+    grip = sum(ply["thickness_in"] for ply in plies) + clearances * gap
+    if not math.isclose(grip, stack["grip_in"], rel_tol=1e-9, abs_tol=1e-7):
+        raise ValueError("Selected pin grip disagrees with the ply order and clearances in " + record["id"])
+    return stack
+
+
+def _add_crossing_plate(record, fields):
+    plate = record["data"]["crossing_plate"]
+    plate_fields = (("length_in", "in"), ("width_in", "in"), ("thickness_in", "in"), ("material", "literal"))
+    weld_fields = (("count_per_bar", "count"), ("size_in", "in"), ("length_in", "in"),
+                   ("material", "literal"), ("run", "enum"))
+    if (not isinstance(plate, dict) or not _text_value(plate, "material")
+            or not all(_positive_dimension(plate, k) for k, unit in plate_fields if unit == "in")):
+        raise ValueError("Invalid selected flat-bar crossing plate in " + record["id"])
+    weld = plate.get("welds")
+    if (not isinstance(weld, dict) or type(weld.get("count_per_bar")) is not int or weld["count_per_bar"] < 1
+            or not all(_positive_dimension(weld, k) for k in ("size_in", "length_in"))
+            or not all(_text_value(weld, k) for k in ("material", "run"))):
+        raise ValueError("Invalid selected flat-bar crossing welds in " + record["id"])
+
+    pointer = record["source_pointer"] + "/crossing_plate"
+    for key, unit in plate_fields:
+        fields.append(_field("flat_bar_crossing_plate", key, plate[key], unit, pointer + "/" + key,
+                             plate[key], applicability={"attachment": "flat_bar_crossing"}))
+    for key, unit in weld_fields:
+        field = _field("flat_bar_crossing_fillet", key, weld[key], unit, pointer + "/welds/" + key,
+                       weld[key], applicability={"attachment": "flat_bar_crossing"})
+        field["attachment_roles"] = ["flat_bar", "crossing_plate"]
+        fields.append(field)
+    return {"value": plate, "source_pointer": pointer}
+
+
 def selection_record(record):
     typed = "bim_selection" in record["data"]
-    fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record)
+    fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record) + checked_bolt_pattern(record)
     result = {"source_pointer": record["source_pointer"], "record_sha256": digest_value(record["data"]),
               "basis": "typed_calc_fields" if typed else "literal_legacy_clauses", "fields": fields}
     data = record["data"]
+    if not typed and (support := _brace_support(record, fields)):
+        result["dedicated_brace_base"] = support
+    if not typed and (receivers := _compound_receivers(record, fields)):
+        result["compound_receivers"] = receivers
+    if not typed and (transfer := _transfer_receivers(record, fields)):
+        result["transfer_target"] = transfer
+    if not typed and (crossing := _crossing_selections(record, fields)):
+        result["crossing_source"] = crossing
+    if "pin_stack" in data:
+        result["data"] = {"pin_stack": _checked_pin_stack(record)}
+        stack = result["data"]["pin_stack"]
+        base_pointer = record["source_pointer"] + "/pin_stack"
+        result["pin_stack_source_pointer"] = base_pointer
+        located = data.get("receiver_selection",{})
+        if located.get("brace_member_id") and located.get("native_connection_id"):
+            scope = {"connection_ids":[located["native_connection_id"]]}
+            fields.append(_field("connection","variant","brb_pinned","enum",base_pointer+"/selected_stack",
+                                 stack["selected_stack"],applicability=scope))
+            for role,key,target,unit in (("pin","diameter_in","pin_diameter_in","in"),("pin","material","pin_material","literal"),
+                                         ("pin_hole","diameter_in","pin_hole_diameter_in","in")):
+                fields.append(_field(role,key,stack[target],unit,base_pointer+"/"+target,stack[target],applicability=scope))
+            for i,ply in enumerate(stack["selected_stack"]):
+                if ply["connected_to"]!="host":
+                    continue
+                for key,unit in (("thickness_in","in"),("material","literal")):
+                    if key == "material":
+                        normalize = lambda value: re.sub(r"\bASTM\s*|\b(?:GRADE|GR)\.?\s*|\s+", "", str(value).upper())
+                        equivalent = [f for f in fields if f["role"]=="gusset" and f["field"]==key and
+                                      normalize(f["value"]) == normalize(ply[key])]
+                        for quoted in equivalent:
+                            if quoted["value"] != ply[key]:
+                                quoted["published_value"] = quoted["value"]
+                                quoted["value"] = ply[key]
+                    fields.append(_field("gusset",key,ply[key],unit,base_pointer+f"/selected_stack/{i}/"+key,ply[key],applicability=scope))
+    if "receiver_selection" in data:
+        receiver = data["receiver_selection"]
+        if (not isinstance(receiver, dict) or not _text_value(receiver, "native_connection_id")
+                or not _text_value(receiver, "column_id") or not _text_value(receiver, "brace_member_id")):
+            raise ValueError("Invalid located brace receiver selection in " + record["id"])
+        scopes = {"connection_ids": [receiver["native_connection_id"]]}
+        for edge, role in (("column_edge", "gusset_column_weld"), ("horizontal_edge", "gusset_base_weld"
+                if receiver.get("support_type") == "column_base" else "gusset_beam_weld")):
+            selected = receiver.get(edge)
+            if (not isinstance(selected, dict) or not all(_positive_dimension(selected, k) for k in ("size_in", "length_in"))
+                    or type(selected.get("count_per_leaf")) is not int or selected["count_per_leaf"] < 1
+                    or not all(_text_value(selected, k) for k in ("weld_type", "material"))):
+                raise ValueError("Invalid located brace support welds in " + record["id"])
+            for key, unit in (("size_in", "in"), ("length_in", "in"), ("count_per_leaf", "count"),
+                              ("weld_type", "enum"), ("material", "literal")):
+                pointer = record["source_pointer"] + "/receiver_selection/" + edge + "/" + key
+                precise = _field(role, key, selected[key], unit, pointer, selected[key], applicability=scopes)
+                printed = [f for f in fields if f["role"] == role and f["field"] == key]
+                for existing in printed:
+                    if existing["value"] != selected[key] and not (unit == "in" and
+                            math.isclose(existing["value"], selected[key], rel_tol=0, abs_tol=.05)):
+                        raise ValueError("Located brace selection conflicts with its component row in " + record["id"])
+                if printed:
+                    precise["printed_sources"] = [f["source"] for f in printed]
+                    fields[:] = [f for f in fields if f not in printed]
+                fields.append(precise)
+        result.setdefault("data", {})["receiver_selection"] = receiver
+        result["receiver_selection_source_pointer"] = record["source_pointer"] + "/receiver_selection"
+    if "crossing_plate" in data:
+        result["crossing_plate"] = _add_crossing_plate(record, fields)
     alternate = re.search(r"\bThe other (?:ends of these beams|W[\dX.]+ beam ends) have no gusset \(record ([A-Z0-9./-]+)\)",
                           str(data.get("design_basis", "")), re.I)
     if not typed and alternate:
@@ -498,6 +1034,26 @@ def applicability(field, connection, location=None):
         return "selected"
     if "connection_ids" in scope and connection["id"] not in scope["connection_ids"]:
         return "different"
+    if "column_section" in scope:
+        columns = {m["section"] for m in (location or {}).get("columns", {}).values()}
+        if not columns:
+            return "conditional"
+        if scope["column_section"] not in columns:
+            return "different"
+    if "column_face" in scope:
+        weak = (connection.get("parameters") or {}).get("weak_axis_gusset")
+        if type(weak) is not bool:
+            return "conditional"
+        if scope["column_face"] != ("web" if weak else "flange"):
+            return "different"
+    if "post_end" in scope:
+        post = (connection.get("assembly_instance") or {}).get("bindings", {}).get("POST")
+        end = (location or {}).get("end_members", {}).get(post, {}).get("vertical_end")
+        return "conditional" if not end else "selected" if end == scope["post_end"] else "different"
+    if "crossing_receiver" in scope:
+        binding = ((location or {}).get("crossing_members") or {}).get(scope["crossing_receiver"])
+        if not binding:
+            return "conditional"
     if "girder_section" in scope:
         ends = (location or {}).get("end_members", {})
         return ("conditional" if not ends else "selected" if any(
@@ -559,6 +1115,8 @@ def application_location(connection, members, profiles, reference=None):
             beam_axes.append([b-a for a, b in zip(*axis)])
         if endpoint:
             result["end_members"][mid] = {"section": profile_id, "kind": member.get("kind"), "source_ids": member.get("design_record_ids", [])}
+            if abs(axis[0][2] - axis[1][2]) > 1e-5:
+                result["end_members"][mid]["vertical_end"] = "upper" if abs(max(p[2] for p in axis) - point[2]) < 1e-5 else "lower"
             dx, dy = abs(axis[1][0] - axis[0][0]), abs(axis[1][1] - axis[0][1])
             if dx > 1e-5 and dy < 1e-5:
                 result["end_members"][mid]["direction"] = "X"
@@ -578,6 +1136,12 @@ def application_location(connection, members, profiles, reference=None):
         for b in crossing_axes[i + 1:]:
             if any(abs(a[j] * b[(j + 1) % 3] - b[j] * a[(j + 1) % 3]) > 1e-6 for j in range(3)):
                 result["flat_bar_crossing"] = True
+    bindings = (connection.get("assembly_instance") or {}).get("bindings", {})
+    continuous = [mid for name, mid in bindings.items() if name == "CONT" and mid in members]
+    split = sorted(mid for name, mid in bindings.items() if name.startswith("SPLIT") and mid in members)
+    if (connection.get("parameters", {}).get("joint") == "crossing" and len(continuous) == 1 and len(split) == 2
+            and len(set(continuous + split)) == 3 and set(continuous + split) <= set(connection.get("member_ids", []))):
+        result["crossing_members"] = {"continuous": continuous, "split": split}
     result["support_faces"] = []
     if len(columns) == len(beam_axes) == 1:
         column, beam = columns[0], beam_axes[0]
@@ -615,10 +1179,19 @@ def application_location(connection, members, profiles, reference=None):
 def applications(connection, records, location=None, member_catalog=None):
     result = []
     alternatives = {}
+    source_ids = connection.get("design_record_ids", [])
+    base_records = [rid for rid in source_ids if records.get(rid, {}).get("dedicated_brace_base")]
+    crossings = [rid for rid in source_ids if records.get(rid, {}).get("compound_receivers") == "crossing"]
     receiver_links = {rid: receiver_application(target, location, member_catalog or {})
                       for rid in connection.get("design_record_ids", []) if (target := records.get(rid, {}).get("receiver_target"))}
     matched_receivers = [rid for rid, link in receiver_links.items() if link["status"] == "located_interface"]
-    scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in ("scheduled_collector", "reentrant_frame", "collector_beam_end")]
+    specific_infills = [rid for rid in matched_receivers if records[rid]["receiver_target"].get("specific")]
+    if specific_infills:
+        for rid in matched_receivers:
+            if receiver_links[rid]["role"] == "infill_end" and rid not in specific_infills:
+                receiver_links[rid].update(status="related_interface", located_specific_records=specific_infills)
+    scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in
+                 ("scheduled_collector", "reentrant_frame", "collector_beam_end", "opening_edge", "infill_end", "basement_girder_end")]
     if scheduled:
         for rid in matched_receivers:
             if receiver_links[rid]["role"] == "smf_column":
@@ -702,9 +1275,38 @@ def applications(connection, records, location=None, member_catalog=None):
         if combined and rid not in matched_receivers and re.search(
                 r"^single-plate shear connection \(conventional configuration|^collector / drag strut connection \(braced-bay beam", rtype, re.I):
             included = [key for key in matched_receivers if receiver_links[key]["role"] == "combined_braced_bay"]
+        transfer = record.get("transfer_target")
+        transfer_ids = []
+        if transfer:
+            place = location or {}
+            matches = not transfer.get("grid_intersections") or (
+                      any(m["kind"]=="transfer_chord" for m in place.get("end_members",{}).values()) and
+                      any(set(pair)<=set(place.get("grids",[])) for pair in transfer["grid_intersections"]))
+            if matches:
+                if transfer["kind"] == "column":
+                    transfer_ids = sorted(mid for mid,m in place.get("columns",{}).items() if m["section"]==transfer["section"])
+                else:
+                    transfer_ids = sorted(mid for mid, m in place.get("end_members",{}).items()
+                                          if m["kind"]==transfer["kind"] and m["section"]==transfer["section"])
+        crossing_joint = (connection.get("parameters") or {}).get("joint") == "crossing"
         active, conditional = [], []
         for index, field in enumerate(record["fields"]):
             status = applicability(field, connection, location)
+            if "transfer_receiver" in field["applicability"] and not transfer_ids:
+                status = "different"
+            if crossing_joint and record.get("crossing_source") and field["role"] in {
+                    "brace_slot_weld","gusset_column_weld","gusset_beam_weld","gusset_base_weld","brace_end_clearance"}:
+                status = "different"
+            if crossing_joint and record.get("crossing_source") and field["field"] == "whitmore_effective_width_in":
+                status = "different"
+            if crossings and rid not in crossings and (field["role"] != "connection" or field["field"] == "variant"):
+                status = "different"
+            if base_records and rid not in base_records and field["role"] in {
+                    "gusset_column_weld", "gusset_beam_weld", "gusset_base_weld", "gusset_column_clearance"}:
+                status = "different"
+            if (base_records and rid not in base_records and field["role"] == "gusset"
+                    and field["field"] in ("material", "thickness_in")):
+                status = "different"
             if "beam_group" in field["applicability"]:
                 status = "conditional" if group is None else "selected" if group == field["applicability"]["beam_group"] else "different"
             if "support_group" in field["applicability"]:
@@ -713,13 +1315,15 @@ def applications(connection, records, location=None, member_catalog=None):
                 place, applies_at = alternatives[rid]
                 if place["located_end"] != applies_at:
                     status = "conditional" if place["located_end"] == "conditional" else "different"
+            if field["role"] == "gusset_beam_weld" and (connection.get("parameters") or {}).get("joint") == "base":
+                status = "different"
             if binding and binding["status"] != "located_interface" and status == "selected":
                 status = "conditional"
             if matched_receivers and rid not in receiver_links and record.get("member_section") and status == "selected":
                 if re.search(r"\bgravity beam ends\b|\bsimple ends of the W[\dX.]+ beams\b", rtype, re.I):
                     status = "different"
                 if scheduled and re.search(r"^(?:collector beam-to-column connection|single-plate shear connection|"
-                                           r"single-plate shear \+ axial connection)\b", rtype, re.I):
+                                           r"single-plate shear \+ axial connection|SCBF mid-gusset beam-to-column connection|beam-to-column connection)\b", rtype, re.I):
                     status = "conditional"
             if included and status == "selected":
                 status = "conditional"
@@ -728,6 +1332,12 @@ def applications(connection, records, location=None, member_catalog=None):
             elif status == "conditional":
                 conditional.append(index)
         entry = {"record_id": rid, "selected": active, "conditional": conditional}
+        if transfer:
+            entry["transfer_members"] = {transfer["role"]:transfer_ids}
+        if (rid in crossings or (crossing_joint and record.get("crossing_source"))) and location:
+            entry["crossing_members"] = location.get("crossing_members", {})
+        if base_records and rid not in base_records:
+            entry["local_base_support_records"] = base_records
         if binding:
             entry["interface_application"] = binding
         if included:

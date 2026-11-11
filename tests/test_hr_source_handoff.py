@@ -31,6 +31,175 @@ def actual_fields(record, **parameters):
             for field in [selected["fields"][i]]}, selected, link
 
 
+def test_ordinary_brb_corner_and_apex_pin_dimensions_replay_the_original_group_e_moment():
+    r = source('corner gusset at the column base: 4 in dia. pin in double shear; free-edge stiffeners PL 3/4 x 6 both sides of each free edge; apex gusset: 4 in dia. pin in double shear')
+    r['data']['checks'] = [
+        {'limit_state':'corner gusset: pin flexure, M = P/2 (t/4 + gap + tclevis/2) = 565 kip-in', 'Mu_kipin':564.51},
+        {'limit_state':'corner gusset: gusset at the pin: tensile rupture, be = 6.63 in, t = 3 in', 'Tu_kip':645.15},
+        {'limit_state':'corner gusset: cheek plate to gusset fillet welds (9/16 in, 40 in around each plate), share of bearing'},
+        {'limit_state':'corner gusset: gusset Whitmore yielding (Whitmore section 28.2 in long, 8 in beyond the cheek plates, t = 1.25 in)'},
+        {'limit_state':'apex gusset: pin flexure, M = P/2 (t/4 + gap + tclevis/2) = 600 kip-in', 'Mu_kipin':600.},
+        {'limit_state':'apex gusset: apex gusset at the pin: tensile rupture, be = 6.63 in, t = 3 in', 'Tu_kip':645.15}]
+    indexed = selection_record(r)['fields']
+    joint = lambda name: {(f['role'],f['field']):f for f in indexed if f['applicability'].get('joint')==name}
+    base = joint('base')
+    assert base['clevis_plate','side_gap_in']['value'] == .25
+    assert base['clevis_plate','thickness_in']['value'] == 1.5 and base['pin','grip_in']['value'] == 6.5
+    assert base['cheek_fillet','perimeter_each_in']['value'] == 40
+    assert base['gusset','whitmore_distance_beyond_cheek_in']['value'] == 8
+    assert ('clevis_plate','side_gap_in') not in joint('apex')
+
+
+def test_basement_girder_detail_requires_its_named_physical_member_and_column():
+    from steel_engine.bim_collector_applications import receiver_application
+    target={'role':'basement_girder_end','member_record':'members/basement-W30X99'}
+    site={'point_in':[0,0,0],'columns':{'column':{'source_ids':[]}},
+          'end_members':{'girder':{'kind':'girder','section':'W30X99','source_ids':['members/basement-W30X99']}}}
+    assert receiver_application(target,site,{})['status']=='located_interface'
+    site['end_members']['girder']['source_ids']=['members/floor-W30X99']
+    assert receiver_application(target,site,{})['status']=='different_receiver'
+
+
+def test_located_transfer_support_is_stable_after_native_json_reopen():
+    row=source('double gusset plates 2 PL 1 1/2 in of the support node welded to the W14X455 flange tips (4 lines x 42 in, 1 in E70)',
+               identity='conn-truss-support-C2-C5',label='transfer truss support on the Grid C2 / C5 columns at Level 3 (welded gussets)')
+    selected=selection_record(row)
+    assert selected['transfer_target']['grid_intersections']==[['C','2'],['C','5']]
+    assert json.loads(json.dumps(selected))==selected
+
+
+def test_selected_pin_stack_retains_its_order_grip_material_and_attachment_evidence():
+    record = source("Three moving plates on one pin.")
+    plies = [{"role": role, "connected_to": target, "material": "ASTM A572 Grade 50", "thickness_in": thickness}
+             for role, target, thickness in (("left", "brace_end", 1), ("left_cheek", "primary", .5),
+                 ("primary", "host", 1.25), ("right_cheek", "primary", .5), ("right", "brace_end", 1))]
+    stack = {"selected_stack": plies, "pin_diameter_in": 4, "pin_hole_diameter_in": 4.0625,
+             "pin_material": "ASTM A434 Grade 4140 Class BD", "clearance_between_moving_groups_in": .0625,
+             "grip_in": 4.375}
+    record["data"]["pin_stack"] = stack
+    selected = selection_record(record)
+    assert selected["data"]["pin_stack"] == stack
+    assert selected["pin_stack_source_pointer"] == "/connections/0/pin_stack"
+    for changes in ({"pin_hole_diameter_in": 3.9375}, {"grip_in": 4.25}, {"pin_material": " "},
+                    {"selected_stack": [plies[0], plies[1], plies[1], plies[3], plies[4]]},
+                    {"selected_stack": [plies[1], plies[0], *plies[2:]]},
+                    {"selected_stack": [*plies[:1], dict(plies[1], connected_to="unidentified"), *plies[2:]]}):
+        record["data"]["pin_stack"] = dict(stack, **changes)
+        with pytest.raises(ValueError, match="pin"):
+            selection_record(record)
+
+
+def test_crossing_plate_binds_opposite_bar_faces_and_selected_welds_at_the_actual_intersection():
+    from steel_engine.bim_source_crossings import crossing_interfaces
+
+    record = source("Two flat bars connected to a centered crossing plate.")
+    plate = {"material": "ASTM A572 Grade 50", "thickness_in": .75, "length_in": 8, "width_in": 8,
+             "welds": {"count_per_bar": 2, "length_in": 5, "size_in": .375, "material": "E70XX", "run": "longitudinal"}}
+    record["data"]["crossing_plate"] = plate
+    members = [{"id": name, "kind": "truss_web", "profile_id": "BAR", "axis": axis}
+               for name, axis in (("A", [[0, 0, 0], [10, 0, 20]]), ("B", [[10, 0, 0], [0, 0, 20]]))]
+    physical = {"members": members, "profiles": [{"id": "BAR", "family": "flat"}],
+                "connections": [{"id": m["id"] + "-end", "member_ids": [m["id"]], "point": m["axis"][0],
+                                 "design_record_ids": [record["id"]]} for m in members]}
+    selected = selection_record(record)
+    interfaces, errors = crossing_interfaces({record["id"]: selected}, physical)
+    assert not errors and len(interfaces) == 1
+    interface = interfaces[0]
+    assert interface["point_in"] == [5, 0, 10] and interface["plate"]["normal"] == [0, 1, 0]
+    assert interface["kind"] == "flat_bar_crossing_plate"
+    assert interface["member_faces"] == [{"member_id": "A", "face_sign": -1}, {"member_id": "B", "face_sign": 1}]
+    assert interface["welds"] == plate["welds"]
+    fields = [selected["fields"][i] for i in interface["selected"]]
+    assert len(fields) == 9
+    for field in fields:
+        target = record["data"]
+        for name in field["source"]["pointer"].removeprefix("/connections/0/").split("/"):
+            target = target[name]
+        assert field["value"] == target
+        if field["role"] == "flat_bar_crossing_fillet":
+            assert field["attachment_roles"] == ["flat_bar", "crossing_plate"]
+    for changes in ({"width_in": 0}, {"welds": dict(plate["welds"], count_per_bar=True)},
+                    {"welds": dict(plate["welds"], material="")}):
+        record["data"]["crossing_plate"] = dict(plate, **changes)
+        with pytest.raises(ValueError, match="flat-bar crossing"):
+            selection_record(record)
+
+
+def test_anchor_requirements_and_checked_whitmore_width_keep_numbers_and_end_scope():
+    base = source("base plate PL 1.25 x 19 x 24 in ASTM A572 Gr 50; a1 = 2.00 in from the flange face, "
+                  "rods 13.2 in apart, 2.41 in or more from the plate edges, 1.8125 in holes (AISC Manual Table 14-2) "
+                  "with plate washers; shear lug ASTM A572 Gr 50 PL 2 x 16 in, 6 in embedded below the grout. "
+                  "The single shear lug has a face normal along world Y.")
+    f, _, _ = actual_fields(base)
+    assert f["anchor_hole", "diameter_in"] == 1.8125
+    assert f["anchor_pattern", "minimum_edge_in"] == 2.41 and ("anchor_pattern", "edge_in") not in f
+    assert f["anchor_pattern", "flange_offset_in"] == 2 and f["anchor_pattern", "spacing_in"] == 13.2
+    assert ("washer_hole", "diameter_in") not in f
+    assert f["shear_lug", "face_normal"] == [0, 1, 0] and f["shear_lug", "embedment_in"] == 6
+    brace = source("lower end: HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; Whitmore width 16.4 in; "
+                   "upper end: apex gusset 0.5 in A572 Gr 50, 36 in along the beam.")
+    brace["data"]["checks"] = [{"limit_state": "gusset Whitmore yielding (Lw = 16.4 in, J4.1)"}]
+    lower, record, _ = actual_fields(brace, upper_end=False, joint="base")
+    upper, _, _ = actual_fields(brace, upper_end=True, joint="apex")
+    assert lower["gusset", "whitmore_effective_width_in"] == 16.4 and ("gusset", "whitmore_effective_width_in") not in upper
+    selected = next(f for f in record["fields"] if f["field"] == "whitmore_effective_width_in")
+    assert selected["check_sources"][0]["pointer"] == "/connections/0/checks/0/limit_state"
+    assert all(f["role"] != "brace_end_clearance" for f in record["fields"])
+
+
+def test_crossing_receiver_and_post_end_scopes_cannot_migrate_to_nearby_members():
+    cross = source("X-brace crossing: HSS4X4X5/16 continuous, slotted on two opposite walls; "
+                   "the interrupted HSS4X4X5/16 in two halves: four 5/16 in E70 welds x 11 in; 2t linear clearance.")
+    cross["data"]["checks"] = [{"limit_state": "slot welds, gusset to the continuous diagonal: "
+        "slot fillets 1/4 in on the four slot edges, 18 in long, for the out-of-plane restraint"}]
+    ordinary = source("HSS4X4X5/16 slotted for a 0.625 in A572 Gr 50 gusset, four 3/8 in E70 welds x 13 in", identity="ordinary")
+    members = [{"id": key, "kind": "brace", "profile_id": "HSS4X4X5/16", "axis": axis}
+               for key, axis in (("a", [[0,0,0],[10,0,10]]), ("b", [[0,0,10],[5,0,5]]), ("c", [[5,0,5],[10,0,0]]))]
+    con = {"id":"cross","point":[5,0,5],"member_ids":["a","b","c"],"parameters":{"joint":"crossing"},
+           "design_record_ids":[cross["id"],ordinary["id"]],"assembly_instance":{"bindings":{"CONT":"a","SPLIT-1":"b","SPLIT1":"c"}}}
+    records = {r["id"]: selection_record(r) for r in (cross, ordinary)}
+    links = build_selections(records, {"members":members, "connections":[con]})["cross"]["applications"]
+    assert links[0]["crossing_members"] == {"continuous":["a"],"split":["b","c"]}
+    fields = [records[cross["id"]]["fields"][i] for i in links[0]["selected"]]
+    vals = {(f["role"],f["field"]):f["value"] for f in fields}
+    assert vals["continuous_brace_slot_weld","length_in"] == 18 and vals["split_brace_slot_weld","length_in"] == 11
+    assert all(f["applicability"]["crossing_receiver"] == "split" for f in fields if f["role"] == "brace_end_clearance")
+    assert all(records[ordinary["id"]]["fields"][i]["field"] in ("source_type","design_variant_id") for i in links[1]["selected"])
+    post = source("top: PL 3/8 x 4 x 8 in A36 clip, 2 x 3/4-in A325-N bolts; "
+                  "base: base plate PL 0.75 x 15 x 18 in ASTM A572 Gr 50; 4 x 0.75 in ASTM F1554-36 anchor rods.")
+    rec = {post["id"]:selection_record(post)}
+    m = {"id":"p","kind":"column","axis":[[0,0,20],[0,0,0]],"profile_id":"W12X40"}
+    joints = [{"id":name,"member_ids":["p"],"point":point,"design_record_ids":[post["id"]],
+               "assembly_instance":{"bindings":{"POST":"p"}}} for name,point in zip(("high","low"),m["axis"])]
+    apps = build_selections(rec,{"members":[m],"connections":joints})
+    roles = {n:{rec[post["id"]]["fields"][i]["role"] for i in v["applications"][0]["selected"]} for n,v in apps.items()}
+    assert "bolt" in roles["high"] and "anchor" not in roles["high"]
+    assert "anchor" in roles["low"] and "bolt" not in roles["low"]
+
+
+def test_base_brace_variants_follow_actual_column_and_override_only_the_support_side():
+    general = source("HSS6X6X3/8 slotted for a 1.25 in A572 Gr 50 gusset; four 3/8 in E70 welds x 12 in; "
+                     "column edge 32 in (0.75 in fillets both sides)", identity="general")
+    base = source("base corner gusset 1.25 in A572 Gr 50 on the column wall: column edge 44 in (3/4 in fillets both sides), "
+                  "bottom edge 9 in welded to a PL 1 in collar plate at the cap face; "
+                  "at BOX30X4: gusset 1.25 in, column edge (40 in, CJP groove weld), bottom edge (1 in) "
+                  "clear of the cap face (no foundation interface)",
+                  label="HSS6X6X3/8 story-1 brace: base corner gusset to the column (BOX24X4) at the pile cap", identity="base")
+    records={r["id"]:selection_record(r) for r in (general,base)}
+    members=[{"id":s,"kind":"column","axis":[[0,i,0],[0,i,12]],"profile_id":s} for i,s in enumerate(("BOX24X4","BOX30X4"))]
+    conns=[{"id":m["id"],"member_ids":[m["id"]],"point":m["axis"][0],"design_record_ids":list(records),
+            "parameters":{"joint":"base"}} for m in members]
+    apps=build_selections(records,{"members":members,"connections":conns})
+    def values(cid):
+        return {(f["role"],f["field"]):f["value"] for line in apps[cid]["applications"] for i in line["selected"]
+                for f in [records[line["record_id"]]["fields"][i]]}
+    a,b=values("BOX24X4"),values("BOX30X4")
+    assert a["gusset_column_weld","length_in"]==44 and a["gusset_collar_weld","length_in"]==9
+    assert b["gusset_column_weld","length_in"]==40 and b["gusset_column_weld","weld_type"]=="CJP"
+    assert b["gusset_foundation_clearance","weld_to_foundation"] is False and ("gusset_collar_weld","length_in") not in b
+    assert all(item["brace_slot_weld","size_in"]==.375 for item in (a,b))
+
+
 def test_pin_family_and_outer_weld_are_read_from_the_selected_clause():
     r = source("pin-hinge release beyond the corner gusset: the beam joins the stub only through a "
                "5 in pin (ASTM A193 Gr B7 bar, holes d + 1/32 in); knife plate PL 2-1/2 in, "
@@ -533,3 +702,77 @@ def test_explicit_terminal_crop_detects_global_member_continuing_past_joint():
     assert "assembly_terminal_receiver" in {f["code"] for f in findings(p)}
     physical["members"][0]["end_offsets"][0] = [6, 0, 0]
     assert "assembly_terminal_receiver" not in {f["code"] for f in findings(p)}
+
+def test_original_gravity_base_precision_round_trip():
+    text=("base plate PL 1 x 18 x 23 in ASTM A572 Gr 50; 4 x 1 in ASTM F1554-36 anchor rods; "
+          "rod layout: 2 rods outside each flange in one row of 2 (a1 = 2.00 in from the flange face), "
+          "rods 13.2 in apart (not less than 4 da = 4.0 in), 2.41 in or more from the plate edges "
+          "(at least the AISC 360-22 Table J3.4 / J3.5 distance for the hole), "
+          "1.8125 in holes (AISC Manual Table 14-2) with plate washers; no net uplift at this base")
+    fields={(f["role"],f["field"]):f for f in selection_record(source(text))["fields"]}
+    spacing=fields["anchor_pattern","spacing_in"]
+    assert (spacing["value"],spacing["printed_value"],spacing["printed_decimal_places"])==(13.1875,13.2,1)
+    assert fields["anchor_pattern","minimum_edge_in"]["value"]==2.40625
+    assert not any("derivation" in f for f in selection_record(source(text.replace("13.2 in apart","13.8 in apart")))["fields"])
+
+
+def test_gravity_base_precision_on_actual_uplift_and_top_washer_branch():
+    text = ("base plate PL 1 x 13 x 23 in ASTM A572 Gr 50; 4 x 1 in ASTM F1554-36 anchor rods; "
+            "rod layout: 2 rods outside each flange in one row of 2 (a1 = 2.00 in from the flange face), "
+            "rods 8.2 in apart (not less than 4 da = 4.0 in), 2.41 in or more from the plate edges "
+            "(at least the AISC 360-22 Table J3.4 / J3.5 distance for the hole), "
+            "1.8125 in holes (AISC Manual Table 14-2) with top plate washers; anchor reinforcement As >= 0.8 in2")
+    row = source(text)
+    row["data"]["id"] = "conn-base-gravity_col-W14X61"
+    fields = {(f["role"], f["field"]): f for f in selection_record(row)["fields"]}
+    assert fields["anchor_pattern", "spacing_in"]["value"] == 8.1875
+    assert fields["anchor_pattern", "minimum_edge_in"]["printed_value"] == 2.41
+    row["data"]["id"] = "conn-base-gravity_col-UNKNOWN"
+    assert not any("derivation" in f for f in selection_record(row)["fields"])
+
+
+def test_signed_support_fillets_resolve_two_faces_and_the_named_end():
+    r=source("lower end: HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; upper end: apex gusset 0.5 in.")
+    r["data"]["checks"]=[{"limit_state":"lower end: base gusset-to-base-plate welds, two 3/8 in fillets, base-edge weld length 5.0 in"},
+                         {"limit_state":"upper end: apex gusset-to-beam flange welds, two 3/8 in fillets x 36 in"}]
+    lower,_,_=actual_fields(r,upper_end=False,joint="base")
+    upper,_,_=actual_fields(r,upper_end=True,joint="apex")
+    assert lower["gusset_base_weld","faces"]==2 and ("gusset_beam_weld","faces") not in lower
+    assert upper["gusset_beam_weld","faces"]==2 and upper["gusset_beam_weld","length_in"]==36
+
+
+def test_four_rod_original_pinned_base_edges_and_bore():
+    r=source("base plate PL 1 5/8 x 23 x 23 in (ASTM A572 Gr 50) on 2 in non-shrink grout; "
+             "4 anchor rods 3/4 in F1554-36, two outside each flange 2.25 in from the flange face at 3.25 in, "
+             "2.000 in from the plate edges, with plate washers; cruciform shear lug PL 1 in "
+             "(legs 16 in wide, 3 in below the grout; ASTM A572 Gr 50)")
+    r["data"]["checks"]=[{"limit_state":"rod centre ... half the 2 in plate washer) (1.3125 in hole, AISC Manual Table 14-2)"}]
+    f,_,_=actual_fields(r)
+    assert f["anchor_pattern","edge_flange_normal_in"]==2 and f["anchor_pattern","edge_along_flange_in"]==9.875
+    assert f["anchor_hole","diameter_in"]==1.3125 and f["anchor","diameter_in"]==.75
+    assert f["cruciform_shear_lug","thickness_in"]==1 and f["plate_washer","width_in"]==2
+
+
+def test_reentrant_opening_corner_distinguishes_actual_edge_from_continuation():
+    from steel_engine.bim_collector_applications import opening_corner
+    def quad(x, y):
+        return [[x,y,0],[x+10,y,0],[x+10,y+10,0],[x,y+10,0]]
+    def beam(x,y):
+        return {"kind":"beam", "axis":[[10,10,0],[x,y,0]]}
+    members = {"edge":beam(10,20), "continuation":beam(10,0)}
+    panels = [quad(0,0),quad(0,10),quad(10,0)]
+    assert opening_corner([10,10,0], members, panels) == (True,["edge"])
+    assert opening_corner([10,10,0], members, panels + [quad(10,10)]) == (False,[])
+
+
+def test_crossing_same_as_end_selects_only_split_fillet_and_keeps_external_whitmore():
+    r = source("HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; four 1/4 in E70 fillet welds x 9.0 in; "
+               "Whitmore width 16.4 in. Crossing: one diagonal continuous, the other connected through a 1/2 in "
+               "gusset passing through the slotted continuous brace, same welds as the end connection")
+    record = selection_record(r)
+    row = {"id":"X-CROSS-0","design_record_ids":[r["id"]],"parameters":{"joint":"crossing"}}
+    source_location = {"crossing_members":{"split":["B1","B2"],"continuous":["B3"]},"end_members":{}}
+    link, = applications(row, {r["id"]:record}, source_location)
+    f = {(record["fields"][i]["role"],record["fields"][i]["field"]):record["fields"][i]["value"] for i in link["selected"]}
+    assert f["split_brace_slot_weld","length_in"] == 9
+    assert ("brace_slot_weld","length_in") not in f and ("gusset","whitmore_effective_width_in") not in f

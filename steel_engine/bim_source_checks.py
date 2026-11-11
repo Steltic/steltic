@@ -32,6 +32,44 @@ def _equal_number(left, right):
     return _numeric(left) and _numeric(right) and math.isclose(left, right, rel_tol=1e-7, abs_tol=1e-7)
 
 
+def _located_mechanical_roof(package, member, element, source):
+    """Match a grouped roof-zone selection to its actual grid span and elevation."""
+    inp=source.get("inputs") or {}
+    clause=str(inp.get("basis",""))
+    match=re.match(r"Level (\d+) roof girders on Grid (\w+) within the [^()]+ mechanical zone "
+                   r"\(Grids (\w+)-(\w+) / (\w+)-(\w+)\)",clause,re.I)
+    if not match or inp.get("role")!="roof" or inp.get("section")!=member.get("profile_id"):
+        return False
+    axis=member.get("axis",[])
+    nodes={n["id"]:n.get("point") for n in package.get("analysis",{}).get("nodes",[])}
+    work=[nodes.get(n) for n in element.get("node_ids",[])]
+    if len(axis)!=2 or len(work)!=2 or any(not p for p in work):
+        return False
+    close=lambda a,b: math.dist(a,b)<1e-5
+    if not ((close(axis[0],work[0]) and close(axis[1],work[1])) or (close(axis[0],work[1]) and close(axis[1],work[0]))):
+        return False
+    ref=package.get("reference_system") or {}
+    levels={str(v.get("level")):v.get("elevation_in") for v in ref.get("levels",[])}
+    if match[1] not in levels or any(abs(p[2]-levels[match[1]])>1e-5 for p in axis):
+        return False
+    grids={str(v.get("label")):v.get("points_in",[]) for v in ref.get("grids",[])}
+    if not all(len(grids.get(g,[]))==2 for g in match.groups()[1:]):
+        return False
+    def grid_coordinate(label):
+        a,b=grids[label]
+        if abs(a[0]-b[0])<1e-5: return 0,a[0]
+        if abs(a[1]-b[1])<1e-5: return 1,a[1]
+        return -1,0
+    constant,pos=grid_coordinate(match[2])
+    if constant<0 or any(abs(p[constant]-pos)>1e-5 for p in axis):
+        return False
+    for g,h in [(match[3],match[4]),(match[5],match[6])]:
+        dim,start=grid_coordinate(g);other,end=grid_coordinate(h)
+        if dim<0 or dim!=other or any(not min(start,end)-1e-5<=p[dim]<=max(start,end)+1e-5 for p in axis):
+            return False
+    return True
+
+
 def _member_findings(package):
     physical = package["physical"]
     profiles = {row["id"]: row for row in physical["profiles"]}
@@ -91,6 +129,9 @@ def _member_findings(package):
                     data.get("bim_member_application") == {"analysis_id": direct[0], "physical_id": mid,
                     "analysis_section": analysis_section, "schedule_section": schedule_section,
                     "physical_section": selected, "axis": member.get("axis")}):
+                continue
+            located=[records[r].get("data",{}) for r in member.get("design_record_ids",[]) if r in records]
+            if any(_located_mechanical_roof(package,member,element,row) for row in located):
                 continue
             findings.append(_issue("hr_analysis_profile_mapping", "A direct physical/analysis section change requires its located source application",
                                    mid, direct[0], selected, analysis_section, schedule_section))

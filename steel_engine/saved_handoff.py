@@ -136,6 +136,7 @@ def build_selections(records, physical, reference=None, member_catalog=None):
     profiles = {p["id"]: p for p in physical.get("profiles", [])}
     located = {rid for rid, record in records.items() if record.get("application_target") or record.get("beam_end_groups") or
                record.get("corner_alternative") or record.get("support_groups") or record.get("receiver_target") or
+               record.get("dedicated_brace_base") or record.get("compound_receivers") or record.get("transfer_target") or record.get("crossing_source") or
                any("attachment" in f["applicability"] for f in record["fields"])}
     corners = {}
     frame_directions = {}

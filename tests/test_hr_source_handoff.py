@@ -88,6 +88,81 @@ def test_crossing_plate_binds_opposite_bar_faces_and_selected_welds_at_the_actua
             selection_record(record)
 
 
+def test_anchor_requirements_and_checked_whitmore_width_keep_numbers_and_end_scope():
+    base = source("base plate PL 1.25 x 19 x 24 in ASTM A572 Gr 50; a1 = 2.00 in from the flange face, "
+                  "rods 13.2 in apart, 2.41 in or more from the plate edges, 1.8125 in holes (AISC Manual Table 14-2) "
+                  "with plate washers; shear lug ASTM A572 Gr 50 PL 2 x 16 in, 6 in embedded below the grout. "
+                  "The single shear lug has a face normal along world Y.")
+    f, _, _ = actual_fields(base)
+    assert f["anchor_hole", "diameter_in"] == 1.8125
+    assert f["anchor_pattern", "minimum_edge_in"] == 2.41 and ("anchor_pattern", "edge_in") not in f
+    assert f["anchor_pattern", "flange_offset_in"] == 2 and f["anchor_pattern", "spacing_in"] == 13.2
+    assert ("washer_hole", "diameter_in") not in f
+    assert f["shear_lug", "face_normal"] == [0, 1, 0] and f["shear_lug", "embedment_in"] == 6
+    brace = source("lower end: HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; Whitmore width 16.4 in; "
+                   "upper end: apex gusset 0.5 in A572 Gr 50, 36 in along the beam.")
+    brace["data"]["checks"] = [{"limit_state": "gusset Whitmore yielding (Lw = 16.4 in, J4.1)"}]
+    lower, record, _ = actual_fields(brace, upper_end=False, joint="base")
+    upper, _, _ = actual_fields(brace, upper_end=True, joint="apex")
+    assert lower["gusset", "whitmore_effective_width_in"] == 16.4 and ("gusset", "whitmore_effective_width_in") not in upper
+    selected = next(f for f in record["fields"] if f["field"] == "whitmore_effective_width_in")
+    assert selected["check_sources"][0]["pointer"] == "/connections/0/checks/0/limit_state"
+    assert all(f["role"] != "brace_end_clearance" for f in record["fields"])
+
+
+def test_crossing_receiver_and_post_end_scopes_cannot_migrate_to_nearby_members():
+    cross = source("X-brace crossing: HSS4X4X5/16 continuous, slotted on two opposite walls; "
+                   "the interrupted HSS4X4X5/16 in two halves: four 5/16 in E70 welds x 11 in; 2t linear clearance.")
+    cross["data"]["checks"] = [{"limit_state": "slot welds, gusset to the continuous diagonal: "
+        "slot fillets 1/4 in on the four slot edges, 18 in long, for the out-of-plane restraint"}]
+    ordinary = source("HSS4X4X5/16 slotted for a 0.625 in A572 Gr 50 gusset, four 3/8 in E70 welds x 13 in", identity="ordinary")
+    members = [{"id": key, "kind": "brace", "profile_id": "HSS4X4X5/16", "axis": axis}
+               for key, axis in (("a", [[0,0,0],[10,0,10]]), ("b", [[0,0,10],[5,0,5]]), ("c", [[5,0,5],[10,0,0]]))]
+    con = {"id":"cross","point":[5,0,5],"member_ids":["a","b","c"],"parameters":{"joint":"crossing"},
+           "design_record_ids":[cross["id"],ordinary["id"]],"assembly_instance":{"bindings":{"CONT":"a","SPLIT-1":"b","SPLIT1":"c"}}}
+    records = {r["id"]: selection_record(r) for r in (cross, ordinary)}
+    links = build_selections(records, {"members":members, "connections":[con]})["cross"]["applications"]
+    assert links[0]["crossing_members"] == {"continuous":["a"],"split":["b","c"]}
+    fields = [records[cross["id"]]["fields"][i] for i in links[0]["selected"]]
+    vals = {(f["role"],f["field"]):f["value"] for f in fields}
+    assert vals["continuous_brace_slot_weld","length_in"] == 18 and vals["split_brace_slot_weld","length_in"] == 11
+    assert all(f["applicability"]["crossing_receiver"] == "split" for f in fields if f["role"] == "brace_end_clearance")
+    assert all(records[ordinary["id"]]["fields"][i]["field"] in ("source_type","design_variant_id") for i in links[1]["selected"])
+    post = source("top: PL 3/8 x 4 x 8 in A36 clip, 2 x 3/4-in A325-N bolts; "
+                  "base: base plate PL 0.75 x 15 x 18 in ASTM A572 Gr 50; 4 x 0.75 in ASTM F1554-36 anchor rods.")
+    rec = {post["id"]:selection_record(post)}
+    m = {"id":"p","kind":"column","axis":[[0,0,20],[0,0,0]],"profile_id":"W12X40"}
+    joints = [{"id":name,"member_ids":["p"],"point":point,"design_record_ids":[post["id"]],
+               "assembly_instance":{"bindings":{"POST":"p"}}} for name,point in zip(("high","low"),m["axis"])]
+    apps = build_selections(rec,{"members":[m],"connections":joints})
+    roles = {n:{rec[post["id"]]["fields"][i]["role"] for i in v["applications"][0]["selected"]} for n,v in apps.items()}
+    assert "bolt" in roles["high"] and "anchor" not in roles["high"]
+    assert "anchor" in roles["low"] and "bolt" not in roles["low"]
+
+
+def test_base_brace_variants_follow_actual_column_and_override_only_the_support_side():
+    general = source("HSS6X6X3/8 slotted for a 1.25 in A572 Gr 50 gusset; four 3/8 in E70 welds x 12 in; "
+                     "column edge 32 in (0.75 in fillets both sides)", identity="general")
+    base = source("base corner gusset 1.25 in A572 Gr 50 on the column wall: column edge 44 in (3/4 in fillets both sides), "
+                  "bottom edge 9 in welded to a PL 1 in collar plate at the cap face; "
+                  "at BOX30X4: gusset 1.25 in, column edge (40 in, CJP groove weld), bottom edge (1 in) "
+                  "clear of the cap face (no foundation interface)",
+                  label="HSS6X6X3/8 story-1 brace: base corner gusset to the column (BOX24X4) at the pile cap", identity="base")
+    records={r["id"]:selection_record(r) for r in (general,base)}
+    members=[{"id":s,"kind":"column","axis":[[0,i,0],[0,i,12]],"profile_id":s} for i,s in enumerate(("BOX24X4","BOX30X4"))]
+    conns=[{"id":m["id"],"member_ids":[m["id"]],"point":m["axis"][0],"design_record_ids":list(records),
+            "parameters":{"joint":"base"}} for m in members]
+    apps=build_selections(records,{"members":members,"connections":conns})
+    def values(cid):
+        return {(f["role"],f["field"]):f["value"] for line in apps[cid]["applications"] for i in line["selected"]
+                for f in [records[line["record_id"]]["fields"][i]]}
+    a,b=values("BOX24X4"),values("BOX30X4")
+    assert a["gusset_column_weld","length_in"]==44 and a["gusset_collar_weld","length_in"]==9
+    assert b["gusset_column_weld","length_in"]==40 and b["gusset_column_weld","weld_type"]=="CJP"
+    assert b["gusset_foundation_clearance","weld_to_foundation"] is False and ("gusset_collar_weld","length_in") not in b
+    assert all(item["brace_slot_weld","size_in"]==.375 for item in (a,b))
+
+
 def test_pin_family_and_outer_weld_are_read_from_the_selected_clause():
     r = source("pin-hinge release beyond the corner gusset: the beam joins the stub only through a "
                "5 in pin (ASTM A193 Gr B7 bar, holes d + 1/32 in); knife plate PL 2-1/2 in, "
@@ -590,3 +665,37 @@ def test_explicit_terminal_crop_detects_global_member_continuing_past_joint():
     assert "assembly_terminal_receiver" in {f["code"] for f in findings(p)}
     physical["members"][0]["end_offsets"][0] = [6, 0, 0]
     assert "assembly_terminal_receiver" not in {f["code"] for f in findings(p)}
+
+def test_original_gravity_base_precision_round_trip():
+    text=("base plate PL 1 x 18 x 23 in ASTM A572 Gr 50; 4 x 1 in ASTM F1554-36 anchor rods; "
+          "rod layout: 2 rods outside each flange in one row of 2 (a1 = 2.00 in from the flange face), "
+          "rods 13.2 in apart (not less than 4 da = 4.0 in), 2.41 in or more from the plate edges "
+          "(at least the AISC 360-22 Table J3.4 / J3.5 distance for the hole), "
+          "1.8125 in holes (AISC Manual Table 14-2) with plate washers; no net uplift at this base")
+    fields={(f["role"],f["field"]):f for f in selection_record(source(text))["fields"]}
+    spacing=fields["anchor_pattern","spacing_in"]
+    assert (spacing["value"],spacing["printed_value"],spacing["printed_decimal_places"])==(13.1875,13.2,1)
+    assert fields["anchor_pattern","minimum_edge_in"]["value"]==2.40625
+    assert not any("derivation" in f for f in selection_record(source(text.replace("13.2 in apart","13.8 in apart")))["fields"])
+
+
+def test_signed_support_fillets_resolve_two_faces_and_the_named_end():
+    r=source("lower end: HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; upper end: apex gusset 0.5 in.")
+    r["data"]["checks"]=[{"limit_state":"lower end: base gusset-to-base-plate welds, two 3/8 in fillets, base-edge weld length 5.0 in"},
+                         {"limit_state":"upper end: apex gusset-to-beam flange welds, two 3/8 in fillets x 36 in"}]
+    lower,_,_=actual_fields(r,upper_end=False,joint="base")
+    upper,_,_=actual_fields(r,upper_end=True,joint="apex")
+    assert lower["gusset_base_weld","faces"]==2 and ("gusset_beam_weld","faces") not in lower
+    assert upper["gusset_beam_weld","faces"]==2 and upper["gusset_beam_weld","length_in"]==36
+
+
+def test_four_rod_original_pinned_base_edges_and_bore():
+    r=source("base plate PL 1 5/8 x 23 x 23 in (ASTM A572 Gr 50) on 2 in non-shrink grout; "
+             "4 anchor rods 3/4 in F1554-36, two outside each flange 2.25 in from the flange face at 3.25 in, "
+             "2.000 in from the plate edges, with plate washers; cruciform shear lug PL 1 in "
+             "(legs 16 in wide, 3 in below the grout; ASTM A572 Gr 50)")
+    r["data"]["checks"]=[{"limit_state":"rod centre ... half the 2 in plate washer) (1.3125 in hole, AISC Manual Table 14-2)"}]
+    f,_,_=actual_fields(r)
+    assert f["anchor_pattern","edge_flange_normal_in"]==2 and f["anchor_pattern","edge_along_flange_in"]==9.875
+    assert f["anchor_hole","diameter_in"]==1.3125 and f["anchor","diameter_in"]==.75
+    assert f["cruciform_shear_lug","thickness_in"]==1 and f["plate_washer","width_in"]==2

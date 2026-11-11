@@ -87,6 +87,18 @@ def _schedule_target(row):
                      r"levels (\d+) and (\d+): the (W[\dX.]+) floor girders \(Grid (\w+), Grids (\w+)-(\w+); "
                      r"Grid (\w+), Grids (\w+)-(\w+) and, at level (\d+), Grids (\w+)-(\w+)\), "
                      r"the (W[\dX.]+) link-roof girder \(Grid (\w+), Grids (\w+)-(\w+), level (\d+)\)", components, re.I)
+    all_lines = re.search(r"one detail at every collector-beam end of grids (\w+), (\w+) and (\w+), floors and roof", basis, re.I)
+    direction = re.search(r"conn-collector-([XY])-lines$", row["id"], re.I)
+    podium = re.match(r"collector connections at the podium setback \(L(\d+), podium-only bay to the Tower [A-Z] frames on Grids (\w+), (\w+) and (\w+)\)", text, re.I)
+    if all_lines and direction:
+        return {"role": "scheduled_collector", "places": [{"direction": direction[1], "line": grid}
+                 for grid in all_lines.groups()], "source": {"pointer": row["source_pointer"]+"/design_basis", "literal": all_lines.group()}}
+    if podium:
+        level, a, b, number = podium.groups()
+        return {"role": "scheduled_collector", "requires_collector": True,
+                "places": [{"line": v, "direction": "X", "levels": [int(level)]} for v in (a,b)]+
+                          [{"line": number, "direction": "Y", "levels": [int(level)]}],
+                "source": {"pointer": row["source_pointer"]+"/type","literal":podium.group()}}
     if level_line:
         p = {"line": level_line[2], "levels": [int(level_line[1])]}
         bay = re.search(r"\(([A-Z]+)(\d+)-\1(\d+)", level_line[3], re.I)

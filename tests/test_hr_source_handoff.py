@@ -31,6 +31,63 @@ def actual_fields(record, **parameters):
             for field in [selected["fields"][i]]}, selected, link
 
 
+def test_selected_pin_stack_retains_its_order_grip_material_and_attachment_evidence():
+    record = source("Three moving plates on one pin.")
+    plies = [{"role": role, "connected_to": target, "material": "ASTM A572 Grade 50", "thickness_in": thickness}
+             for role, target, thickness in (("left", "brace_end", 1), ("left_cheek", "primary", .5),
+                 ("primary", "host", 1.25), ("right_cheek", "primary", .5), ("right", "brace_end", 1))]
+    stack = {"selected_stack": plies, "pin_diameter_in": 4, "pin_hole_diameter_in": 4.0625,
+             "pin_material": "ASTM A434 Grade 4140 Class BD", "clearance_between_moving_groups_in": .0625,
+             "grip_in": 4.375}
+    record["data"]["pin_stack"] = stack
+    selected = selection_record(record)
+    assert selected["data"]["pin_stack"] == stack
+    assert selected["pin_stack_source_pointer"] == "/connections/0/pin_stack"
+    for changes in ({"pin_hole_diameter_in": 3.9375}, {"grip_in": 4.25}, {"pin_material": " "},
+                    {"selected_stack": [plies[0], plies[1], plies[1], plies[3], plies[4]]},
+                    {"selected_stack": [plies[1], plies[0], *plies[2:]]},
+                    {"selected_stack": [*plies[:1], dict(plies[1], connected_to="unidentified"), *plies[2:]]}):
+        record["data"]["pin_stack"] = dict(stack, **changes)
+        with pytest.raises(ValueError, match="pin"):
+            selection_record(record)
+
+
+def test_crossing_plate_binds_opposite_bar_faces_and_selected_welds_at_the_actual_intersection():
+    from steel_engine.bim_source_crossings import crossing_interfaces
+
+    record = source("Two flat bars connected to a centered crossing plate.")
+    plate = {"material": "ASTM A572 Grade 50", "thickness_in": .75, "length_in": 8, "width_in": 8,
+             "welds": {"count_per_bar": 2, "length_in": 5, "size_in": .375, "material": "E70XX", "run": "longitudinal"}}
+    record["data"]["crossing_plate"] = plate
+    members = [{"id": name, "kind": "truss_web", "profile_id": "BAR", "axis": axis}
+               for name, axis in (("A", [[0, 0, 0], [10, 0, 20]]), ("B", [[10, 0, 0], [0, 0, 20]]))]
+    physical = {"members": members, "profiles": [{"id": "BAR", "family": "flat"}],
+                "connections": [{"id": m["id"] + "-end", "member_ids": [m["id"]], "point": m["axis"][0],
+                                 "design_record_ids": [record["id"]]} for m in members]}
+    selected = selection_record(record)
+    interfaces, errors = crossing_interfaces({record["id"]: selected}, physical)
+    assert not errors and len(interfaces) == 1
+    interface = interfaces[0]
+    assert interface["point_in"] == [5, 0, 10] and interface["plate"]["normal"] == [0, 1, 0]
+    assert interface["kind"] == "flat_bar_crossing_plate"
+    assert interface["member_faces"] == [{"member_id": "A", "face_sign": -1}, {"member_id": "B", "face_sign": 1}]
+    assert interface["welds"] == plate["welds"]
+    fields = [selected["fields"][i] for i in interface["selected"]]
+    assert len(fields) == 9
+    for field in fields:
+        target = record["data"]
+        for name in field["source"]["pointer"].removeprefix("/connections/0/").split("/"):
+            target = target[name]
+        assert field["value"] == target
+        if field["role"] == "flat_bar_crossing_fillet":
+            assert field["attachment_roles"] == ["flat_bar", "crossing_plate"]
+    for changes in ({"width_in": 0}, {"welds": dict(plate["welds"], count_per_bar=True)},
+                    {"welds": dict(plate["welds"], material="")}):
+        record["data"]["crossing_plate"] = dict(plate, **changes)
+        with pytest.raises(ValueError, match="flat-bar crossing"):
+            selection_record(record)
+
+
 def test_pin_family_and_outer_weld_are_read_from_the_selected_clause():
     r = source("pin-hinge release beyond the corner gusset: the beam joins the stub only through a "
                "5 in pin (ASTM A193 Gr B7 bar, holes d + 1/32 in); knife plate PL 2-1/2 in, "

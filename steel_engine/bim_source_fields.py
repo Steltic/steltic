@@ -407,12 +407,92 @@ def _support_groups(record, fields):
     return groups
 
 
+def _positive_dimension(data, key):
+    value = data.get(key)
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def _text_value(data, key):
+    return isinstance(data.get(key), str) and bool(data[key].strip())
+
+
+def _checked_pin_stack(record):
+    """Verify the through-pin stack, bore and specified clearances before binding its source."""
+    stack = record["data"]["pin_stack"]
+    dimensions = ("pin_diameter_in", "pin_hole_diameter_in", "grip_in")
+    if not isinstance(stack, dict) or not all(_positive_dimension(stack, k) for k in dimensions):
+        raise ValueError("Invalid selected pin dimensions in " + record["id"])
+    gap = stack.get("clearance_between_moving_groups_in")
+    if type(gap) not in (int, float) or not math.isfinite(gap) or gap < 0 or not _text_value(stack, "pin_material"):
+        raise ValueError("Invalid selected pin material or moving clearance in " + record["id"])
+    plies = stack.get("selected_stack")
+    if not isinstance(plies, list) or len(plies) < 3:
+        raise ValueError("Invalid selected pin plies in " + record["id"])
+    for ply in plies:
+        if (not isinstance(ply, dict) or not _positive_dimension(ply, "thickness_in")
+                or not all(_text_value(ply, k) for k in ("role", "material", "connected_to"))):
+            raise ValueError("Invalid selected pin ply in " + record["id"])
+    roles = {ply["role"]: ply for ply in plies}
+    if len(roles) != len(plies) or stack["pin_hole_diameter_in"] < stack["pin_diameter_in"]:
+        raise ValueError("Conflicting selected pin stack in " + record["id"])
+
+    # Attached cheek plies move with their named primary leaf. Directly
+    # connected host leaves remain separate across a moving brace ply.
+    owners = []
+    for ply in plies:
+        target = ply["connected_to"]
+        if target == "host":
+            owners.append(ply["role"])
+        elif target == "brace_end":
+            owners.append(target)
+        elif target in roles and roles[target]["connected_to"] == "host":
+            owners.append(target)
+        else:
+            raise ValueError("Unknown pin-ply attachment in " + record["id"])
+    clearances = sum(a != b for a, b in zip(owners, owners[1:]))
+    grip = sum(ply["thickness_in"] for ply in plies) + clearances * gap
+    if not math.isclose(grip, stack["grip_in"], rel_tol=1e-9, abs_tol=1e-7):
+        raise ValueError("Selected pin grip disagrees with the ply order and clearances in " + record["id"])
+    return stack
+
+
+def _add_crossing_plate(record, fields):
+    plate = record["data"]["crossing_plate"]
+    plate_fields = (("length_in", "in"), ("width_in", "in"), ("thickness_in", "in"), ("material", "literal"))
+    weld_fields = (("count_per_bar", "count"), ("size_in", "in"), ("length_in", "in"),
+                   ("material", "literal"), ("run", "enum"))
+    if (not isinstance(plate, dict) or not _text_value(plate, "material")
+            or not all(_positive_dimension(plate, k) for k, unit in plate_fields if unit == "in")):
+        raise ValueError("Invalid selected flat-bar crossing plate in " + record["id"])
+    weld = plate.get("welds")
+    if (not isinstance(weld, dict) or type(weld.get("count_per_bar")) is not int or weld["count_per_bar"] < 1
+            or not all(_positive_dimension(weld, k) for k in ("size_in", "length_in"))
+            or not all(_text_value(weld, k) for k in ("material", "run"))):
+        raise ValueError("Invalid selected flat-bar crossing welds in " + record["id"])
+
+    pointer = record["source_pointer"] + "/crossing_plate"
+    for key, unit in plate_fields:
+        fields.append(_field("flat_bar_crossing_plate", key, plate[key], unit, pointer + "/" + key,
+                             plate[key], applicability={"attachment": "flat_bar_crossing"}))
+    for key, unit in weld_fields:
+        field = _field("flat_bar_crossing_fillet", key, weld[key], unit, pointer + "/welds/" + key,
+                       weld[key], applicability={"attachment": "flat_bar_crossing"})
+        field["attachment_roles"] = ["flat_bar", "crossing_plate"]
+        fields.append(field)
+    return {"value": plate, "source_pointer": pointer}
+
+
 def selection_record(record):
     typed = "bim_selection" in record["data"]
     fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record)
     result = {"source_pointer": record["source_pointer"], "record_sha256": digest_value(record["data"]),
               "basis": "typed_calc_fields" if typed else "literal_legacy_clauses", "fields": fields}
     data = record["data"]
+    if "pin_stack" in data:
+        result["data"] = {"pin_stack": _checked_pin_stack(record)}
+        result["pin_stack_source_pointer"] = record["source_pointer"] + "/pin_stack"
+    if "crossing_plate" in data:
+        result["crossing_plate"] = _add_crossing_plate(record, fields)
     alternate = re.search(r"\bThe other (?:ends of these beams|W[\dX.]+ beam ends) have no gusset \(record ([A-Z0-9./-]+)\)",
                           str(data.get("design_basis", "")), re.I)
     if not typed and alternate:

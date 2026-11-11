@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 
 from . import bim_assemblies
-from .bim_source_fields import applications, brace_receiver_roles, digest_value, selection_record
+from .bim_source_crossings import crossing_interfaces
+from .bim_source_fields import applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
 
 
 def _issue(code, message, *ids):
@@ -202,8 +203,15 @@ def findings(package):
         expected_hash = digest_value({k: v for k, v in handoff.items() if k != "contract_sha256"})
         if handoff.get("contract_sha256") != expected_hash or handoff.get("building_id") != package["building_id"]:
             errors.append(_issue("hr_handoff_revision", "Source handoff content or building differs from its bound revision"))
+        if handoff["source_bindings"].get("native_content_sha256") != native_content_digest(package):
+            errors.append(_issue("hr_handoff_native_content", "Native geometry or other package content changed after HR binding"))
         if handoff.get("records") != records:
             errors.append(_issue("hr_handoff_record", "Source field values/provenance differ from the immutable calculation records"))
+        crossings, unresolved = crossing_interfaces(records, package["physical"])
+        if handoff.get("crossing_interfaces") != crossings or handoff.get("unresolved_crossing_interfaces") != unresolved:
+            errors.append(_issue("hr_handoff_crossings", "Source crossing coverage differs from the native member locations"))
+        for item in unresolved:
+            errors.append(_issue("hr_unlocated_crossing", item["reason"], item["record_id"], *item["unmatched_member_ids"]))
         occurrences = handoff.get("occurrences", {})
         source_files = handoff["source_files"]
         native_files = package.get("provenance", {}).get("source_files", {})
@@ -216,7 +224,7 @@ def findings(package):
             errors.append(_issue("hr_handoff_report_binding", "A bound report requires its SHA-256"))
         if set(occurrences) != {c["id"] for c in package["physical"]["connections"]}:
             errors.append(_issue("hr_handoff_occurrences", "Source handoff does not cover the exact connection occurrence set"))
-        expected_occurrences = build_selections(records, package["physical"]["connections"])
+        expected_occurrences = build_selections(records, package["physical"], package.get("reference_system"))
         for cid, roles in brace_receiver_roles(package["physical"]).items():
             expected_occurrences[cid]["receiver_roles"] = roles
         try:

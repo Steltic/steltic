@@ -6557,7 +6557,7 @@ def build_report(name, root=None):
     with open(path, "w", encoding="utf-8") as stream:
         stream.write(html)
     from steel_engine.saved_handoff import bind_rendered_report
-    bind_rendered_report(root)
+    bind_rendered_report(root, pkg)
     print(f"[{name}] wrote {path}")
     return path
 

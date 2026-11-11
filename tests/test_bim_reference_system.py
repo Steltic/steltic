@@ -22,11 +22,13 @@ def test_reference_system_and_strict_connection_requirement_survive_replay(tmp_p
 def test_new_job_cannot_finish_with_only_designed_connection_references(exported):
     package=copy.deepcopy(exported[2]);connection=package['physical']['connections'][0]
     connection.update(parts=[],detail_ref=dict(id='D1',revision='A'))
+    from steel_engine.saved_handoff import seal_current_package
+    seal_current_package(package)
     assert not B.validate(package)  # legacy source retains its existing contract
     package['require_connection_parts']=True
     assert 'connection_parts_required' in {i['code'] for i in B.validate(package)}
     connection.update(scope='delegated',responsible_party='Named supplier',representation='Explicit supplier interface')
-    assert {i['code'] for i in B.validate(package)} == {'hr_handoff_applicability'}
+    assert {i['code'] for i in B.validate(package)} == {'hr_handoff_applicability', 'hr_handoff_native_content'}
     from steel_engine.saved_handoff import attach_current_handoff
     attach_current_handoff(package, {}, B.read_json(exported[0]/'design/calc_package.json'))
     assert not B.validate(package)

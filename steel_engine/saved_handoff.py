@@ -16,7 +16,9 @@ import tempfile
 import zipfile
 
 from .bim_json import file_digest
-from .bim_source_fields import applications, brace_receiver_roles, digest_value, selection_record
+from .bim_report_readback import check_report_selections
+from .bim_source_crossings import crossing_interfaces
+from .bim_source_fields import application_location, applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
 from .bim_source_status import consistency_errors
 from .bim_materials import material_schedule as current_material_schedule, original_report_material_rows
 
@@ -127,13 +129,28 @@ def _records(native, calc):
     return catalog
 
 
-def build_selections(records, physical_connections):
+def build_selections(records, physical, reference=None):
     """Locate selected fields for each occurrence and retain ambiguous fields."""
+    members = {m["id"]: m for m in physical.get("members", [])}
+    profiles = {p["id"]: p for p in physical.get("profiles", [])}
+    located = {rid for rid, record in records.items() if record.get("application_target") or record.get("beam_end_groups") or
+               record.get("corner_alternative") or
+               any("attachment" in f["applicability"] for f in record["fields"])}
+    corners = {}
+    for joint in physical["connections"]:
+        if joint.get("parameters", {}).get("joint") == "corner" and joint.get("point"):
+            point = tuple(round(v, 5) for v in joint["point"])
+            corners.setdefault(point, {})[joint["id"]] = joint.get("member_ids", [])
     occurrences = {}
-    for connection in physical_connections:
+    for connection in physical["connections"]:
         cid = connection["id"]
         _check(cid not in occurrences, "Duplicate physical connection " + cid)
-        links = applications(connection, records)
+        location = None
+        if located.intersection(connection.get("design_record_ids", [])):
+            location = application_location(connection, members, profiles, reference)
+            if location:
+                location["corner_members"] = corners.get(tuple(round(v, 5) for v in location["point_in"]), {})
+        links = applications(connection, records, location)
         occurrences[cid] = {"applications": links, "scope": connection.get("scope"),
                             "selection_basis": "located_source_records" if links else
                             ("adopted_physical_detail" if connection.get("basis") == "A" else "no_linked_connection_record")}
@@ -207,21 +224,24 @@ def _specific_overrides(records, occurrences, decisions, calc_sha256):
     return conflicts
 
 
-def _finish_handoff(building, source_files, bindings, materials, records, physical, decisions):
-    occurrences = build_selections(records, physical["connections"])
+def _finish_handoff(building, source_files, bindings, materials, records, physical, decisions, reference=None):
+    occurrences = build_selections(records, physical, reference)
     for cid, roles in brace_receiver_roles(physical).items():
         occurrences[cid]["receiver_roles"] = roles
     conflicts = _specific_overrides(records, occurrences, decisions, source_files.get("design/calc_package.json"))
     conflicts.extend(_typed_conflicts(records, occurrences))
     conflicts.extend(materials.get("conflicts", []))
+    crossings, unresolved = crossing_interfaces(records, physical)
     code = Path(__file__).parent
     bindings["generator_files"] = {name: file_digest(code / name) for name in
                                    ("saved_handoff.py", "bim_source_fields.py", "bim_source_status.py", "bim_materials.py",
-                                    "bim_source_checks.py", "bim_assemblies.py", "aisc_shapes.csv")}
+                                    "bim_source_checks.py", "bim_source_crossings.py", "bim_report_readback.py",
+                                    "bim_assemblies.py", "aisc_shapes.csv")}
     bindings["geometry_completion_owner"] = "openBIM"
     handoff = {"schema": SCHEMA, "version": VERSION, "building_id": building,
                "source_files": source_files, "material_schedule": materials, "source_bindings": bindings,
-               "records": records, "occurrences": occurrences, "source_conflicts": conflicts}
+               "records": records, "occurrences": occurrences, "source_conflicts": conflicts,
+               "crossing_interfaces": crossings, "unresolved_crossing_interfaces": unresolved}
     handoff["contract_sha256"] = digest_value(handoff)
     return handoff
 
@@ -233,13 +253,35 @@ def attach_current_handoff(package, cfg, calc, selected_inputs=None):
     materials = current_material_schedule(cfg, calc, selected_inputs)
     package["source_handoff"] = _finish_handoff(
         package["building_id"], files, {"kind": "current_hr_export", "analysis_executed": False,
+        "native_content_sha256": native_content_digest(package),
         "report_binding": "bound" if "report.html" in files else "awaiting_report"},
-        materials, records, package["physical"], (selected_inputs or {}).get("decisions", []))
+        materials, records, package["physical"], (selected_inputs or {}).get("decisions", []), package.get("reference_system"))
 
 
-def bind_rendered_report(root):
+def seal_current_package(package):
+    """Bind producer-owned readiness and final report references to the current native body."""
+    handoff = package["source_handoff"]
+    _check(handoff["source_bindings"]["kind"] == "current_hr_export", "Only a live producer can seal changed native content")
+    handoff["source_bindings"]["native_content_sha256"] = native_content_digest(package)
+    handoff.pop("contract_sha256", None)
+    handoff["contract_sha256"] = digest_value(handoff)
+
+
+def _checked_report(report_path, calc):
+    evidence = check_report_selections(report_path, calc)
+    if not evidence["passed"]:
+        first = evidence["findings"][0]
+        target = first.get("connection", first.get("member", "unknown"))
+        raise ValueError(f"HR report selection mismatch at {target}: {first['issue']}")
+    return evidence
+
+
+def bind_rendered_report(root, calc=None):
     """Refresh only the report dependency after a new report has been written."""
     root = Path(root).resolve()
+    if calc is None and (root / "design/calc_package.json").is_file():
+        calc = json.loads((root / "design/calc_package.json").read_text(encoding="utf-8-sig"))
+    checked = _checked_report(root / "report.html", calc) if calc is not None else None
     path = root / "design/bim_package.json"
     if not path.is_file():
         return
@@ -248,6 +290,7 @@ def bind_rendered_report(root):
     handoff = package.get("source_handoff", {})
     if handoff.get("source_bindings", {}).get("kind") != "current_hr_export":
         return
+    _check_hash(native_content_digest(package), handoff["source_bindings"].get("native_content_sha256"), "current native content before report binding")
     sources = package["provenance"]["source_files"]
     for name, expected in sources.items():
         if name != "report.html":
@@ -256,8 +299,9 @@ def bind_rendered_report(root):
     sources["report.html"] = report_digest
     handoff["source_files"]["report.html"] = report_digest
     handoff["source_bindings"]["report_binding"] = "bound"
-    handoff.pop("contract_sha256", None)
-    handoff["contract_sha256"] = digest_value(handoff)
+    if checked is not None:
+        handoff["source_bindings"]["report_selection_readback"] = checked
+    seal_current_package(package)
     _atomic_output(path, package)
 
 
@@ -288,13 +332,17 @@ def export_saved(job, native_path, decisions, output, *, contract_only=False):
     del physical
     calc = json.loads(_job_file(root, "design/calc_package.json").read_text(encoding="utf-8-sig"))
     records = _records(native, calc)
+    report_readback = _checked_report(_job_file(root, "report.html"), calc)
     handoff = _finish_handoff(root.name, source_files,
                               {"kind": "authenticated_saved_design", "decision_archive_sha256": decisions_hash,
+                               "native_content_sha256": native_content_digest(native),
+                               "report_selection_readback": report_readback,
                                "native_bim_file_sha256": native_hash, "native_physical_sha256": manifest["native_physical_sha256"],
                                "native_physical_revision": manifest["native_physical_revision"], "report_binding": "bound",
                                "physical_input_scope": "accepted saved declarations for candidate regeneration",
                                "report_material_rows_verified": len(material_schedule["materials"]),
-                               "analysis_executed": False}, material_schedule, records, native["physical"], decisions_data)
+                               "analysis_executed": False}, material_schedule, records, native["physical"], decisions_data,
+                              native.get("reference_system"))
     native["source_handoff"] = handoff
     # Close the read/write race for changed original evidence. Output always
     # resides in its own candidate directory, even for the compact sidecar.

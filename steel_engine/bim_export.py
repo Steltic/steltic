@@ -187,6 +187,9 @@ def assemble(root, cfg, pkg, snapshot, provenance):
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),
                            "findings":found, "counts":{"analysis_elements":len(result["analysis"]["elements"]), "members":len(physical["members"]), "panels":len(physical["panels"]), "design_records":len(records)}}
+    if provenance["module"] == "HR":
+        from steel_engine.saved_handoff import seal_current_package
+        seal_current_package(result)
     return result
 
 

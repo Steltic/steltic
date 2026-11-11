@@ -12,6 +12,8 @@ def assembly(package):
     template['revision']=A.fingerprint(template);p['physical']['assemblies']=[template]
     connection.update(parts=[],assembly_instance=dict(template_id='clip',revision=template['revision'],
         origin=[0,0,0],x_axis=[1,0,0],y_axis=[0,1,0],bindings=dict(beam='beam')))
+    from steel_engine.saved_handoff import seal_current_package
+    seal_current_package(p)
     return p
 
 

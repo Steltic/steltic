@@ -12,7 +12,7 @@ from steel_engine.bim_materials import material_schedule
 from steel_engine.bim_source_checks import rolled_catalog
 from steel_engine.bim_source_fields import applications, digest_value, selection_record
 from steel_engine.bim_source_status import consistency_errors
-from steel_engine.saved_handoff import _finish_handoff, attach_current_handoff, bind_rendered_report, export_saved
+from steel_engine.saved_handoff import _finish_handoff, attach_current_handoff, bind_rendered_report, build_selections, export_saved
 
 
 FIXTURE = Path(__file__).parent / "fixtures/synthetic_bim_package.json"
@@ -87,6 +87,151 @@ def test_selected_anchor_setout_and_grout():
     assert (f["grout", "material"], f["grout", "thickness_in"]) == ("non-shrink grout", 2)
 
 
+@pytest.mark.parametrize("columns", [1, 2])
+def test_double_plate_bolt_grid_is_one_group_and_has_a_distinct_collector_interface(columns):
+    local = source("two plates PL 0.375 x 20.5 in A572 Gr 50 (one each face of the beam web); "
+                   f"7 x {columns} x 1 in A490-X bolts in double shear, STD holes, 3 in pitch; "
+                   "beam end set back 1 in from the column face")
+    local["data"]["section"] = "W24X94"
+    collector = source("single plate 0.75 x 14.5 in A572 Gr 50; 5 x 0.875 in A490-X bolts at 3 in",
+                       label="collector-to-braced-frame connection (single plate, shear + axial), all braced lines",
+                       identity="collector")
+    collector["data"]["demand"] = {"P_basis_note": "governing line Y5, level 5, Y direction: ..."}
+    records = {r["id"]: selection_record(r) for r in (local, collector)}
+    members = [{"id": "beam", "kind": "beam", "profile_id": "W24X94", "axis": [[0, 300, 168], [0, 600, 168]]}]
+    c = {"id": "end", "point": [0, 300, 168], "member_ids": ["beam"], "design_record_ids": list(records),
+         "parameters": {"collector": True}}
+    physical = {"connections": [c], "members": members}
+    grids = [{"label": "1", "points_in": [[0, 0, 0], [0, 900, 0]]},
+             {"label": "B", "points_in": [[0, 300, 0], [600, 300, 0]]}]
+    ref = {"grids": grids, "levels": [{"level": 1, "elevation_in": 168}]}
+    active, related = build_selections(records, physical, ref)["end"]["applications"]
+    fields = records[local["id"]]["fields"]
+    actual = {(fields[i]["role"], fields[i]["field"]): fields[i]["value"] for i in active["selected"]}
+    assert actual["connection", "variant"] == "double_plate_shear"
+    assert actual["shear_plate", "count"] == 2
+    assert actual["bolt", "count"] == 7 * columns
+    assert (actual["bolt", "rows"], actual["bolt", "columns"], actual["bolt", "diameter_in"]) == (7, columns, 1)
+    assert (actual["bolt", "material"], actual["bolt", "pitch_in"], actual["beam_end", "cutback_in"]) == ("A490-X", 3, 1)
+    assert len([field for field in fields if (field["role"], field["field"]) == ("bolt", "count")]) == 1
+    assert related["selected"] == [] and related["conditional"]
+    assert related["interface_application"] == {"role": "collector_to_frame", "status": "related_interface",
+        "local_beam_end_records": {local["id"]: ["beam"]}, "point_in": [0, 300, 168], "grids": ["1", "B"],
+        "levels": [1], "at_governing_grid_and_level": False}
+    c["design_record_ids"] = [collector["id"]]
+    located = build_selections(records, physical, ref)["end"]["applications"][0]
+    assert located["selected"] and located["interface_application"]["status"] == "located_interface"
+
+
+def test_stmf_terminal_and_crossing_welds_are_bound_to_their_own_members_and_exact_source():
+    r = source("flat bars welded to 3/4-in gussets; end diagonals HSS8X8X5/8 slotted on 3/4-in gussets; "
+               "HSS8X8X5/8 slotted for a 0.75 in A572 Gr 50 gusset; four 5/16 in E70 fillet welds x 16.0 in; "
+               "slot width tg + 1/8 in", label="STMF Y trusses: special-segment flat-bar ends, X crossing, end-diagonal gussets")
+    r["data"]["checks"] = [{"limit_state": "flat bar 1.5 x 0.625 end connection, two 0.5-in fillets x 3 in "
+                                          "to the gusset (welded, no bolts), required RyFyAg"},
+        {"limit_state": "flat bars interconnected at the crossing for 0.25 x the nominal tensile strength (1/4-in fillets, 4 x 2 in)"},
+        {"limit_state": "Hypothetical flat bar 99 x 99 end connection, two 1-in fillets x 100 in to the gusset"}]
+    records = {r["id"]: selection_record(r)}
+    profiles = [{"id": "FLAT", "family": "flat", "dimensions": {"width": 1.5, "thickness": .625}},
+                {"id": "SMALL", "family": "flat", "dimensions": {"width": 1.25, "thickness": .625}},
+                {"id": "HSS8X8X5/8", "family": "rhs", "dimensions": {}}]
+    members = [{"id": "flat", "kind": "truss_web", "profile_id": "FLAT", "axis": [[0, 0, 0], [10, 0, 10]]},
+               {"id": "small", "kind": "truss_web", "profile_id": "SMALL", "axis": [[0, 0, 10], [10, 0, 0]]},
+               {"id": "diag", "kind": "truss_web", "profile_id": "HSS8X8X5/8", "axis": [[0, 0, 0], [10, 0, 20]]}]
+    locations = [("terminal", [0, 0, 0], ["flat", "diag"]), ("cross", [5, 0, 5], ["small", "flat"]),
+                 ("upper", [10, 0, 0], ["small"])]
+    conns = [{"id": cid, "point": point, "member_ids": mids, "design_record_ids": [r["id"]]} for cid, point, mids in locations]
+    apps = build_selections(records, {"members": members, "profiles": profiles, "connections": conns})
+    fields = records[r["id"]]["fields"]
+    def values(cid, status="selected"):
+        return {(fields[i]["role"], fields[i]["field"]): fields[i]["value"]
+                for i in apps[cid]["applications"][0][status]}
+    assert values("terminal")["flat_bar_end_fillet", "length_in"] == 3
+    assert values("terminal")["flat_bar_end_fillet", "size_in"] == .5
+    assert values("terminal")["brace_slot_weld", "length_in"] == 16
+    assert ("flat_bar_crossing_fillet", "size_in") not in values("terminal")
+    assert values("cross")["flat_bar_crossing_fillet", "size_in"] == .25
+    assert values("cross")["flat_bar_crossing_fillet", "count"] == 4
+    assert values("cross")["flat_bar_crossing_fillet", "length_in"] == 2
+    assert ("flat_bar_end_fillet", "size_in") not in values("cross")
+    assert ("flat_bar_end", "width_in") not in values("upper")
+    assert values("upper", "conditional")["flat_bar_end", "width_in"] == 1.5
+    for field in fields:
+        evidence = field["source"]
+        if "/checks/" in evidence["pointer"]:
+            n = int(evidence["pointer"].split("/")[-2])
+            lo, hi = evidence["span"]
+            assert n in (0, 1) and r["data"]["checks"][n]["limit_state"][lo:hi] == evidence["literal"]
+    from steel_engine.bim_source_crossings import crossing_interfaces
+    data = {"members": members, "profiles": profiles, "connections": [c for c in conns if c["id"] != "cross"]}
+    required, missing = crossing_interfaces(records, data)
+    assert not missing and len(required) == 1
+    assert required[0]["point_in"] == [5, 0, 5]
+    assert required[0]["member_stations"] == [.5, .5]
+    assert required[0]["member_ids"] == ["flat", "small"]
+    assert required[0]["native_connection_ids"] == []
+    assert required[0]["status"] == "requires_openbim_geometry"
+    data["connections"] = conns
+    assert crossing_interfaces(records, data)[0][0]["native_connection_ids"] == ["cross"]
+
+
+def test_source_named_opposite_end_is_distinct_from_an_adjacent_beam_at_the_same_node():
+    corner = source("two plates PL 0.375 x 14.5 in A572 Gr 50 (one each face of the beam web); 5 x 2 x 7/8 in A490-X bolts",
+                    identity="braced-bay")
+    corner["data"]["design_basis"] = "The other ends of these beams have no gusset (record ordinary)."
+    ordinary = source("single plate 0.5 x 17.5 in A572 Gr 50; 6 x 0.875 in A325-N bolts", identity="ordinary")
+    ordinary["data"]["section"] = "W21X44"
+    records = {r["id"]: selection_record(r) for r in (corner, ordinary)}
+    members = [{"id": mid, "kind": "beam", "profile_id": "W21X44", "axis": [[0, 0, 0], end]}
+               for mid, end in (("brace_receiver", [10, 0, 0]), ("adjacent", [0, 10, 0]))]
+    connections = [{"id": m["id"] + "-end", "point": [0, 0, 0], "member_ids": [m["id"]], "design_record_ids": list(records)}
+                   for m in members]
+    connections.append({"id": "gusset", "parameters": {"joint": "corner"}, "point": [0, 0, 0],
+                        "member_ids": ["brace", "column", "brace_receiver"], "design_record_ids": []})
+    found = build_selections(records, {"members": members, "connections": connections})
+    a, b = found["brace_receiver-end"]["applications"]
+    assert a["selected"] and b["selected"] == []
+    assert a["alternate_end"]["corner_connection_ids"] == ["gusset"]
+    a, b = found["adjacent-end"]["applications"]
+    assert a["selected"] == [] and b["selected"]
+
+
+def test_collector_and_conventional_detail_in_same_source_row_follow_the_physical_grid_level_and_direction():
+    r = source("collector / strut detail at every W18X35 end that carries a collector force or an analysis axial force "
+               "-- 72 beams (Grid 2 (Y line) levels 1-3, 12-13; Grid 4 (Y line) levels 1-2, 6-8, 13-14): "
+               "single plate 0.75 x 13 in A572 Gr 50; 2 x 3 = 6 bolts 1-1/4 in ASTM F3125 A490-X, pitch and gauge 4 in. "
+               "The other 95 W18X35 beams (not on a collector line): conventional gravity single plate, "
+               "single plate 0.375 in x 12 in A572 Gr 50; 4 x 0.75 in A325-N bolts")
+    r["data"]["section"] = "W18X35"
+    r["data"]["checks"] = [{"limit_state": "bolt shear, critical bolt: 2 lines x 3 rows of 1-1/4 in A490-X in standard holes"}]
+    target = source("W24X94 collector on Grid C (X frame), level 7: end connection = the collector / strut detail of "
+                    "conn-floor-W24X94: single plate 0.75 x 17 in A572 Gr 50", identity="collector-line")
+    records = {t["id"]: selection_record(t) for t in (r, target)}
+    members, connections = [], []
+    for cid, origin, dx, dy in [("on_line", [0, 0, 70], 0, 10), ("other_level", [0, 0, 50], 0, 10),
+                                ("other_direction", [0, 0, 70], 10, 0)]:
+        members.append({"id": cid, "kind": "beam", "axis": [origin, [origin[0]+dx, origin[1]+dy, origin[2]]],
+                        "profile_id": "W18X35"})
+        connections.append({"id": cid, "point": origin, "member_ids": [cid], "design_record_ids": list(records),
+                            "parameters": {"collector": True}})
+    ref = {"grids": [{"label": "4", "points_in": [[0, 0, 0], [0, 10, 0]]},
+                     {"label": "C", "points_in": [[0, 0, 0], [10, 0, 0]]}],
+           "levels": [{"level": 5, "elevation_in": 50}, {"level": 7, "elevation_in": 70}]}
+    occurrences = build_selections(records, {"members": members, "connections": connections}, ref)
+    fields = records[r["id"]]["fields"]
+    for cid, group, count, thickness, diameter in [("on_line", "collector", 6, .75, 1.25),
+                                                  ("other_level", "gravity", 4, .375, .75),
+                                                  ("other_direction", "gravity", 4, .375, .75)]:
+        local, collector = occurrences[cid]["applications"]
+        assert local["beam_end_group"]["selected"] == group
+        values = {(fields[i]["role"], fields[i]["field"]): fields[i]["value"] for i in local["selected"]}
+        assert (values["bolt", "count"], values["shear_plate", "thickness_in"], values["bolt", "diameter_in"]) == (count, thickness, diameter)
+        assert collector["interface_application"]["status"] == "different_location" and collector["selected"] == []
+    r["data"]["components"] = r["data"]["components"].replace("2 x 3 = 6", "2 x 3 = 8")
+    with pytest.raises(ValueError, match="bolt-grid"):
+        selection_record(r)
+
+
 def test_source_conflict_requires_a_located_field_specific_decision():
     r = source("")
     r["data"]["bim_selection"] = [
@@ -125,9 +270,11 @@ def saved_job(tmp_path):
     design = root / "design"
     design.mkdir(parents=True)
     (root/"cfg.py").write_text("raise AssertionError('saved design must never execute configuration')", encoding="utf-8")
-    (root/"report.html").write_bytes(b"<html><h3>Materials</h3><table><tr><td>Plates</td><td>ASTM A572 Grade 50</td></tr></table></html>")
     (design/"member_schedule.csv").write_text("ele_tag,section\n1,W8X10\n", encoding="utf-8")
     r = source("single plate 0.75 x 17.5 in A572 Gr 50; 6 x 1 in A490-X bolts at 3 in")
+    (root/"report.html").write_text("<html><h3>Materials</h3><table><tr><td>Plates</td><td>ASTM A572 Grade 50</td></tr></table>"
+                                    "<h4 id='c-c1'>c1 &mdash; selected connection</h4><table class='calc kv'><tr><td>Components</td>"
+                                    f"<td>{r['data']['components']}</td></tr></table></html>", encoding="utf-8")
     calc = {"connections": [r["data"]]}
     (design/"calc_package.json").write_bytes(_bytes(calc))
     stamp = {"result": "PASS", "n_issues": 0, "issues": [], "cfg_sha256": file_digest(root/"cfg.py"),
@@ -167,10 +314,15 @@ def test_saved_entry_point_binds_original_report_and_omission_is_detected(tmp_pa
     handoff = package["source_handoff"]
     assert summary["analysis_executed"] is False
     assert summary["report_sha256"] == before[root/"report.html"]
+    assert handoff["source_bindings"]["native_content_sha256"] == digest_value(json.loads(native.read_text()))
+    assert handoff["source_bindings"]["report_selection_readback"]["connection_component_rows_checked"] == 1
     assert handoff["records"]["connections/c1"]["legacy_components"]["clauses"]
     assert len(handoff["occurrences"]) == len(package["physical"]["connections"])
     assert {p: file_digest(p) for p in root.rglob("*") if p.is_file()} == before
     assert not validate(package)
+    edited = copy.deepcopy(package)
+    edited["physical"]["members"][0]["mark"] = "changed-after-handoff"
+    assert "hr_handoff_native_content" in {f["code"] for f in validate(edited)}
     del handoff["occurrences"][next(iter(handoff["occurrences"]))]
     assert {"hr_handoff_revision", "hr_handoff_occurrences"} <= {f["code"] for f in validate(package)}
     output_before = file_digest(output)
@@ -239,7 +391,11 @@ def test_new_report_and_handoff_share_occurrence_materials_and_detached_status(t
     attach_current_handoff(original, {}, calc)
     package_file = root/"design/bim_package.json"
     package_file.write_text(json.dumps(original), encoding="utf-8")
-    (root/"report.html").write_bytes(b"<html>new report revision</html>")
+    previous = (root/"report.html").read_text(encoding="utf-8")
+    (root/"report.html").write_text(previous.replace("A490-X", "A325-N"), encoding="utf-8")
+    with pytest.raises(ValueError, match="at c1"):
+        bind_rendered_report(root)
+    (root/"report.html").write_text(previous.replace("</html>", "<footer>new report revision</footer></html>"), encoding="utf-8")
     bind_rendered_report(root)
     after = json.loads(package_file.read_text(encoding="utf-8"))
     assert after["source_handoff"]["source_files"]["report.html"] == file_digest(root/"report.html")

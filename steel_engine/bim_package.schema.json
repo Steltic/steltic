@@ -1751,6 +1751,8 @@
         "records": {"type": "object"},
         "occurrences": {"type": "object"},
         "source_conflicts": {"type": "array"},
+        "crossing_interfaces": {"type": "array"},
+        "unresolved_crossing_interfaces": {"type": "array"},
         "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       },
       "required": ["schema", "version", "building_id", "source_files", "source_bindings", "material_schedule", "records", "occurrences", "source_conflicts", "contract_sha256"],

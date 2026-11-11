@@ -307,7 +307,7 @@ def test_grouped_record_requires_occurrence_or_disposition(exported):
     p["physical"]["record_dispositions"]=[{"record_id":"connections/c2","status":"not_applicable","reason":"Explicit fixture no-splice note"}]
     # The disposition closes the physical mapping, but adding a calculation
     # record still invalidates the source handoff generated for the old input.
-    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_record"}
+    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_record", "hr_handoff_native_content"}
 
 
 def test_delegated_connection_requires_defined_interface(exported):
@@ -315,7 +315,7 @@ def test_delegated_connection_requires_defined_interface(exported):
     c.update(scope="delegated",parts=[])
     assert "delegated_interface" in {f["code"] for f in B.validate(p)}
     c.update(responsible_party="Fixture supplier",detail_ref={"id":"supplier-interface","revision":"A"},representation="Design-envelope reference")
-    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_applicability"}
+    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_applicability", "hr_handoff_native_content"}
     from steel_engine.saved_handoff import attach_current_handoff
     attach_current_handoff(p, {}, B.read_json(exported[0]/"design"/PACKAGE))
     assert not B.validate(p)
@@ -384,6 +384,9 @@ def test_source_schedule_cannot_silently_disappear(exported):
     p["design_records"].append({"id":"headers/h1","table":"headers","source_pointer":"/headers/0","waived":False,"data":{"id":"h1"}})
     assert "assembly_mapping" in {f["code"] for f in B.validate(p)}
     p["physical"]["members"][0]["design_record_ids"]=["headers/h1"]
+    assert {f["code"] for f in B.validate(p)} == {"hr_handoff_native_content"}
+    from steel_engine.saved_handoff import seal_current_package
+    seal_current_package(p)
     assert not B.validate(p)
 
 

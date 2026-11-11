@@ -29,12 +29,19 @@ ATTACHMENT_ROLES = {
     "gusset_column_weld": ["gusset", "column"],
     "gusset_beam_weld": ["gusset", "beam"],
     "gusset_base_weld": ["gusset", "base_plate"],
+    "flat_bar_end_fillet": ["flat_bar_end", "gusset"],
+    "flat_bar_crossing_fillet": ["crossing_flat_bar", "crossing_flat_bar"],
 }
 
 
 def digest_value(value):
     payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def native_content_digest(package):
+    """Canonical SHA-256 of every native field before the additive HR handoff."""
+    return digest_value({key: value for key, value in package.items() if key != "source_handoff"})
 
 
 def number(text):
@@ -117,6 +124,8 @@ def _legacy_fields(record):
         ("beam_pin_hinge", r"\bthe beam joins the stub only through a\s+" + NUMBER + IN + r"\s*pin\b"),
         ("beam_pin_hinge", r"^pin\s+" + NUMBER + IN + r"\s*dia\.?\s*\([^)]+\)\s+in double shear,[^;]{0,160}\bflange gap\b"),
         ("single_plate_shear", r"\bsingle[- ]plate\s+(?:PL\s*)?" + NUMBER + r"(?:\s*in\.?)?" + X + NUMBER + IN),
+        ("double_plate_shear", r"\btwo plates\s+(?:PL\s*)?" + NUMBER + X + NUMBER + IN +
+         r"[^;]{0,70}\bone (?:on )?each face of the beam web\b"),
         ("slotted_hss_gusset", r"\bHSS[\d./X-]+\s+(?:brace\s+)?slotted for (?:an?|the)\s+" + NUMBER + IN),
         ("base_plate_anchors", r"^\s*(?:(?:pinned|fixed)\s+)?base plate\s+PL\s*" + NUMBER + X + NUMBER + X + NUMBER),
     )
@@ -182,18 +191,45 @@ def _legacy_fields(record):
     for tail in (r"on the outer faces to both (?:beam )?flanges", r"to both (?:beam )?flanges on their outer faces"):
         _add_matches(fields, text, src, rf"(?P<size_in>{NUMBER}){IN}\s*(?:E70\w*\s+)?fillets?\s+{tail}",
                      "clevis_outer_fillet", (("size_in", "in"),))
-    _add_matches(fields, text, src, rf"\b(?P<count>{COUNT}){X}(?P<diameter_in>{NUMBER}){IN}\s+(?P<material>{BOLT_GRADE})\s+bolts?\b",
-                 "bolt", (("count", "count"), ("diameter_in", "in"), ("material", "literal")))
+    # "7 x 1 x 1 in" is a row-by-column grid and diameter. Match the entire
+    # group once, so its last column cannot also be read as a one-bolt group.
+    bolt_group = (rf"\b(?P<first>{COUNT}){X}(?:(?P<columns>\d+){X})?"
+                  rf"(?P<diameter_in>{NUMBER}){IN}\s+(?P<material>{BOLT_GRADE})\s+bolts?\b")
+    for match in re.finditer(bolt_group, text, re.I):
+        first = number(match["first"])
+        entries = [("diameter_in", number(match["diameter_in"]), "in"), ("material", match["material"], "literal")]
+        if match["columns"]:
+            columns = int(match["columns"])
+            entries.extend([("rows", first, "count"), ("columns", columns, "count"), ("count", first * columns, "count")])
+        else:
+            entries.append(("count", first, "count"))
+        fields.extend(_field("bolt", key, value, unit, src, match.group(), match.span(), _scope_at(text, match.start()))
+                      for key, value, unit in entries)
+    stated_group = (rf"\b(?P<a>\d+){X}(?P<b>\d+)\s*=\s*(?P<count>\d+) bolts?\s+"
+                    rf"(?P<diameter_in>{NUMBER}){IN}\s+(?P<material>{BOLT_GRADE})")
+    for match in re.finditer(stated_group, text, re.I):
+        if int(match["a"]) * int(match["b"]) != int(match["count"]):
+            raise ValueError("Conflicting bolt-grid factors and stated count at " + src)
+        for key, unit in (("count", "count"), ("diameter_in", "in"), ("material", "literal")):
+            fields.append(_field("bolt", key, match[key] if key == "material" else number(match[key]),
+                                 unit, src, match.group(), match.span()))
+    _add_matches(fields, text, src, rf"\bpitch and gauge (?P<pitch_in>{NUMBER}){IN}", "bolt", (("pitch_in", "in"),))
+    _add_matches(fields, text, src, rf"\bpitch and gauge (?P<gauge_in>{NUMBER}){IN}", "bolt", (("gauge_in", "in"),))
     _add_matches(fields, text, src, rf"\bbolts?\s*\(\s*(?P<rows>\d+)\s+rows?\s+at\s+(?P<pitch_in>{NUMBER}){IN}",
                  "bolt", (("rows", "count"), ("pitch_in", "in")))
     _add_matches(fields, text, src, rf"\b{BOLT_GRADE}\s+bolts?\s+at\s+(?P<pitch_in>{NUMBER}){IN}",
                  "bolt", (("pitch_in", "in"),))
+    _add_matches(fields, text, src, rf"\b{BOLT_GRADE}\s+bolts? in double shear,[^;]{{0,80}}?,\s*(?P<pitch_in>{NUMBER}){IN}\s+pitch",
+                 "bolt", (("pitch_in", "in"),))
     _add_matches(fields, text, src, rf"\bsingle[- ]plate\s+(?:PL\s*)?(?P<thickness_in>{NUMBER})(?:\s*in\.?)?{X}(?P<depth_in>{NUMBER}){IN}\s+(?P<material>{GRADE})",
                  "shear_plate", (("thickness_in", "in"), ("depth_in", "in"), ("material", "literal")))
+    _add_matches(fields, text, src, rf"\b(?P<count>two) plates\s+(?:PL\s*)?(?P<thickness_in>{NUMBER}){X}(?P<depth_in>{NUMBER}){IN}"
+                 rf"\s+(?P<material>{GRADE})\s*\(one (?:on )?each face of the beam web\)", "shear_plate",
+                 (("count", "count"), ("thickness_in", "in"), ("depth_in", "in"), ("material", "literal")))
     for axis in ("vertical", "horizontal"):
         _add_matches(fields, text, src, rf"\b{axis} edge distance\s+(?P<{axis}_edge_in>{NUMBER}){IN}",
                      "bolt", ((axis + "_edge_in", "in"),))
-    _add_matches(fields, text, src, rf"\bbeam end set back\s+(?P<cutback_in>{NUMBER}){IN}\s+from the support face",
+    _add_matches(fields, text, src, rf"\bbeam end set back\s+(?P<cutback_in>{NUMBER}){IN}\s+from the (?:support|column) face",
                  "beam_end", (("cutback_in", "in"),))
     _add_matches(fields, text, src, rf"\bbase plate\s+PL\s*(?P<thickness_in>{NUMBER}){X}(?P<width_in>{NUMBER}){X}(?P<length_in>{NUMBER}){IN}(?:\s+(?P<material>{GRADE}))?",
                  "base_plate", (("thickness_in", "in"), ("width_in", "in"), ("length_in", "in"), ("material", "literal")))
@@ -267,11 +303,115 @@ def _typed_fields(record):
     return fields
 
 
+def _flat_bar_check_fields(record):
+    """A legacy limit-state row can state a physical attachment in its own right."""
+    fields = []
+    terminal = (rf"^flat bar (?P<width_in>{NUMBER}){X}(?P<thickness_in>{NUMBER}) end connection,\s*"
+                rf"(?P<count>{COUNT})\s+(?P<size_in>{NUMBER}){IN}\s+fillets?{X}(?P<length_in>{NUMBER}){IN}"
+                r"\s+to the gusset \(welded, no bolts\)")
+    crossing = (rf"^flat bars interconnected at the crossing\b[^(]*\((?P<size_in>{NUMBER}){IN}\s+fillets?,\s*"
+                rf"(?P<count>{COUNT}){X}(?P<length_in>{NUMBER}){IN}\)")
+    for index, check in enumerate(record["data"].get("checks", [])):
+        text = check.get("limit_state") if isinstance(check, dict) else None
+        if not isinstance(text, str):
+            continue
+        is_end = re.match(terminal, text, re.I)
+        match = is_end or re.match(crossing, text, re.I)
+        if not match:
+            continue
+        pointer = record["source_pointer"] + f"/checks/{index}/limit_state"
+        scope = {"attachment": "flat_bar_end" if is_end else "flat_bar_crossing"}
+        if is_end:
+            scope["section_in"] = [number(match["width_in"]), number(match["thickness_in"])]
+        for key, raw in match.groupdict().items():
+            role = "flat_bar_end" if key in ("width_in", "thickness_in") else scope["attachment"] + "_fillet"
+            fields.append(_field(role, key, number(raw), "count" if key == "count" else "in",
+                                 pointer, match.group(), match.span(), scope))
+    return fields
+
+
+def _beam_end_groups(record, fields):
+    text = record["data"].get("components", "")
+    if not isinstance(text, str):
+        return None
+    head = re.match(r"collector / strut detail at every ([A-Z0-9./-]+) end\b.*? -- \d+ beams? \(", text, re.I)
+    if not head:
+        return None
+    pointer = record["source_pointer"] + "/components"
+    first_plate = re.search(r"\b(?:single plate|two plates)\s+(?:PL\s*)?[\d.]", text[head.end():], re.I)
+    if not first_plate:
+        return None
+    interval = text[head.end():head.end() + first_plate.start()]
+    group_rows = []
+    for match in re.finditer(r"\bGrid ([A-Z0-9]+) \(([XY]) line\) levels? (\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*)", interval, re.I):
+        start, stop = (head.end() + s for s in match.span())
+        spans = [[int(n) for n in token.strip().split("-")] for token in match[3].split(",") if token.strip()]
+        group_rows.append({"grid": match[1], "direction": match[2], "levels": [n for s in spans for n in range(s[0], s[-1] + 1)],
+                           "source": {"pointer": pointer, "span": [start, stop], "literal": text[start:stop]}})
+    if not group_rows:
+        return None
+    other = re.search(r"\bThe other \d+ [A-Z0-9./-]+ beams? \(not on a collector line", text, re.I)
+    for field in fields:
+        src = field["source"]
+        if field["role"] != "connection" and src["pointer"] == pointer and "span" in src:
+            field["applicability"]["beam_group"] = "gravity" if other and src["span"][0] >= other.start() else "collector"
+    # The equal-sign shorthand gives dimensions without assigning horizontal
+    # and vertical directions. The original bolt check names lines and rows.
+    for n, entry in enumerate(record["data"].get("checks", [])):
+        literal = entry.get("limit_state", "") if isinstance(entry, dict) else ""
+        match = re.match(r"bolt shear, critical bolt: (\d+) lines? x (\d+) rows? of ", literal, re.I)
+        if match:
+            for field_name, value in zip(("columns", "rows"), match.groups()):
+                fields.append(_field("bolt", field_name, int(value), "count", record["source_pointer"] + f"/checks/{n}/limit_state",
+                                     match.group(), match.span(), {"beam_group": "collector"}))
+            break
+    return {"section": head[1], "collector_lines": group_rows, "other_gravity_ends": bool(other)}
+
+
 def selection_record(record):
     typed = "bim_selection" in record["data"]
-    fields = _typed_fields(record) if typed else _legacy_fields(record)
+    fields = _typed_fields(record) if typed else _legacy_fields(record) + _flat_bar_check_fields(record)
     result = {"source_pointer": record["source_pointer"], "record_sha256": digest_value(record["data"]),
               "basis": "typed_calc_fields" if typed else "literal_legacy_clauses", "fields": fields}
+    data = record["data"]
+    alternate = re.search(r"\bThe other ends of these beams have no gusset \(record ([A-Z0-9./-]+)\)",
+                          str(data.get("design_basis", "")), re.I)
+    if not typed and alternate:
+        result["corner_alternative"] = {"other_end_record": "connections/" + alternate[1],
+                                        "source": {"pointer": record["source_pointer"] + "/design_basis",
+                                        "literal": alternate.group(), "span": list(alternate.span())}}
+    beam_groups = None if typed else _beam_end_groups(record, fields)
+    if beam_groups:
+        result["beam_end_groups"] = beam_groups
+    if isinstance(data.get("section"), str):
+        result["member_section"] = {"value": data["section"], "pointer": record["source_pointer"] + "/section"}
+    source_type = str(data.get("type", ""))
+    if not typed and re.match(r"^STMF [XY] trusses: (?:verticals to the chords|special-segment flat-bar ends)", source_type, re.I):
+        axis = "vertical" if "verticals to the chords" in source_type.lower() else "diagonal"
+        match = re.search(r"\b(HSS[\dX./-]+) slotted for (?:a|an|the) ", str(data.get("components", "")), re.I)
+        if match:
+            scope = {"attachment": "slotted_hss", "member_axis": axis, "member_section": match[1].upper()}
+            result["hss_attachment"] = {"applicability": scope, "source": {"pointer": record["source_pointer"] + "/components",
+                                        "span": list(match.span()), "literal": match.group()}}
+            for field in fields:
+                if field["role"] in ("gusset", "slot", "brace_slot_weld") or field["value"] == "slotted_hss_gusset":
+                    field["applicability"] = scope
+    named_grid = re.match(r"([A-Z0-9./-]+) collector on Grid ([A-Z0-9]+) \(([XY]) frame\), level (\d+):"
+                          r" end connection = the collector / strut detail of ([A-Z0-9/-]+)", str(data.get("components", "")), re.I)
+    if not typed and (named_grid or re.match(r"^collector-to-braced-frame connection\s*\(single plate\b", source_type, re.I)):
+        target = {"role": "collector_to_frame", "source": {"pointer": record["source_pointer"] + "/type", "literal": data["type"]}}
+        if named_grid:
+            target["specified_location"] = {"section": named_grid[1], "grid": named_grid[2], "direction": named_grid[3],
+                                            "level": int(named_grid[4]), "referenced_end_record": "connections/" + named_grid[5],
+                                            "source": {"pointer": record["source_pointer"] + "/components",
+                                            "literal": named_grid.group(), "span": list(named_grid.span())}}
+        note = (data.get("demand") or {}).get("P_basis_note", "")
+        match = re.search(r"\bgoverning (?:\w+ )?line ([XY])([A-Z0-9]+), level (\d+), ([XY]) direction\b", note, re.I)
+        if match:
+            target["governing_location"] = {"line": match[1] + match[2], "grid": match[2], "level": int(match[3]),
+                                            "direction": match[4].upper(), "source": {"pointer": record["source_pointer"] +
+                                            "/demand/P_basis_note", "span": list(match.span()), "literal": match.group()}}
+        result["application_target"] = target
     text = record["data"].get("components")
     if not typed and isinstance(text, str):
         pointer = record["source_pointer"] + "/components"
@@ -289,13 +429,29 @@ def selection_record(record):
     return result
 
 
-def applicability(field, connection):
+def applicability(field, connection, location=None):
     """Return selected, conditional or different for this physical occurrence."""
     scope = field["applicability"]
     if not scope:
         return "selected"
     if "connection_ids" in scope and connection["id"] not in scope["connection_ids"]:
         return "different"
+    if "attachment" in scope:
+        if location is None:
+            return "conditional"
+        if scope["attachment"] == "slotted_hss":
+            ends = [m for m in location["end_members"].values() if m.get("web_axis") == scope["member_axis"] and
+                    str(m["section"]).upper().startswith("HSS")]
+            if not ends:
+                return "different"
+            return "selected" if any(m["section"] == scope["member_section"] for m in ends) else "conditional"
+        if scope["attachment"] == "flat_bar_crossing":
+            return "selected" if location["flat_bar_crossing"] else "different"
+        if not location["flat_bar_ends"]:
+            return "different"
+        # A checked 1.75-in bar cannot change the section of a bound 1.25-in
+        # bar. The latter's own connection selection must establish its weld.
+        return "selected" if scope["section_in"] in location["flat_bar_ends"] else "conditional"
     params = connection.get("parameters", {})
     for key in ("joint", "story"):
         if key in scope:
@@ -313,19 +469,140 @@ def applicability(field, connection):
     return "selected"
 
 
-def applications(connection, records):
+def application_location(connection, members, profiles, reference=None):
+    """Locate a scoped source detail using independent member axes and actual datums."""
+    point = connection.get("point", (connection.get("assembly_instance") or {}).get("origin"))
+    if not isinstance(point, (list, tuple)) or len(point) != 3:
+        return None
+    result = {"point_in": list(point), "end_members": {}, "flat_bar_ends": [], "flat_bar_crossing": False}
+    crossing_axes = []
+    for mid in connection.get("member_ids", []):
+        member = members.get(mid, {})
+        axis = member.get("axis", [])
+        if len(axis) != 2 or any(len(end) != 3 for end in axis):
+            continue
+        profile_id = member.get("profile_id")
+        profile = profiles.get(profile_id, {})
+        endpoint = min(math.dist(point, end) for end in axis) < 1e-5
+        if endpoint:
+            result["end_members"][mid] = {"section": profile_id, "kind": member.get("kind")}
+            dx, dy = abs(axis[1][0] - axis[0][0]), abs(axis[1][1] - axis[0][1])
+            if dx > 1e-5 and dy < 1e-5:
+                result["end_members"][mid]["direction"] = "X"
+            elif dy > 1e-5 and dx < 1e-5:
+                result["end_members"][mid]["direction"] = "Y"
+            if member.get("kind") == "truss_web":
+                horizontal = math.dist(axis[0][:2], axis[1][:2])
+                result["end_members"][mid]["web_axis"] = "vertical" if horizontal < 1e-5 else "diagonal"
+        if profile.get("family") != "flat":
+            continue
+        if endpoint:
+            dims = profile.get("dimensions", {})
+            result["flat_bar_ends"].append([dims.get("width"), dims.get("thickness")])
+        elif abs(math.dist(point, axis[0]) + math.dist(point, axis[1]) - math.dist(*axis)) < 1e-6:
+            crossing_axes.append([b - a for a, b in zip(*axis)])
+    for i, a in enumerate(crossing_axes):
+        for b in crossing_axes[i + 1:]:
+            if any(abs(a[j] * b[(j + 1) % 3] - b[j] * a[(j + 1) % 3]) > 1e-6 for j in range(3)):
+                result["flat_bar_crossing"] = True
+    if reference:
+        result["grids"] = []
+        for grid in reference.get("grids", []):
+            path = grid.get("points_in", [])
+            if len(path) == 2 and abs(math.dist(point[:2], path[0][:2]) + math.dist(point[:2], path[1][:2]) -
+                                       math.dist(path[0][:2], path[1][:2])) < 1e-6:
+                result["grids"].append(grid["label"])
+        result["levels"] = [x["level"] for x in reference.get("levels", [])
+                            if isinstance(x.get("elevation_in"), (float, int)) and abs(x["elevation_in"] - point[2]) < 1e-5]
+    return result
+
+
+def applications(connection, records, location=None):
     result = []
+    alternatives = {}
+    for rid in connection.get("design_record_ids", []):
+        alternative = records.get(rid, {}).get("corner_alternative")
+        if not alternative:
+            continue
+        base = alternative["other_end_record"]
+        section = records.get(base, {}).get("member_section", {}).get("value")
+        members = {mid for mid, m in (location or {}).get("end_members", {}).items() if m["section"] == section}
+        corner = {cid: mids for cid, mids in (location or {}).get("corner_members", {}).items() if members.intersection(mids)}
+        if not members:
+            status = "conditional"
+        else:
+            status = "gusset_end" if corner else "other_end"
+        binding = {"located_end": status, "corner_connection_ids": sorted(corner), "bound_member_ids": sorted(members),
+                   "gusset_record": rid, "other_end_record": base}
+        alternatives[rid] = (binding, "gusset_end")
+        alternatives[base] = (binding, "other_end")
     for rid in connection.get("design_record_ids", []):
         if rid not in records:
             continue
+        record = records[rid]
+        target = record.get("application_target", {})
+        binding = None
+        group = None
+        if groups := record.get("beam_end_groups"):
+            site = location or {}
+            directions = {m["direction"] for m in site.get("end_members", {}).values()
+                          if m["section"] == groups["section"] and m.get("direction")}
+            if directions and site.get("grids") and site.get("levels"):
+                matched = any(line["direction"] in directions and line["grid"] in site["grids"] and
+                              set(line["levels"]).intersection(site["levels"]) for line in groups["collector_lines"])
+                group = "collector" if matched else "gravity" if groups["other_gravity_ends"] else None
+        if target.get("role") == "collector_to_frame":
+            end_members = (location or {}).get("end_members", {})
+            local = {key: [mid for mid, member in end_members.items() if member["section"] == source["member_section"]["value"]]
+                     for key in connection.get("design_record_ids", []) if (source := records.get(key, {})).get("member_section")}
+            local = {key: mids for key, mids in local.items() if mids}
+            binding = {"role": target["role"], "local_beam_end_records": local, "point_in": (location or {}).get("point_in"),
+                       "grids": (location or {}).get("grids", []), "levels": (location or {}).get("levels", [])}
+            if target.get("governing_location"):
+                g = target["governing_location"]
+                binding["at_governing_grid_and_level"] = g["grid"] in binding["grids"] and g["level"] in binding["levels"]
+            # A collector force in the same member does not install a second
+            # bolt group onto a section-specific beam-end assembly. Its
+            # separate frame interface remains visible at this location.
+            binding["status"] = "related_interface" if local else "located_interface" if (
+                connection.get("parameters", {}).get("collector") is True or
+                any(m["kind"] == "collector" for m in end_members.values())) else "unlocated_interface"
+            if specified := target.get("specified_location"):
+                match = (specified["grid"] in binding["grids"] and specified["level"] in binding["levels"] and
+                         any(m["section"] == specified["section"] and m.get("direction") == specified["direction"]
+                             for m in end_members.values()))
+                binding["at_specified_member_grid_and_level"] = match
+                if not match:
+                    binding["status"] = "different_location" if location and binding["levels"] else "unlocated_interface"
         active, conditional = [], []
-        for index, field in enumerate(records[rid]["fields"]):
-            status = applicability(field, connection)
+        for index, field in enumerate(record["fields"]):
+            status = applicability(field, connection, location)
+            if "beam_group" in field["applicability"]:
+                status = "conditional" if group is None else "selected" if group == field["applicability"]["beam_group"] else "different"
+            if rid in alternatives and status == "selected":
+                place, applies_at = alternatives[rid]
+                if place["located_end"] != applies_at:
+                    status = "conditional" if place["located_end"] == "conditional" else "different"
+            if binding and binding["status"] != "located_interface" and status == "selected":
+                status = "conditional"
             if status == "selected":
                 active.append(index)
             elif status == "conditional":
                 conditional.append(index)
-        result.append({"record_id": rid, "selected": active, "conditional": conditional})
+        entry = {"record_id": rid, "selected": active, "conditional": conditional}
+        if binding:
+            entry["interface_application"] = binding
+        if groups:
+            entry["beam_end_group"] = {"selected": group, "grids": (location or {}).get("grids", []),
+                                       "levels": (location or {}).get("levels", [])}
+        if rid in alternatives:
+            entry["alternate_end"] = alternatives[rid][0]
+        if record.get("hss_attachment") and location:
+            scope = record["hss_attachment"]["applicability"]
+            entry["hss_members"] = {mid: ("selected" if m["section"] == scope["member_section"] else "conditional")
+                                    for mid, m in location["end_members"].items() if m.get("web_axis") == scope["member_axis"]
+                                    and str(m["section"]).upper().startswith("HSS")}
+        result.append(entry)
     return result
 
 

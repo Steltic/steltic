@@ -8,10 +8,13 @@ to a pin in a design check does not select a pin connection.
 from __future__ import annotations
 
 import hashlib
+import csv
 import json
 import math
 import re
 from fractions import Fraction
+from functools import lru_cache
+from pathlib import Path
 from .bim_collector_applications import receiver_application, receiver_target
 from .bim_brb_selections import checked_bolt_pattern
 
@@ -294,7 +297,7 @@ def _legacy_fields(record):
                  "anchor_pattern", (("flange_offset_in", "in"),))
     _add_matches(fields, text, src, rf"(?P<minimum_edge_in>{NUMBER}){IN}\s+or more from the plate edges",
                  "anchor_pattern", (("minimum_edge_in", "in"),))
-    _add_matches(fields, text, src, rf"(?P<diameter_in>{NUMBER}){IN}\s+holes\s*\(AISC Manual Table 14-2\)\s+with plate washers",
+    _add_matches(fields, text, src, rf"(?P<diameter_in>{NUMBER}){IN}\s+holes\s*\(AISC Manual Table 14-2\)\s+with (?:top )?plate washers",
                  "anchor_hole", (("diameter_in", "in"),))
     _add_matches(fields, text, src, rf"\brod holes\s+(?P<diameter_in>{NUMBER}){IN}\b",
                  "anchor_hole", (("diameter_in", "in"),))
@@ -369,9 +372,15 @@ def _legacy_fields(record):
     return fields
 
 
+@lru_cache(maxsize=1)
+def _catalog_flange_widths():
+    with Path(__file__).with_name("aisc_shapes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        return {r["AISC_Manual_Label"]: float(r["bf"]) for r in csv.DictReader(stream) if r.get("Type") == "W"}
+
+
 def _recover_layout_precision(fields, text, data):
-    """Recover Group A's measured no-uplift layout when its printed source grammar agrees."""
-    if ("no net uplift at this base" not in text or "provided rod-centre edge distances" in text
+    """Recover the original Group A rod layout when its printed branch and values agree."""
+    if ("provided rod-centre edge distances" in text
             or "4 da =" not in text or "AISC 360-22 Table J3.4 / J3.5 distance for the hole" not in text):
         return
     layout = re.search(r"rod layout: [0-9]+ rods outside each flange in one row of ([0-9]+) ", text)
@@ -383,6 +392,17 @@ def _recover_layout_precision(fields, text, data):
     width, rod, hole, printed_pitch, printed_edge = (by_key[k]["value"] for k in needed)
     edge = max(1.75 * rod, hole / 2 + 1.5)
     pitch = (width - 2 * edge) / (int(layout[1]) - 1)
+    if "no net uplift at this base" not in text:
+        # With uplift the original producer limits the outer rods to the
+        # 45-degree load spread and keeps the washer clear of the gusset.
+        offset = by_key.get(("anchor_pattern", "flange_offset_in"))
+        sec = re.search(r"-(W[\d.]+X[\d.]+)$", str(data.get("id", "")), re.I)
+        if ("anchor reinforcement As >=" not in text or not offset or not sec
+                or (bf := _catalog_flange_widths().get(sec[1])) is None):
+            return
+        nr = int(layout[1])
+        pitch = max(4 * rod, 2 * (1.5 + rod) if nr % 2 == 0 else 0,
+                    min(pitch, (bf + 2 * offset["value"]) / (nr - 1)))
     if float(f"{pitch:.1f}") != printed_pitch or float(f"{edge:.2f}") != printed_edge:
         return
     method = {"producer": "stk_ext/groupA.py:_rod_geometry and base_dg1",
@@ -696,7 +716,9 @@ def _crossing_selections(record, fields):
     text = data.get("components","")
     if not isinstance(text,str):
         return None
-    common = re.search(r"crossing: one diagonal continuous, the other spliced through it with a .*?gusset and the same welds",text,re.I)
+    common = re.search(r"crossing: one diagonal continuous, the other (?:spliced through it with a "
+                       r"[^.;]+?gusset and the same welds|connected through a [^.;]+? gusset passing "
+                       r"through the slotted continuous brace, same welds as the end connection)", text, re.I)
     split = re.search(r"the spliced diagonal's halves slotted onto the gusset with the end-connection welds",text,re.I)
     if not (common or split):
         return None
@@ -1098,7 +1120,13 @@ def applications(connection, records, location=None, member_catalog=None):
     receiver_links = {rid: receiver_application(target, location, member_catalog or {})
                       for rid in connection.get("design_record_ids", []) if (target := records.get(rid, {}).get("receiver_target"))}
     matched_receivers = [rid for rid, link in receiver_links.items() if link["status"] == "located_interface"]
-    scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in ("scheduled_collector", "reentrant_frame", "collector_beam_end")]
+    specific_infills = [rid for rid in matched_receivers if records[rid]["receiver_target"].get("specific")]
+    if specific_infills:
+        for rid in matched_receivers:
+            if receiver_links[rid]["role"] == "infill_end" and rid not in specific_infills:
+                receiver_links[rid].update(status="related_interface", located_specific_records=specific_infills)
+    scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in
+                 ("scheduled_collector", "reentrant_frame", "collector_beam_end", "opening_edge", "infill_end")]
     if scheduled:
         for rid in matched_receivers:
             if receiver_links[rid]["role"] == "smf_column":

@@ -17,7 +17,7 @@ import zipfile
 
 from .bim_json import file_digest
 from .bim_brb_selections import member_selections
-from .bim_collector_applications import member_sources
+from .bim_collector_applications import member_sources, opening_corner
 from .bim_report_readback import check_report_selections
 from .bim_source_crossings import crossing_interfaces
 from .bim_source_fields import application_location, applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
@@ -144,6 +144,14 @@ def build_selections(records, physical, reference=None, member_catalog=None):
     corner_bearings = {}
     braced_members = set()
     panels = {p["id"] for p in physical.get("panels", []) if "wall" in p.get("kind", "").lower()}
+    opening_records = {rid for rid,r in records.items() if (t := r.get("receiver_target", {})).get("role") == "opening_edge"
+                       or any(p.get("requires_opening_corner") for p in t.get("places", []))}
+    floor_regions = {}
+    if opening_records:
+        for panel in physical.get("panels", []):
+            vertices = panel.get("vertices", [])
+            if len(vertices) >= 3 and all(abs(v[2]-vertices[0][2])<1e-6 for v in vertices):
+                floor_regions.setdefault(round(vertices[0][2],5), []).append(vertices)
     for joint in physical["connections"]:
         if joint.get("parameters", {}).get("joint") == "corner" and joint.get("point"):
             point = tuple(round(v, 5) for v in joint["point"])
@@ -169,6 +177,9 @@ def build_selections(records, physical, reference=None, member_catalog=None):
             location = application_location(connection, members, profiles, reference)
             if location:
                 pt = tuple(round(v, 5) for v in location["point_in"])
+                if opening_records.intersection(connection["design_record_ids"]):
+                    location["opening_corner"], location["opening_edge_member_ids"] = opening_corner(
+                        pt, {mid:members[mid] for mid in location["end_members"]}, floor_regions.get(pt[2], []))
                 location["corner_members"] = corners.get(pt, {})
                 location["brace_frame_directions"] = sorted(frame_directions.get(pt, []))
                 location["corner_bearings"] = corner_bearings.get(pt, [])

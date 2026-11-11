@@ -38,3 +38,24 @@ def test_checked_block_shear_and_whitmore_pin_the_longitudinal_bolt_pattern():
         changed = deepcopy(row)
         changed["data"]["checks"][i][name] = altered
         assert checked_bolt_pattern(changed) == []
+
+
+def test_selected_casing_infill_and_reported_elongation_have_independent_sources():
+    record = {"table":"members", "id":"members/brace-BRB10", "source_pointer":"/members/2",
+              "data":{"inputs":{"section":"BRB10"}, "capacity":{"Asc_in2":10}, "checks":[
+                  {"limit_state":"core strain: brace elongation 3.01 in over the yielding length 133 in (0.60 Lwp)"},
+                  {"limit_state":"global stability of the buckling-restraining casing (steel HSS12X12X3/8 A500 Gr C, concrete fill neglected)"}]}}
+    physical = {"members":[{"id":"B","kind":"brace","profile_id":"BRB10","axis":[[0,0,0],[0,120,0]],
+                            "design_record_ids":[record["id"]]}]}
+    def values(spec):
+        rows = member_selections([record], physical, {"materials":[{"item":"brace cores","spec":spec}]})["B"]["fields"]
+        return {(f["role"],f["field"]):f for f in rows}
+    f=values("ASTM A36 steel core in a mortar-filled steel casing by the BRB manufacturer")
+    assert f["brb_casing","material"]["value"] == "ASTM A500 Grade C"
+    assert f["brb_casing","section"]["value"] == "HSS12X12X3/8"
+    assert f["brb_casing","infill_material"]["source"]["pointer"] == "/material_schedule/materials/0/spec"
+    assert f["brb_core","expected_elongation_in"]["value"] == 3.01
+    record["data"]["checks"].pop()
+    f=values("steel core ASTM A36; casing, core extensions and end details by the BRB supplier")
+    assert f["brb_casing","design_mode"]["value"] == "supplier_delegated"
+    assert ("brb_casing","material") not in f and ("brb_casing","infill_material") not in f

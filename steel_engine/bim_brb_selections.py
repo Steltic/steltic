@@ -8,18 +8,23 @@ def _field(role, key, value, unit, pointer, literal):
             "source": {"pointer": pointer, "literal": literal}}
 
 
-def _core_material(materials):
-    matches = []
+def _brace_materials(materials):
+    fields = []
     for i, row in enumerate(materials.get("materials", [])):
         if "brace" not in row.get("item", "").lower():
             continue
         spec = row.get("spec", "")
         if re.search(r"\bASTM A36 (?:steel )?core\b|\b(?:steel )?core ASTM A36\b", spec, re.I):
-            field = _field("brb_core", "material", "ASTM A36", "literal",
-                           f"/material_schedule/materials/{i}/spec", spec)
-            field["source"]["document"] = row.get("source", materials.get("source", {}))
-            matches.append(field)
-    return matches[:1]
+            selected = [("brb_core", "material", "ASTM A36")]
+            if re.search(r"mortar-filled steel casing", spec, re.I):
+                selected.append(("brb_casing", "infill_material", "mortar"))
+            if re.search(r"casing, core extensions and end details by the BRB supplier", spec, re.I):
+                selected.append(("brb_casing", "design_mode", "supplier_delegated"))
+            for role, key, value in selected:
+                field = _field(role, key, value, "literal", f"/material_schedule/materials/{i}/spec", spec)
+                field["source"]["document"] = row.get("source", materials.get("source", {}))
+                fields.append(field)
+    return fields
 
 
 def _member_fields(record, materials):
@@ -37,6 +42,15 @@ def _member_fields(record, materials):
         if ratio:
             fields.append(_field("brb_core", "yielding_length_workpoint_ratio", float(ratio[1]),
                                  "ratio", pointer, literal))
+            elongation = re.search(r"\bbrace elongation ([\d.]+) in\b", literal, re.I)
+            if elongation:
+                fields.append(_field("brb_core", "expected_elongation_in", float(elongation[1]),
+                                     "in", pointer, literal))
+        shell = re.search(r"global stability of the buckling-restraining casing \(steel "
+                          r"(HSS[\d./X]+) (?:ASTM )?A500 Gr(?:ade)?\.? C\b", literal, re.I)
+        if shell:
+            fields.extend([_field("brb_casing", "section", shell[1], "literal", pointer, literal),
+                           _field("brb_casing", "material", "ASTM A500 Grade C", "literal", pointer, literal)])
         lower = re.search(r"Fysc,\s*min\s*=\s*([\d.]+)\s*ksi\b", literal, re.I)
         if lower:
             fields.append(_field("brb_core", "fy_min_ksi", float(lower[1]), "ksi", pointer, literal))
@@ -46,7 +60,7 @@ def _member_fields(record, materials):
     if expected.get("system") == "BRBF" and upper:
         fields.append(_field("brb_core", "fy_max_ksi", float(upper[1]), "ksi",
                              base + "/inputs/expected_strength/basis", basis))
-    return fields + _core_material(materials)
+    return fields + _brace_materials(materials)
 
 
 def member_selections(native_records, physical, materials):

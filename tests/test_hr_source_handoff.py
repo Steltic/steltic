@@ -679,6 +679,21 @@ def test_original_gravity_base_precision_round_trip():
     assert not any("derivation" in f for f in selection_record(source(text.replace("13.2 in apart","13.8 in apart")))["fields"])
 
 
+def test_gravity_base_precision_on_actual_uplift_and_top_washer_branch():
+    text = ("base plate PL 1 x 13 x 23 in ASTM A572 Gr 50; 4 x 1 in ASTM F1554-36 anchor rods; "
+            "rod layout: 2 rods outside each flange in one row of 2 (a1 = 2.00 in from the flange face), "
+            "rods 8.2 in apart (not less than 4 da = 4.0 in), 2.41 in or more from the plate edges "
+            "(at least the AISC 360-22 Table J3.4 / J3.5 distance for the hole), "
+            "1.8125 in holes (AISC Manual Table 14-2) with top plate washers; anchor reinforcement As >= 0.8 in2")
+    row = source(text)
+    row["data"]["id"] = "conn-base-gravity_col-W14X61"
+    fields = {(f["role"], f["field"]): f for f in selection_record(row)["fields"]}
+    assert fields["anchor_pattern", "spacing_in"]["value"] == 8.1875
+    assert fields["anchor_pattern", "minimum_edge_in"]["printed_value"] == 2.41
+    row["data"]["id"] = "conn-base-gravity_col-UNKNOWN"
+    assert not any("derivation" in f for f in selection_record(row)["fields"])
+
+
 def test_signed_support_fillets_resolve_two_faces_and_the_named_end():
     r=source("lower end: HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; upper end: apex gusset 0.5 in.")
     r["data"]["checks"]=[{"limit_state":"lower end: base gusset-to-base-plate welds, two 3/8 in fillets, base-edge weld length 5.0 in"},
@@ -699,3 +714,28 @@ def test_four_rod_original_pinned_base_edges_and_bore():
     assert f["anchor_pattern","edge_flange_normal_in"]==2 and f["anchor_pattern","edge_along_flange_in"]==9.875
     assert f["anchor_hole","diameter_in"]==1.3125 and f["anchor","diameter_in"]==.75
     assert f["cruciform_shear_lug","thickness_in"]==1 and f["plate_washer","width_in"]==2
+
+
+def test_reentrant_opening_corner_distinguishes_actual_edge_from_continuation():
+    from steel_engine.bim_collector_applications import opening_corner
+    def quad(x, y):
+        return [[x,y,0],[x+10,y,0],[x+10,y+10,0],[x,y+10,0]]
+    def beam(x,y):
+        return {"kind":"beam", "axis":[[10,10,0],[x,y,0]]}
+    members = {"edge":beam(10,20), "continuation":beam(10,0)}
+    panels = [quad(0,0),quad(0,10),quad(10,0)]
+    assert opening_corner([10,10,0], members, panels) == (True,["edge"])
+    assert opening_corner([10,10,0], members, panels + [quad(10,10)]) == (False,[])
+
+
+def test_crossing_same_as_end_selects_only_split_fillet_and_keeps_external_whitmore():
+    r = source("HSS6X6X3/8 slotted for a 0.5 in A572 Gr 50 gusset; four 1/4 in E70 fillet welds x 9.0 in; "
+               "Whitmore width 16.4 in. Crossing: one diagonal continuous, the other connected through a 1/2 in "
+               "gusset passing through the slotted continuous brace, same welds as the end connection")
+    record = selection_record(r)
+    row = {"id":"X-CROSS-0","design_record_ids":[r["id"]],"parameters":{"joint":"crossing"}}
+    source_location = {"crossing_members":{"split":["B1","B2"],"continuous":["B3"]},"end_members":{}}
+    link, = applications(row, {r["id"]:record}, source_location)
+    f = {(record["fields"][i]["role"],record["fields"][i]["field"]):record["fields"][i]["value"] for i in link["selected"]}
+    assert f["split_brace_slot_weld","length_in"] == 9
+    assert ("brace_slot_weld","length_in") not in f and ("gusset","whitmore_effective_width_in") not in f

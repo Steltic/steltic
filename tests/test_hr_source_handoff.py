@@ -23,6 +23,29 @@ def source(text, *, label="selected connection", identity="c1"):
             "data": {"id": identity, "type": label, "components": text}, "waived": False}
 
 
+def test_located_web_override_preserves_adjacent_same_section_and_requires_both_ends():
+    base = source("end diagonals HSS8X8X5/8 slotted for a 0.75 in A572 Gr 50 gusset; "
+                  "four 5/16 in E70 fillet welds x 16.0 in",
+                  label="STMF Y trusses: special-segment flat-bar ends")
+    short = source("", identity="short")
+    short["data"].update(
+        slotted_web_replacement=dict(member_ends={"a": ["corner", "joint"]}, section="HSS8X8X5/8",
+                                     axis="diagonal", supersedes=base["id"]),
+        bim_selection=[dict(role="brace_slot_weld", field="length_in", unit="in", value=9.5)])
+    records = {r["id"]: selection_record(r) for r in (base, short)}
+    joint = dict(id="joint", point=[1, 0, 1], member_ids=["a", "b"], design_record_ids=list(records))
+    corner = dict(id="corner", point=[0, 0, 0], member_ids=["a"], design_record_ids=[short["id"]])
+    physical = dict(members=[dict(id=mid, kind="truss_web", profile_id="HSS8X8X5/8", axis=axis) for mid,axis in
+                             (("a", [[0,0,0],[1,0,1]]), ("b", [[1,0,1],[2,0,0]]))],
+                    profiles=[dict(id="HSS8X8X5/8",family="rhs")], connections=[joint,corner])
+    links = build_selections(records,physical)["joint"]["applications"]
+    assert links[0]["hss_members"] == {"a": "superseded", "b": "selected"}
+    assert links[1]["hss_members"] == {"a": "selected"}
+    corner["design_record_ids"] = []
+    with pytest.raises(ValueError, match="Missing located slotted-web end"):
+        build_selections(records,physical)
+
+
 def actual_fields(record, **parameters):
     selected = selection_record(record)
     connection = {"id": "joint-1", "design_record_ids": [record["id"]], "parameters": parameters}

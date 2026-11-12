@@ -885,6 +885,21 @@ def selection_record(record):
     result = {"source_pointer": record["source_pointer"], "record_sha256": digest_value(record["data"]),
               "basis": "typed_calc_fields" if typed else "literal_legacy_clauses", "fields": fields}
     data = record["data"]
+    if "slotted_web_replacement" in data:
+        spec = data["slotted_web_replacement"]
+        ends = spec["member_ends"]
+        if (not typed or spec["axis"] not in ("diagonal", "vertical") or not spec["section"].startswith("HSS")
+                or not spec["supersedes"].startswith("connections/") or not isinstance(ends, dict) or not ends
+                or any(not isinstance(pair, list) or len(pair) != 2 or len(set(pair)) != 2
+                       or not all(isinstance(cid, str) and cid for cid in pair) for pair in ends.values())):
+            raise ValueError("Invalid located slotted-web replacement in " + record["id"])
+        scope = {"attachment": "slotted_hss", "member_axis": spec["axis"], "member_section": spec["section"]}
+        result["hss_attachment"] = {"applicability": scope, "source": {
+            "pointer": record["source_pointer"] + "/slotted_web_replacement"}}
+        result["slotted_web_replacement"] = spec
+        for field in fields:
+            if field["role"] in ("slot", "gusset", "brace_slot_weld"):
+                field["applicability"] = dict(field["applicability"], **scope)
     if not typed and (support := _brace_support(record, fields)):
         result["dedicated_brace_base"] = support
     if not typed and (receivers := _compound_receivers(record, fields)):
@@ -1358,6 +1373,26 @@ def applications(connection, records, location=None, member_catalog=None):
                                     for mid, m in location["end_members"].items() if m.get("web_axis") == scope["member_axis"]
                                     and str(m["section"]).upper().startswith("HSS")}
         result.append(entry)
+    links = {entry["record_id"]: entry for entry in result}
+    replaced = set()
+    for rid, entry in links.items():
+        spec = records[rid].get("slotted_web_replacement")
+        if not spec:
+            continue
+        selected = {mid for mid, ends in spec["member_ends"].items() if connection["id"] in ends}
+        if not selected or not selected.issubset(connection.get("member_ids", [])):
+            raise ValueError("Selected slotted web is absent at " + connection["id"] + " in " + rid)
+        if location is None:
+            continue
+        if any(entry.get("hss_members", {}).get(mid) != "selected" for mid in selected):
+            raise ValueError("Slotted-web section or axis differs at " + connection["id"] + " in " + rid)
+        if replaced.intersection(selected):
+            raise ValueError("Overlapping slotted-web replacements at " + connection["id"])
+        replaced.update(selected)
+        entry["hss_members"] = {mid: "selected" for mid in sorted(selected)}
+        prior = links.get(spec["supersedes"], {}).get("hss_members", {})
+        for mid in selected.intersection(prior):
+            prior[mid] = "superseded"
     return result
 
 

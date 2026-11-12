@@ -189,6 +189,15 @@ def build_selections(records, physical, reference=None, member_catalog=None):
         occurrences[cid] = {"applications": links, "scope": connection.get("scope"),
                             "selection_basis": "located_source_records" if links else
                             ("adopted_physical_detail" if connection.get("basis") == "A" else "no_linked_connection_record")}
+    for rid, record in records.items():
+        spec = record.get("slotted_web_replacement")
+        if not spec:
+            continue
+        for mid, ends in spec["member_ends"].items():
+            for cid in ends:
+                links = occurrences.get(cid, {}).get("applications", [])
+                _check(any(link["record_id"] == rid and link.get("hss_members", {}).get(mid) == "selected"
+                           for link in links), "Missing located slotted-web end " + cid + " / " + mid)
     return occurrences
 
 
@@ -207,13 +216,17 @@ def _typed_conflicts(records, occurrences):
             for index in link["selected"]:
                 source = record["fields"][index]
                 field = dict(source, value=overrides.get((link["record_id"], index), source["value"]))
-                key = (field["role"], field["field"])
-                previous = selected.get(key)
-                if previous and (previous["value"], previous["unit"]) != (field["value"], field["unit"]):
-                    conflicts.append({"connection_id": cid, "role": key[0], "field": key[1],
-                                      "sources": [previous["source"], field["source"]],
-                                      "values": [previous["value"], field["value"]]})
-                selected[key] = field
+                members = [None]
+                if field["applicability"].get("attachment") == "slotted_hss" and "hss_members" in link:
+                    members = [mid for mid, status in link["hss_members"].items() if status == "selected"]
+                for mid in members:
+                    key = (field["role"], field["field"], mid)
+                    previous = selected.get(key)
+                    if previous and (previous["value"], previous["unit"]) != (field["value"], field["unit"]):
+                        conflicts.append({"connection_id": cid, "role": key[0], "field": key[1],
+                                          "sources": [previous["source"], field["source"]],
+                                          "values": [previous["value"], field["value"]]})
+                    selected[key] = field
     return conflicts
 
 

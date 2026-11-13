@@ -1191,6 +1191,69 @@ def application_location(connection, members, profiles, reference=None):
     return result
 
 
+_FRAME_COLLECTOR = re.compile(r"^collector-to-braced-frame connection\b", re.I)
+_FRAME_COLLECTOR_ID = re.compile(r"conn-collector-([XY])(?:-(floor|roof))?$", re.I)
+_BOLT_GRADE_FACTOR = {"A325": 1.0, "F1852": 1.0, "A490": 1.25, "F2280": 1.25}
+
+
+def _typed(record, role, name):
+    return next((f["value"] for f in record["fields"] if f["role"] == role and f["field"] == name), None)
+
+
+def _not_weaker(candidate, reference):
+    """True when the candidate single-plate selection has at least the bolt and plate area of the reference."""
+    def bolts(record):
+        count, diameter, grade = _typed(record, "bolt", "count"), _typed(record, "bolt", "diameter_in"), str(_typed(record, "bolt", "material") or "")
+        if not count or not diameter:
+            return None
+        return count * diameter ** 2 * next((v for k, v in _BOLT_GRADE_FACTOR.items() if k in grade), 1.0)
+
+    def plate(record):
+        thickness, depth = _typed(record, "shear_plate", "thickness_in"), _typed(record, "shear_plate", "depth_in")
+        return thickness * depth if thickness and depth else None
+    pairs = [(bolts(candidate), bolts(reference)), (plate(candidate), plate(reference))]
+    return all(a is not None and b is not None and a >= b - 1e-9 for a, b in pairs)
+
+
+def frame_collector_ends(connection, records, location):
+    """Locate where a collector-to-braced-frame record governs a collector beam end.
+
+    The record governs the end of a collector beam that frames into a braced-frame column from outside the braced
+    bay, in the record's direction. It replaces that beam's section-specific end record there only when its bolt
+    group and plate are not weaker, so the installed connection satisfies both records.
+    Returns {collector record id: [replaced local record ids]}.
+    """
+    if not location:
+        return {}
+    end_members = location.get("end_members", {})
+    own = [mid for mid in end_members if connection["id"].startswith(mid + ":")]
+    if len(own) != 1 or end_members[own[0]].get("kind") != "beam":
+        return {}
+    beam = end_members[own[0]]
+    if own[0] in location.get("braced_member_ids", []):
+        return {}
+    result = {}
+    for rid in connection.get("design_record_ids", []):
+        record = records.get(rid, {})
+        if record.get("application_target", {}).get("role") != "collector_to_frame":
+            continue
+        rtype = next((f["value"] for f in record["fields"] if f["role"] == "connection" and f["field"] == "source_type"), "")
+        named = _FRAME_COLLECTOR_ID.search(rid)
+        if not _FRAME_COLLECTOR.search(str(rtype)) or not named:
+            continue
+        direction = named[1].upper()
+        prefix = "members/collector-" + direction + ("-" + named[2].lower() if named[2] else "")
+        if beam.get("direction") != direction or direction not in location.get("brace_frame_directions", []):
+            continue
+        if not any(str(sid).startswith(prefix) for sid in beam.get("source_ids", [])):
+            continue
+        local = [key for key in connection.get("design_record_ids", []) if key != rid and
+                 (source := records.get(key, {})).get("member_section") and source["member_section"]["value"] == beam["section"]]
+        if local and all(_not_weaker(record, records[key]) for key in local):
+            result[rid] = local
+    return result
+
+
 def applications(connection, records, location=None, member_catalog=None):
     result = []
     alternatives = {}
@@ -1207,6 +1270,8 @@ def applications(connection, records, location=None, member_catalog=None):
                 receiver_links[rid].update(status="related_interface", located_specific_records=specific_infills)
     scheduled = [rid for rid in matched_receivers if receiver_links[rid]["role"] in
                  ("scheduled_collector", "reentrant_frame", "collector_beam_end", "opening_edge", "infill_end", "basement_girder_end")]
+    frame_ends = frame_collector_ends(connection, records, location)
+    replaced_by_frame = {key: rid for rid, keys in frame_ends.items() for key in keys}
     if scheduled:
         for rid in matched_receivers:
             if receiver_links[rid]["role"] == "smf_column":
@@ -1271,6 +1336,10 @@ def applications(connection, records, location=None, member_catalog=None):
             binding["status"] = "related_interface" if local else "located_interface" if (
                 connection.get("parameters", {}).get("collector") is True or
                 any(m["kind"] == "collector" for m in end_members.values())) else "unlocated_interface"
+            if rid in frame_ends:
+                # The collector frames into the braced-frame column here: this record is the end connection.
+                binding["status"] = "located_interface"
+                binding["governs_beam_end_records"] = frame_ends[rid]
             if alias := target.get("referenced_end"):
                 reference_id = alias["record_id"]
                 binding["referenced_end_record"] = reference_id
@@ -1342,6 +1411,8 @@ def applications(connection, records, location=None, member_catalog=None):
                     status = "conditional"
             if included and status == "selected":
                 status = "conditional"
+            if rid in replaced_by_frame and status == "selected":
+                status = "conditional"
             if status == "selected":
                 active.append(index)
             elif status == "conditional":
@@ -1357,6 +1428,8 @@ def applications(connection, records, location=None, member_catalog=None):
             entry["interface_application"] = binding
         if included:
             entry["included_in_combined_end"] = included
+        if rid in replaced_by_frame:
+            entry["located_specific_records"] = [replaced_by_frame[rid]]
         if scheduled and rid not in scheduled and record.get("member_section") and not active:
             entry["located_specific_records"] = scheduled
         if groups:

@@ -34,6 +34,39 @@ The HR report and normal package export read explicit material declarations and 
 
 The source contract carries specified material, thickness, attachment, weld, fastener, set-out and clearance selections. openBIM completes missing local contours, cutbacks and fit against the actual connected members. A describing field and a label in a template do not prove target geometry. Final artifact checking belongs to the independent openBIM delivery gate.
 
+## Design schedule and report binding
+
+`source_bindings.design_schedule` lists every member record with a section and every connection record as the
+report prints it: record ID, section or type, the governing limit state, the governing D/C as a number and as
+printed text (`dc_text`), and for a typed connection the printed lines of its `bim_selection`
+(`bolt: count 5; diameter_in 0.75 in; material ASTM F3125 Gr A325-N`, one line per role and applicability).
+`steel_engine/bim_design_schedule.py` holds the one rule for the governing D/C and its text. The report tables,
+this schedule and the report read-back all call it. openBIM prints these values on the drawing schedules and
+stores them in the IFC, so a drawing or model value is the report value character for character.
+
+The report prints the typed lines in each connection block as **Issued selection**, below the free-text
+**Components** row. Keep the two consistent: the drawings and the IFC follow the typed rows.
+
+The export reads `report.html` back against the records it is exporting: member sections, connection
+components, issued selections, and the governing D/C in each calculation block and in every summary-table row
+that links to it. `source_bindings.report_binding` is then `bound` (read-back passed, evidence in
+`report_selection_readback`), `stale` (the report on disk prints other values) or `awaiting_report`. A stale
+report gives the finding `hr_report_stale`, the package is not ready and the completion gate is not clean.
+Render the report again with `report.build_report(name)`: it binds the new report, records the read-back and
+updates the stored readiness, without a second export. A report rendered before this engine version has no
+Issued selection rows and must be rendered again once.
+
+## Brace-end assemblies of a required new job
+
+A new job has `require_connection_parts: true`, so every designed connection, brace ends included, is exported
+with its located parts: the gusset, the slot welds joining brace and gusset, the support welds, the bound
+receivers, and the brace `end_offsets` and `slots`. openBIM measures that assembly in the IFC (slot engagement,
+weld reach to the bound receivers, clearance from the restrained gusset edge to the brace end where
+`brace_end_clearance.depths` is selected, the cap stations of the brace). openBIM fits a gusset contour itself
+only for a connection exported without parts, which a required job cannot export as ready. The physical
+connection `parameters.joint` (`corner`, `apex`, `base`, ...), `parameters.upper_end` and `parameters.story`
+are read by both sides to apply scoped selections.
+
 ## Source and location checks
 
 The saved exporter compares each printed connection Components row and each printed member section to the named row in the original calculation package. The result and row counts are in `source_bindings.report_selection_readback`. The original file digest and the canonical native-body digest are separate. Recompute `native_content_sha256` from the entire native package after omitting the additive `source_handoff` key. Use sorted JSON keys, compact separators, ASCII escapes, UTF-8 and finite numbers. Sealing a new report updates its binding on a current HR export.

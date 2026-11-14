@@ -92,7 +92,10 @@ python -m steltic.bim_export validate /path/to/export/bim_package.json
 
 Installed commands are `steltic-bim` for HR and `steltic-cfs-bim` for CFS. Without
 `--output`, replay writes only `job/design/bim_package.json`. Use an external output
-directory for immutable gold jobs. `--timeout` defaults to 120 seconds **per job**.
+directory for immutable gold jobs. Without `--timeout`, each job is allowed 120 seconds plus
+30 seconds per megabyte of its `physical_inputs.json`; the environment variable
+`STELTIC_BIM_REPLAY_TIMEOUT` replaces the 120-second base (use it on a loaded machine). The same
+allowance applies to the export that `consistency.check` runs.
 `--require-ready` makes missing physical data a nonzero exit result; normal replay
 permits `needs_input` exports so legacy evidence is usable. Invalid packages and
 failed workers always return nonzero. Batch continues after an individual failure

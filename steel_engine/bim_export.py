@@ -183,7 +183,7 @@ def assemble(root, cfg, pkg, snapshot, provenance):
                 findings.append(issue('coordination_required',request['question'],request.get('entity_ids') or [request['id']]))
     if provenance["module"] == "HR":
         from steel_engine.saved_handoff import attach_current_handoff
-        attach_current_handoff(result, cfg, pkg, selected)
+        attach_current_handoff(result, cfg, pkg, selected, root)
     found = validate(result)
     result["readiness"] = {"status":"invalid" if any(i["severity"]=="error" for i in found) else ("needs_input" if found else "ready"),
                            "findings":found, "counts":{"analysis_elements":len(result["analysis"]["elements"]), "members":len(physical["members"]), "panels":len(physical["panels"]), "design_records":len(records)}}
@@ -244,9 +244,18 @@ def run_worker(command, cwd, env, timeout):
         return subprocess.CompletedProcess(command,proc.returncode,stdout,stderr)
 
 
-def replay(job, output=None, timeout=120):
+def replay_timeout(root):
+    """Seconds allowed for the isolated export worker: 120 s (STELTIC_BIM_REPLAY_TIMEOUT) plus 30 s per MB of declared physical model.
+    A tall frame with every plate, bolt and weld of every connection declared runs to tens of MB and cannot be exported in a fixed 120 s."""
+    base = float(os.environ.get("STELTIC_BIM_REPLAY_TIMEOUT", "120"))
+    declared = Path(root)/"physical_inputs.json"
+    return base + (30.0*declared.stat().st_size/1.0e6 if declared.is_file() else 0.0)
+
+
+def replay(job, output=None, timeout=None):
     """Export a completed job in isolation. Existing design artifacts are read only."""
     root = Path(job).resolve()
+    timeout = replay_timeout(root) if timeout is None else timeout
     if not (root/"cfg.py").is_file(): raise ValueError("Job needs cfg.py")
     output = Path(output).resolve() if output else root/"design"/"bim_package.json"
     before = tracked_sources(root)
@@ -394,10 +403,10 @@ def main(argv=None):
     sub=ap.add_subparsers(dest="command",required=True)
     one=sub.add_parser("replay",help="Build geometry and join completed design data without analysis")
     one.add_argument("job",type=Path); one.add_argument("--output",type=Path)
-    one.add_argument("--timeout",type=float,default=120); one.add_argument("--require-ready",action="store_true")
+    one.add_argument("--timeout",type=float,default=None); one.add_argument("--require-ready",action="store_true")
     batch=sub.add_parser("batch",help="Replay every immediate job directory independently")
     batch.add_argument("jobs_root",type=Path); batch.add_argument("--output-root",type=Path,required=True)
-    batch.add_argument("--timeout",type=float,default=120); batch.add_argument("--require-ready",action="store_true")
+    batch.add_argument("--timeout",type=float,default=None); batch.add_argument("--require-ready",action="store_true")
     check=sub.add_parser("validate"); check.add_argument("package",type=Path)
     saved=sub.add_parser("saved-handoff",help="Bind an existing HR report/design, native snapshot and accepted decision archive without replay")
     for name in ("job","native","decisions","output"):

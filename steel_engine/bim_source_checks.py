@@ -264,6 +264,22 @@ def findings(package):
             errors.append(_issue("hr_handoff_report_binding", "Original report bytes differ from the saved material source binding"))
         if handoff["source_bindings"].get("report_binding") == "bound" and not source_files.get("report.html"):
             errors.append(_issue("hr_handoff_report_binding", "A bound report requires its SHA-256"))
+        if handoff["source_bindings"].get("kind") == "current_hr_export":
+            # The schedule openBIM prints is the one this producer derives from the same records, and
+            # the report on disk has been read back against it.
+            from .bim_design_schedule import schedule_findings
+            changed_records = any(e["code"] == "hr_handoff_record" for e in errors)     # already reported with its cause
+            for message in [] if changed_records else schedule_findings(
+                    handoff["source_bindings"].get("design_schedule"), package["design_records"]):
+                errors.append(_issue("hr_handoff_design_schedule", message + "; export the job again with the current HR engine"))
+            binding = handoff["source_bindings"].get("report_binding")
+            readback = handoff["source_bindings"].get("report_selection_readback") or {}
+            if binding == "stale" or (binding == "bound" and readback.get("passed") is not True):
+                first = (readback.get("findings") or [{}])[0]
+                errors.append(_issue("hr_report_stale", "report.html prints other values than the exported design records "
+                                     "(render the report again with report.build_report): " +
+                                     str(first.get("issue", "the report was not read back")),
+                                     str(first.get("member", first.get("connection", "report.html")))))
         if set(occurrences) != {c["id"] for c in package["physical"]["connections"]}:
             errors.append(_issue("hr_handoff_occurrences", "Source handoff does not cover the exact connection occurrence set"))
         catalog = member_sources(package["design_records"])

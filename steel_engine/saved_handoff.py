@@ -364,8 +364,14 @@ def bind_rendered_report(root, calc=None):
     _check_hash(native_content_digest(package), handoff["source_bindings"].get("native_content_sha256"), "current native content before report binding")
     sources = package["provenance"]["source_files"]
     for name, expected in sources.items():
-        if name != "report.html":
-            _check_hash(file_digest(_job_file(root, name)), expected, name)
+        if name == "report.html":
+            continue
+        source = (root / name).resolve()
+        if not source.is_relative_to(root) or not source.is_file() or file_digest(source) != expected:
+            # The design changed after this export (a pipeline re-run, an edited configuration). The
+            # export is stale and stays so: the completion gate reports it, and the next export reads
+            # this report back. A new report is never bound to the records of an earlier design.
+            return
     report_digest = file_digest(_job_file(root, "report.html"))
     sources["report.html"] = report_digest
     handoff["source_files"]["report.html"] = report_digest

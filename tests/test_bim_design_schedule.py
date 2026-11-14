@@ -131,6 +131,26 @@ def test_export_binds_the_schedule_and_refuses_a_stale_report(tmp_path):
     assert B.completion_issues(root) == []
 
 
+def test_report_of_a_changed_design_is_not_bound_to_the_earlier_export_and_does_not_stop_the_pipeline(tmp_path):
+    root = job(tmp_path)
+    pkg = B.read_json(root / "design/calc_package.json")
+    (root / "report.html").write_text(rendered(pkg), encoding="utf-8")
+    B.replay(root)
+    exported = (root / "design/bim_package.json").read_bytes()
+    # a pipeline re-run after a configuration change renders its report before the next export
+    with (root / "cfg.py").open("a", encoding="utf-8") as stream:
+        stream.write("\ncfg['revised'] = True\n")
+    (root / "report.html").write_text(rendered(pkg) + "<!-- re-rendered -->", encoding="utf-8")
+    bind_rendered_report(root, pkg)                       # used to raise "Missing or stale SHA-256 for cfg.py"
+    assert (root / "design/bim_package.json").read_bytes() == exported
+    assert B.completion_issues(root) == ["BIM export is stale; rerun consistency.check or BIM replay"]
+    restamp(root)
+    package = B.replay(root)
+    assert package["readiness"]["status"] == "ready"
+    assert package["source_handoff"]["source_bindings"]["report_binding"] == "bound"
+    assert B.completion_issues(root) == []
+
+
 def test_schedule_cannot_be_edited_apart_from_its_records(tmp_path):
     root = job(tmp_path)
     package = B.replay(root, tmp_path / "out/bim_package.json")

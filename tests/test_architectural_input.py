@@ -18,6 +18,11 @@ def package_with_source(exported):
     package['architectural_input']=source;package['reference_system']=copy.deepcopy(source['reference_system'])
     package['physical']['panels']=[dict(id='wall',kind='wall_segment',vertices=[[0,0,0],[120,0,0],[120,0,120],[0,0,120]],thickness=.5,material_id='steel',status='declared')]
     package['physical']['openings']=[dict(id='door',host_id='wall',source_ifc_guid='source-door',vertices=[[24,0,0],[60,0,0],[60,0,84],[24,0,84]],status='declared')]
+    if package.get('source_handoff'):
+        # HR binds the exported native body. A producer that exports these inputs seals them with it;
+        # content edited after sealing is correctly reported as changed after HR binding.
+        from steel_engine.saved_handoff import seal_current_package
+        seal_current_package(package)
     return package
 
 

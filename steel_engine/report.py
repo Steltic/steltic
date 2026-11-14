@@ -189,11 +189,8 @@ def _n(v, dc=False, nd=None):
         if nd is not None:
             return _fx(v, nd)
         if dc:
-            s = _fx(v, 3)
-            s = s.rstrip("0")
-            if len(s.split(".")[1]) < 2:
-                s = _fx(v, 2)
-            return s
+            from steel_engine.bim_design_schedule import dc_text
+            return dc_text(v)                       # the same text goes to the drawing schedules and the IFC
         a = abs(v)
         if a >= 1000:
             return "{:,}".format(int(_fx(v, 0)))
@@ -338,100 +335,8 @@ def _fmt(d):
     return "; ".join(parts) if parts else "&mdash;"
 
 
-_CFG_RX = re.compile(r"cfg\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\](?:\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\])?")
-_PATH_RX = re.compile(r"(?:\.\./)+[\w./-]+|/(?:home|tmp|mnt|root|Users)/[\w./-]+|design/calc_package\.json|"
-                      r"calc_package\.json|activity_log\.jsonl|design_report\.md|member_demands\.md|"
-                      r"pipeline_results\.json|connection_demands\.csv")
-
-
-_AGENT_NOTE_RX = re.compile(r"from memory|declared fallback|not verified against the (?:corpus|reference library)|"
-                            r"NOT in the (?:reference library|RAG|corpus)|\bcorpus\b|\bRAG\b", re.I)
-
-
-def _drop_agent_notes(s):
-    """Remove the design agent's working notes about its own sources ("method applied from memory",
-    "not verified against the corpus") from published text; they stay in the QA annex. Parentheses left
-    open by a dropped sentence are closed."""
-    if not _AGENT_NOTE_RX.search(s):
-        return s
-    s = re.sub(r"\s*\([^()]*\)", lambda m: "" if _AGENT_NOTE_RX.search(m.group(0)) else m.group(0), s)
-    if not _AGENT_NOTE_RX.search(s):
-        return s
-    parts = re.split(r"(?<=[.;])\s+", s)
-    keep = []; close = 0
-    for part in parts:
-        if _AGENT_NOTE_RX.search(part):
-            bal = part.count("(") - part.count(")")
-            if bal < 0:
-                close += -bal
-            continue
-        keep.append(part)
-    out = " ".join(keep).rstrip()
-    if close:
-        out = out.rstrip(".") + ")" * close + "."
-    return out
-
-
-def _pub(s):
-    """Sanitise free text for publication: cfg['a']['b'] -> 'the declared a / b input', internal file paths
-    and pipeline module names removed. Engineering content is left untouched."""
-    if not isinstance(s, str) or not s:
-        return s
-    def _c(m):
-        a = m.group(1).replace("_", " ")
-        b = m.group(2).replace("_", " ") if m.group(2) else ""
-        return "the declared %s input" % ((a + " / " + b) if b else a)
-    s = _CFG_RX.sub(_c, s)
-    s = _PATH_RX.sub("the design record", s)
-    s = re.sub(r"\b(?:engine3d|static_model|design_pipeline|design_post|preflight)\.[A-Za-z_]+(?:\(\))?",
-               "the analysis model", s)
-    s = re.sub(r"\bdesign_report(?:\.md)?\b\s*/\s*pipeline_results\b|\bpipeline_results\b|\bdesign_report(?:\.md)?\b",
-               "the analysis summary", s)
-    s = re.sub(r"\s*'mdx/mdy'", "", s)
-    s = re.sub(r"\brun_one\b", "the analysis run", s)
-    s = re.sub(r"\bpipeline (envelope|demands?)\b", r"analysis \1", s)
-    s = re.sub(r"\b(?:the )?demand pipeline\b", "the analysis", s)
-    s = re.sub(r"\bThe engine\b", "The analysis", s)
-    s = re.sub(r"\bthe engine\b", "the analysis", s)
-    s = re.sub(r"\bframework (demand|one-way|envelope|screen|gate|irregularity screen|computes|provides)\b",
-               r"analysis \1", s)
-    s = re.sub(r"\bthe framework\b", "the analysis", s)
-    s = re.sub(r"\(framework\)", "(analysis)", s)
-    s = re.sub(r"\bFramework\b", "Analysis", s)
-    s = re.sub(r"\bframework\b", "analysis", s)
-    s = re.sub(r"\b(?:Omega0|Om0)\b", "\u03a9\u2080", s)
-    s = re.sub(r"\badd_(beam|brace|column)\b", r"\1", s)
-    s = re.sub(r"\s*\(\s*'[^'()]*'\s*(?:,\s*'[^'()]*'\s*)+\)", "", s)
-    s = re.sub(r"\bphi_s\s*\*\s*lambda_u\b", "\u03c6s\u03bbu", s)
-    s = re.sub(r"\bphi_s\b", "\u03c6s", s)
-    s = re.sub(r"\blambda_u\b", "\u03bbu", s)
-    s = re.sub(r"\bddm_analysis\b", "DDM system check", s)
-    _GRK = {"delta": "\u03b4", "theta": "\u03b8", "rho": "\u03c1", "omega": "\u03c9", "alpha": "\u03b1",
-            "beta": "\u03b2", "gamma": "\u03b3", "lambda": "\u03bb", "psi": "\u03c8", "mu": "\u03bc"}
-    s = re.sub(r"\b(delta|theta|rho|omega|alpha|beta|gamma|lambda|psi|mu)_([a-z]{1,3})\b",
-               lambda m: _GRK[m.group(1)] + m.group(2), s)            # symbol names: delta_di -> \u03b4di
-    s = re.sub(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?=\s*=)", lambda m: m.group(1).replace("_", " "), s)
-    s = re.sub(r"(?<![-\w.])([a-z]{3,}(?:_[a-z]{2,})+)(?![-\w]|\.\w)", lambda m: m.group(1).replace("_", " "), s)
-    s = re.sub(r"\b(beam deflection|drift|deflection|consistency|completion|analysis) gate\b", r"\1 check", s)
-    s = re.sub(r"\s*\(SEEDED[^)]*\)", "", s)
-    s = re.sub(r"\bSEEDED\b", "provisional", s)
-    s = re.sub(r"\b(?:the )?RAG corpus\b|\b(?:the )?RAG\b", "the reference library", s)
-    s = re.sub(r"calc_package\s*\[\s*['\"]([^'\"\]]+)['\"]\s*\]", lambda m: "the calc-package record '%s'" % m.group(1), s)
-    s = re.sub(r"\s*\(see '[^']*'\)", "", s)
-    s = re.sub(r"\(steel[_ ]design[_ ]examples\)", "(AISC Design Examples)", s)
-    s = re.sub(r"\bsteel[_ ]design[_ ]examples\b", "the AISC Design Examples", s)
-    s = re.sub(r"\bcfg\s+([a-z][a-z0-9_]*)", lambda m: "the declared %s input" % m.group(1).replace("_", " "), s)
-    s = re.sub(r"\(brief\)", "(project criteria)", s)
-    s = re.sub(r"\bper the brief\b", "per the project criteria", s)
-    s = re.sub(r"\bthe brief\b", "the project criteria", s)
-    # capitals used for emphasis read as shouting in a calculation package (acronyms are untouched)
-    s = re.sub(r"\b(BOTH|TENSION|COMPRESSION|REQUIRED|NEVER|MUST|ALWAYS|EVERY|ALSO|MIRRORED|WITHOUT|OVERTURNING|"
-               r"ONLY|EACH)\b(?![-/]?[A-Z0-9])", lambda m: m.group(1).lower(), s)
-    s = re.sub(r"([;,(]\s*)brief\b", r"\1project criteria", s)
-    s = _drop_agent_notes(s)
-    s = s.replace("<=", "\u2264").replace(">=", "\u2265").replace("&lt;=", "&le;").replace("&gt;=", "&ge;")
-    s = re.sub(r"\bsqrt\(", "\u221a(", s)
-    return s
+from report_text import (CFG_RX as _CFG_RX, PATH_RX as _PATH_RX, AGENT_NOTE_RX as _AGENT_NOTE_RX,
+                         drop_agent_notes as _drop_agent_notes, publish as _pub)      # shared with the report read-back
 
 
 def _pub_issue(s):
@@ -848,17 +753,11 @@ def _term_txt(terms, which):
     return "; ".join(out) if out else "&mdash;"
 
 
-_DETAIL_LIMIT_RE = re.compile(
-    r"plate length within the beam's flat web depth|rotational ductility|plate within the coped web|"
-    r"within the (?:beam's )?flat web|\bL_?p\s*(?:/|<=|&le;|\u2264)\s*T\b|bracing spacing (?:ratio|limit)|"
-    r"dimensional limit|detailing limit", re.I)
-
-
 def _is_detailing_limit(k):
     """A pass/fail dimensional or detailing limit (Lp <= T, the Part 10 single-plate ductility thickness, a bracing
     spacing limit): printed as a limit, never as the governing strength D/C (October 2026 review, H12)."""
-    return isinstance(k, dict) and (bool(k.get("detailing_limit")) or
-                                    bool(_DETAIL_LIMIT_RE.search(str(k.get("limit_state", "")))))
+    from steel_engine.bim_design_schedule import is_detailing_limit
+    return is_detailing_limit(k)
 
 
 def _governing_dc(rec, C=None):
@@ -868,20 +767,8 @@ def _governing_dc(rec, C=None):
     C = C or _consistency_mod()
     if C is None:
         return (rec.get("DC") if isinstance(rec.get("DC"), (int, float)) else None), None, False
-    chks = [k for k in (rec.get("checks") or []) if isinstance(k, dict)]
-    top = C._dc_num(rec.get("DC"))
-    st = [(C._dc_num(k.get("DC")), k) for k in chks if not _is_detailing_limit(k)]
-    st = [t for t in st if t[0] is not None]
-    lim = [C._dc_num(k.get("DC")) for k in chks if _is_detailing_limit(k)]
-    lim = [x for x in lim if x is not None]
-    best = max(st, key=lambda t: t[0]) if st else (None, None)
-    if best[0] is None:
-        return (top if top is not None else (max(lim) if lim else None)), None, bool(lim)
-    if top is None or top <= best[0] + 1e-9:
-        return best[0], best[1], bool(lim)
-    if lim and any(abs(top - x) <= 1e-3 for x in lim) and max(lim) <= 1.0 + 1e-9:
-        return best[0], best[1], True                 # the recorded headline is a detailing-limit ratio
-    return top, None, bool(lim)
+    from steel_engine.bim_design_schedule import governing_dc
+    return governing_dc(rec)                        # one rule for the report, the drawings and the IFC
 
 
 def _checks_table(chks, C=None, member=True, waived=None):
@@ -1134,6 +1021,11 @@ def _connection_block(c, cid=None):
     rows = [("Demand", "", _fmt(dem) if isinstance(dem, dict) else _n(dem), "")]
     if c.get("components") or c.get("notes"):
         rows.append(("Components", "", _n(c.get("components", c.get("notes", ""))), ""))
+    from steel_engine.bim_design_schedule import design_schedule
+    issued = design_schedule({"connections": [c]})["connections"][0]["selection"]
+    if issued:
+        # the typed selections issued to the drawings and the model, printed as openBIM prints them
+        rows.append(("Issued selection", "", "<br>".join(_esc(line) for line in issued), ""))
     if c.get("design_basis"):
         rows.append(("Design basis", "", _n(c.get("design_basis")), ""))
     if c.get("cited"):

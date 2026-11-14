@@ -19,6 +19,7 @@ from .bim_json import file_digest
 from .bim_brb_selections import member_selections
 from .bim_collector_applications import member_sources, opening_corner
 from .bim_report_readback import check_report_selections
+from .bim_design_schedule import design_schedule
 from .bim_source_crossings import crossing_interfaces
 from .bim_source_fields import application_location, applications, brace_receiver_roles, digest_value, native_content_digest, selection_record
 from .bim_source_status import consistency_errors
@@ -297,15 +298,33 @@ def _finish_handoff(building, source_files, bindings, materials, records, physic
     return handoff
 
 
-def attach_current_handoff(package, cfg, calc, selected_inputs=None):
+def _report_evidence(evidence):
+    """The read-back result kept in the handoff: counts, verdict and the first findings."""
+    brief = lambda value: value if not isinstance(value, str) or len(value) <= 300 else value[:300] + "..."
+    findings = [{k: ([brief(v) for v in value] if isinstance(value, list) else brief(value)) for k, value in f.items()}
+                for f in evidence["findings"][:25]]
+    return dict(evidence, findings=findings, findings_total=len(evidence["findings"]))
+
+
+def attach_current_handoff(package, cfg, calc, selected_inputs=None, root=None):
     """Use the same field contract at the normal HR package export entry point."""
     records = _records(package, calc)
     files = dict(package["provenance"]["source_files"])
     materials = current_material_schedule(cfg, calc, selected_inputs)
+    bindings = {"kind": "current_hr_export", "analysis_executed": False,
+                "native_content_sha256": native_content_digest(package),
+                "report_binding": "bound" if "report.html" in files else "awaiting_report"}
+    if root is not None and "report.html" in files:
+        # A report rendered before the last calculation change is on disk with a valid hash. Read it
+        # back against the records exported now; a report that prints other values is stale, not bound.
+        evidence = check_report_selections(Path(root) / "report.html", calc)
+        bindings["report_selection_readback"] = _report_evidence(evidence)
+        if not evidence["passed"]:
+            bindings["report_binding"] = "stale"
+    # What the report prints for every member and connection record; openBIM prints the same text.
+    bindings["design_schedule"] = design_schedule(calc)
     package["source_handoff"] = _finish_handoff(
-        package["building_id"], files, {"kind": "current_hr_export", "analysis_executed": False,
-        "native_content_sha256": native_content_digest(package),
-        "report_binding": "bound" if "report.html" in files else "awaiting_report"},
+        package["building_id"], files, bindings,
         materials, records, package["physical"], (selected_inputs or {}).get("decisions", []), package.get("reference_system"),
         package["design_records"])
 
@@ -319,8 +338,8 @@ def seal_current_package(package):
     handoff["contract_sha256"] = digest_value(handoff)
 
 
-def _checked_report(report_path, calc):
-    evidence = check_report_selections(report_path, calc)
+def _checked_report(report_path, calc, design_schedule=True):
+    evidence = check_report_selections(report_path, calc, design_schedule)
     if not evidence["passed"]:
         first = evidence["findings"][0]
         target = first.get("connection", first.get("member", "unknown"))
@@ -352,7 +371,15 @@ def bind_rendered_report(root, calc=None):
     handoff["source_files"]["report.html"] = report_digest
     handoff["source_bindings"]["report_binding"] = "bound"
     if checked is not None:
-        handoff["source_bindings"]["report_selection_readback"] = checked
+        handoff["source_bindings"]["report_selection_readback"] = _report_evidence(checked)
+        handoff["source_bindings"]["design_schedule"] = design_schedule(calc)
+    # The stored verdict follows the binding: a package exported over a stale report becomes ready
+    # when the current report is bound, and only then.
+    from .bim_contract import validate
+    seal_current_package(package)
+    found = validate(package)
+    package["readiness"] = dict(package.get("readiness", {}), status="invalid" if any(i["severity"] == "error" for i in found)
+                                else ("needs_input" if found else "ready"), findings=found)
     seal_current_package(package)
     _atomic_output(path, package)
 
@@ -384,7 +411,9 @@ def export_saved(job, native_path, decisions, output, *, contract_only=False):
     del physical
     calc = json.loads(_job_file(root, "design/calc_package.json").read_text(encoding="utf-8-sig"))
     records = _records(native, calc)
-    report_readback = _checked_report(_job_file(root, "report.html"), calc)
+    # An archived report keeps the scope it was authenticated with; the printed design schedule
+    # belongs to reports of the current renderer and is bound on a current export.
+    report_readback = _checked_report(_job_file(root, "report.html"), calc, design_schedule=False)
     handoff = _finish_handoff(root.name, source_files,
                               {"kind": "authenticated_saved_design", "decision_archive_sha256": decisions_hash,
                                "native_content_sha256": native_content_digest(native),
